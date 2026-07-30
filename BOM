@@ -1,0 +1,12 @@
+Bill of Materials
+Unicore UM982 GNSS receiver: Amazon: MJ GPS RTK Module, Centimeter-Level high-Precision Tracker, All-Constellation(GPS/BDS/GLONASS/Galileo/QZSS) GNSS Receiver, Real-time Positioning of Vehicles and GPS surveys (MJRTK-UM982)
+Elecrow esp32 2.1" LCD: Amazon: ELECROW 2.1" ESP32 Rotary Display 480x480 HMI IPS Round Knob Touch Display | 2.4G WiFi and BLE Capacitive Rotary Touch Screen Development Board Compatible with Arduino IDE and LVGL Library
+SMA cables: Amazon: BINGFU SMA Female Bulkhead Mount to SMA Male RG316 Antenna Extension Cable 1m 3 feet 2-Pack Compatible with 4G LTE Router Gateway Cellular SDR USB Dongle Receiver
+2x Tri-band antennas: Amazon: RTK GNSS Active Antenna High Precision Helix Positioning GPS GLONASS Beidou BDS Galileo Four-Star Multi-Frequency Antenna, Slinkdsco
+LM7805 5v regulator
+2x 10uf tantulum capacitors
+DC power plug and jack
+3 pin GX12 aviation connectors, male wire mount, female chassis mount
+4 wire 22 gauge cable
+Hammond 1590 die cast box (to house GNSS receiver and 5v regulator)
+3d printed housing for display: Printables: Elecrow CrowPanel 2.1inch-HMI ESP32 Rotary Display 480*480 IPS Round Touch Knob Screen
