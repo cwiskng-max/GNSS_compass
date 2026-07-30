@@ -1,0 +1,16 @@
+
+			GNSS Compass Instructions
+
+
+If you build the display code from source you MUST use the library revisions specified by Elecrow in order to get it to compile.  
+
+Only two messages are used from the UM982 receiver: $GNHDT and $GNGLL, these must be configured in the UM982 by hand.  To do this use a USB-C to whatever USB port you have on your computer  cable.  Start a terminal emulator on your computer configured to talk to the USB port as 115200 baud 8n1.  When connected you should see GPS messages from the UM982.  Type the following commands to the UM982 to configure it:
+
+MODE ROVER UAV
+GPGLL com1 10
+GPHDT com1 0.2
+SAVECONFIG
+
+The antennas should be mounted at least 3' apart and perpendicular to the antenna heading direction. If on first use you find the antenna heading 180 degrees off just flip the antennas
+either physically or by swaping cables.
+
