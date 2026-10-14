@@ -21,7 +21,7 @@ jobs:
 
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Arduino CLI
         uses: arduino/setup-arduino-cli@v2
@@ -51,7 +51,7 @@ jobs:
           cp build/gps_compass/build/esp32.esp32.esp32s3/gps_compass.ino.bin ./gps_compass.ino.esp32s3.bin
 
       - name: Upload Build Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: gps_compass.ino.esp32s3.bin
           path: gps_compass.ino.esp32s3.bin
@@ -59,7 +59,7 @@ jobs:
 
       - name: Create GitHub Release and Attach Binary
         if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: gps_compass.ino.esp32s3.bin
           generate_release_notes: true
