@@ -21,6 +21,11 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v7
 
+      - name: Run Unit Tests
+        run: |
+          chmod +x tests/run_tests.sh
+          ./tests/run_tests.sh
+
       - name: Setup Arduino CLI
         uses: arduino/setup-arduino-cli@v2
 
