@@ -43,6 +43,9 @@ jobs:
           cp gps_compass.ino build/gps_compass/
           if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
             FW_VER="${{ github.ref_name }}"
+          elif [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+            FW_VER="v0.2-${HEAD_SHA::7}"
           else
             FW_VER="v0.2-${GITHUB_SHA::7}"
           fi
