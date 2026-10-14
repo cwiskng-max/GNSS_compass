@@ -154,15 +154,6 @@ int neg=0;
 
 }
 
-
-void calcLatLon(char *dst, float *lat, float *lon) {
-
-  *lon = (dst[0]-'A')*20.0+(dst[2]-'0')*2.0+(dst[4]-'A')*.08333333-180.0+.08333333/2.0;
-  *lat = (dst[1]-'A')*10.0+(dst[3]-'0')*1.0+(dst[5]-'A')*.04166666-90.0+.04166666/2.0;
-
-}
-
-
 void calcLocator(char *dst, float lat, float lon) {
   int o1, o2, o3, o4;
   int a1, a2, a3, a4;
@@ -367,11 +358,11 @@ float sinbuff[BSZ],cosbuff[BSZ];
 bool hasHeading = false;
 bool rovdist = false;
 float mylongitude = 0.0, mylatitude = 0.0;
-float remlongitude = 0.0, remlatitude = 0.0;
+double remlongitude = 0.0, remlatitude = 0.0;
 double distance = 0.0, bearing = 0.0, revbearing = 0.0;
 
 void updateBearings() {
-  calcLatLon(remote, &remlatitude, &remlongitude);
+  calcGridCenter(remote, &remlatitude, &remlongitude);
   calculateWGS84(mylatitude, mylongitude, remlatitude, remlongitude, distance, bearing);
   calculateWGS84(remlatitude, remlongitude, mylatitude, mylongitude, distance, revbearing);
 
