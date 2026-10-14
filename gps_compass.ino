@@ -46,6 +46,10 @@
 #define BEARY                REMSTOPY
 #define TGTBEARX             (BEARX + 6 * CHAR_W(BEARSZ))
 
+// Set to 1 to show ARRL contest distance (Row 6), 0 to hide
+#define ENABLE_ARRL_DIST     0
+
+#if ENABLE_ARRL_DIST
 // Row 4: UTC Time
 #define TIME_SZ              6
 #define TIME_X               132
@@ -60,6 +64,17 @@
 #define ARRL_SZ              3
 #define ARRL_X               123
 #define ARRL_Y               408
+#else
+// Row 4: UTC Time
+#define TIME_SZ              6
+#define TIME_X               132
+#define TIME_Y               300
+
+// Row 5: Reverse Bearing & Distance
+#define REVBEAR_SZ           4
+#define REVBEAR_X            90
+#define REVBEAR_Y            372
+#endif
 
 // Row 7: Firmware Version Footer
 #define FW_VERSION           "v0.2-dev"
@@ -285,14 +300,10 @@ double toDeg(double rad) {
     return rad * 180.0 / M_PI;
 }
 
-// ARRL 6-character grid center coordinates
-void calcGridCenter(const char *grid, double *lat, double *lon) {
-    char g[6];
-    for (int i = 0; i < 6; i++) {
-        g[i] = toupper((unsigned char)grid[i]);
-    }
-    *lon = (g[0] - 'A') * 20.0 + (g[2] - '0') * 2.0 + (g[4] - 'A') * (5.0 / 60.0) - 180.0 + (2.5 / 60.0);
-    *lat = (g[1] - 'A') * 10.0 + (g[3] - '0') * 1.0 + (g[5] - 'A') * (2.5 / 60.0) - 90.0 + (1.25 / 60.0);
+// Convert 6-character Maidenhead grid to center coordinates
+void calcLatLon(const char *grid, double *lat, double *lon) {
+    *lon = (grid[0] - 'A') * 20.0 + (grid[2] - '0') * 2.0 + (grid[4] - 'A') * (5.0 / 60.0) - 180.0 + (2.5 / 60.0);
+    *lat = (grid[1] - 'A') * 10.0 + (grid[3] - '0') * 1.0 + (grid[5] - 'A') * (2.5 / 60.0) - 90.0 + (1.25 / 60.0);
 }
 
 // ARRL contest distance calculation (spherical Earth R = 6371.0 km, 1 km minimum)
@@ -301,8 +312,8 @@ double calculateARRLDistance(const char *grid1, const char *grid2) {
         return 1.0;
     }
     double lat1, lon1, lat2, lon2;
-    calcGridCenter(grid1, &lat1, &lon1);
-    calcGridCenter(grid2, &lat2, &lon2);
+    calcLatLon(grid1, &lat1, &lon1);
+    calcLatLon(grid2, &lat2, &lon2);
 
     double R = 6371.0; // Mean Earth radius in km (ARRL contest standard)
     double dLat = toRad(lat2 - lat1);
@@ -362,7 +373,7 @@ double remlongitude = 0.0, remlatitude = 0.0;
 double distance = 0.0, bearing = 0.0, revbearing = 0.0;
 
 void updateBearings() {
-  calcGridCenter(remote, &remlatitude, &remlongitude);
+  calcLatLon(remote, &remlatitude, &remlongitude);
   calculateWGS84(mylatitude, mylongitude, remlatitude, remlongitude, distance, bearing);
   calculateWGS84(remlatitude, remlongitude, mylatitude, mylongitude, distance, revbearing);
 
@@ -388,12 +399,14 @@ void updateBearings() {
   gfx->setCursor(TGTBEARX, BEARY);
   gfx->print(buf);
 
+#if ENABLE_ARRL_DIST
   char arrl_str[24];
   double arrl_dist = calculateARRLDistance(mygrid, remote);
   sprintf(arrl_str, "ARRL %6.1f k  ", arrl_dist);
   gfx->setTextSize(ARRL_SZ);
   gfx->setCursor(ARRL_X, ARRL_Y);
   gfx->print(arrl_str);
+#endif
 }
 
 void setup() {
