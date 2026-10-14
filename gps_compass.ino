@@ -47,7 +47,7 @@
 #define TGTBEARX             (BEARX + 6 * CHAR_W(BEARSZ))
 
 // Set to 1 to show ARRL contest distance (Row 6), 0 to hide
-#define ENABLE_ARRL_DIST     0
+#define ENABLE_ARRL_DIST     1
 
 #if ENABLE_ARRL_DIST
 // Row 4: UTC Time
