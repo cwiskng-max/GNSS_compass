@@ -61,6 +61,11 @@
 #define ARRL_X               123
 #define ARRL_Y               408
 
+// Row 7: Firmware Version Footer
+#define FW_VERSION           "v0.2-dev"
+#define VER_SZ               2
+#define VER_Y                444
+
 // Inactivity Auto-Lock Timeout (milliseconds; set to 0 to disable)
 #define EDIT_TIMEOUT_MS      5000
 
@@ -408,6 +413,8 @@ void setup() {
 
   gpsSerial.begin(GPS_BAUD, SERIAL_8N1, RXD2, TXD2);
   Serial.begin (115200);
+  Serial.print("GNSS Compass ");
+  Serial.println(FW_VERSION);
 
   for (int i = 0; i < BSZ; i++) {
     sinbuff[i] = 0.0;
@@ -431,6 +438,14 @@ void setup() {
   gfx->setTextSize(TIME_SZ);
   gfx->setCursor(TIME_X, TIME_Y);
   gfx->print("--:--Z");
+
+  // Display firmware version footer
+  int ver_w = strlen(FW_VERSION) * CHAR_W(VER_SZ);
+  gfx->setTextSize(VER_SZ);
+  gfx->setTextColor(0x7BEF, BLACK);
+  gfx->setCursor((480 - ver_w) / 2, VER_Y);
+  gfx->print(FW_VERSION);
+  gfx->setTextColor(WHITE, BLACK);
 
 }
 

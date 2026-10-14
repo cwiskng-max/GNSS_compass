@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - main
-      - ui-enhancements
     tags:
       - 'v*'
   pull_request:
@@ -42,6 +41,12 @@ jobs:
         run: |
           mkdir -p build/gps_compass
           cp gps_compass.ino build/gps_compass/
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            FW_VER="${{ github.ref_name }}"
+          else
+            FW_VER="v0.2-${GITHUB_SHA::7}"
+          fi
+          sed -i "s/#define FW_VERSION .*/#define FW_VERSION           \"$FW_VER\"/" build/gps_compass/gps_compass.ino
           arduino-cli compile --fqbn esp32:esp32:esp32s3:FlashSize=16M,PSRAM=opi --export-binaries build/gps_compass
           cp build/gps_compass/build/esp32.esp32.esp32s3/gps_compass.ino.bin ./gps_compass.ino.esp32s3.bin
 
@@ -52,14 +57,11 @@ jobs:
           path: gps_compass.ino.esp32s3.bin
           if-no-files-found: error
 
-      - name: Publish Release (Rolling Latest & Tagged Releases)
-        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+      - name: Create GitHub Release and Attach Binary
+        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || 'latest' }}
-          name: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || 'Continuous Build' }}
-          prerelease: ${{ !startsWith(github.ref, 'refs/tags/v') }}
           files: gps_compass.ino.esp32s3.bin
-          generate_release_notes: ${{ startsWith(github.ref, 'refs/tags/v') }}
+          generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
