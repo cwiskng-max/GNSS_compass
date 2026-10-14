@@ -3,6 +3,7 @@
 #include <PCF8574.h>
 #include <Adafruit_CST8XX.h>
 #include <math.h>
+#include <ctype.h>
 
 // I2C to PCF8574
 #define I2C_SDA_PIN 38
@@ -10,20 +11,58 @@
 #define BKL_PIN 6
 
 #define I2C_TOUCH_ADDR 0x15
-#define REMSTARTX 80
-#define REMSTARTY 100
 #define INCA(x) (((x+1)>'Z')?'A':(x+1))
 #define DECA(x) (((x-1)<'A')?'Z':(x-1))
 #define INCN(x) (((x+1)>'9')?'0':(x+1))
 #define DECN(x) (((x-1)<'0')?'9':(x-1))
-#define REMSIZE 8
-#define REMSTOPX (REMSIZE*6*6+REMSTARTX)
-#define REMSTOPY (REMSIZE*8*2+REMSTARTY)
-#define BEARSZ 6
-#define BEARX 30
-#define BEARY REMSTOPY
 #define INCG(x) (x=(x>='0' && x<='9')?INCN(x):INCA(x))
 #define DECG(x) (x=(x>='0' && x<='9')?DECN(x):DECA(x))
+
+// --- Display Layout (480 x 480) ---
+#define CHAR_W(sz)           (6 * (sz))
+#define CHAR_H(sz)           (8 * (sz))
+
+// Row 1: Local Maidenhead Grid
+#define LOC_SZ               4
+#define LOC_X                144
+#define LOC_Y                35
+
+// Row 2: Target Grid
+#define REMSIZE              8
+#define REMSTARTX            80
+#define REMSTARTY            95
+#define REMSTOPX             (6 * CHAR_W(REMSIZE) + REMSTARTX)
+#define REMSTOPY             (2 * CHAR_H(REMSIZE) + REMSTARTY)
+
+// Target Grid Touch Area (covers character row, caret row, and generous padding)
+#define TOUCH_X_MIN          50
+#define TOUCH_X_MAX          430
+#define TOUCH_Y_MIN          70
+#define TOUCH_Y_MAX          235
+
+// Row 3: Antenna Heading & Target Bearing
+#define BEARSZ               6
+#define BEARX                30
+#define BEARY                REMSTOPY
+#define TGTBEARX             (BEARX + 6 * CHAR_W(BEARSZ))
+
+// Row 4: UTC Time
+#define TIME_SZ              6
+#define TIME_X               132
+#define TIME_Y               290
+
+// Row 5: Reverse Bearing & Distance
+#define REVBEAR_SZ           4
+#define REVBEAR_X            90
+#define REVBEAR_Y            352
+
+// Row 6: ARRL Contest Distance
+#define ARRL_SZ              3
+#define ARRL_X               123
+#define ARRL_Y               408
+
+// Inactivity Auto-Lock Timeout (milliseconds; set to 0 to disable)
+#define EDIT_TIMEOUT_MS      5000
 
 #define aton(x) (x-'0')
 
@@ -36,16 +75,17 @@
 // Create an instance of the HardwareSerial class for Serial 2
 HardwareSerial gpsSerial(2);
 
-char remote[7] = "AA00AA";
-char base[9] = "AA00AA00";
+char remote[7] = "ZA00AA";
+char mygrid[9] = "JJ00AA00";
+bool hasLocation = false;
 
-#define ENCODER_CLK 42  
-#define ENCODER_DT 4   
+#define ENCODER_CLK 42
+#define ENCODER_DT 4
 
 volatile int counter=0;
 volatile int encState = 0;
 volatile int oldState = -1;
-volatile bool hasChanged = true;
+volatile bool hasChanged = false;
 
 PCF8574 pcf8574(0x21);
 
@@ -106,7 +146,7 @@ int neg=0;
   if (neg) {neg=0;*lon = -*lon;}
 
   *rptr = &ptr[3];
-  
+
 }
 
 
@@ -114,7 +154,7 @@ void calcLatLon(char *dst, float *lat, float *lon) {
 
   *lon = (dst[0]-'A')*20.0+(dst[2]-'0')*2.0+(dst[4]-'A')*.08333333-180.0+.08333333/2.0;
   *lat = (dst[1]-'A')*10.0+(dst[3]-'0')*1.0+(dst[5]-'A')*.04166666-90.0+.04166666/2.0;
-  
+
 }
 
 
@@ -182,7 +222,7 @@ void initPins() {
   delay(120);
   pcf8574.digitalWrite(P4, HIGH);
   delay(120);
- 
+
   // Touchpad
   pcf8574.digitalWrite(P0, HIGH);
   delay(100);
@@ -206,18 +246,34 @@ void initLCD() {
 
 }
 
-int remotec;
+int remotec = 0;
+bool isEditing = true;
+unsigned long lastEditActivity = 0;
 
 void printrem() {
 
-  gfx->setTextSize(REMSIZE); 
-  gfx->setCursor(REMSTARTX,REMSTARTY);
-  gfx->print(remote);
-  gfx->setCursor(REMSTARTX,REMSTARTY+REMSIZE*8);
+  gfx->setTextSize(REMSIZE);
+
+  for (int i = 0; i < 6; i++) {
+    if (isEditing && i == remotec) {
+      gfx->setTextColor(YELLOW, BLACK);
+    } else {
+      gfx->setTextColor(WHITE, BLACK);
+    }
+    gfx->setCursor(REMSTARTX + i * CHAR_W(REMSIZE), REMSTARTY);
+    gfx->print(remote[i]);
+  }
+
+  gfx->setTextColor(YELLOW, BLACK);
+  gfx->setCursor(REMSTARTX, REMSTARTY + CHAR_H(REMSIZE));
   gfx->print("      ");
-  gfx->setCursor(REMSTARTX+remotec*6*REMSIZE,REMSTARTY+REMSIZE*8);
-  gfx->print("^");
-  
+  if (isEditing) {
+    gfx->setCursor(REMSTARTX + remotec * CHAR_W(REMSIZE), REMSTARTY + CHAR_H(REMSIZE));
+    gfx->print("^");
+  }
+
+  gfx->setTextColor(WHITE, BLACK);
+
 }
 
 
@@ -232,13 +288,49 @@ double toDeg(double rad) {
     return rad * 180.0 / M_PI;
 }
 
+// ARRL 6-character grid center coordinates
+void calcGridCenter(const char *grid, double *lat, double *lon) {
+    char g[6];
+    for (int i = 0; i < 6; i++) {
+        g[i] = toupper((unsigned char)grid[i]);
+    }
+    *lon = (g[0] - 'A') * 20.0 + (g[2] - '0') * 2.0 + (g[4] - 'A') * (5.0 / 60.0) - 180.0 + (2.5 / 60.0);
+    *lat = (g[1] - 'A') * 10.0 + (g[3] - '0') * 1.0 + (g[5] - 'A') * (2.5 / 60.0) - 90.0 + (1.25 / 60.0);
+}
+
+// ARRL contest distance calculation (spherical Earth R = 6371.0 km, 1 km minimum)
+double calculateARRLDistance(const char *grid1, const char *grid2) {
+    if (strncmp(grid1, grid2, 6) == 0) {
+        return 1.0;
+    }
+    double lat1, lon1, lat2, lon2;
+    calcGridCenter(grid1, &lat1, &lon1);
+    calcGridCenter(grid2, &lat2, &lon2);
+
+    double R = 6371.0; // Mean Earth radius in km (ARRL contest standard)
+    double dLat = toRad(lat2 - lat1);
+    double dLon = toRad(lon2 - lon1);
+    double rLat1 = toRad(lat1);
+    double rLat2 = toRad(lat2);
+
+    double a = sin(dLat / 2.0) * sin(dLat / 2.0) +
+               cos(rLat1) * cos(rLat2) *
+               sin(dLon / 2.0) * sin(dLon / 2.0);
+    if (a > 1.0) a = 1.0;
+    if (a < 0.0) a = 0.0;
+    double c = 2.0 * atan2(sqrt(a), sqrt(1.0 - a));
+    double d = R * c;
+
+    return (d < 1.0) ? 1.0 : d;
+}
+
 // Calculate Distance (meters) and Bearing (degrees)
 void calculateWGS84(double lat1, double lon1, double lat2, double lon2, double &distance, double &bearing) {
     double R = 6378137.0; // WGS84 semi-major axis in meters
-    
+
     double dLat = toRad(lat2 - lat1);
     double dLon = toRad(lon2 - lon1);
-    
+
     double rLat1 = toRad(lat1);
     double rLat2 = toRad(lat2);
 
@@ -253,7 +345,7 @@ void calculateWGS84(double lat1, double lon1, double lat2, double lon2, double &
     double y = sin(dLon) * cos(rLat2);
     double x = cos(rLat1) * sin(rLat2) - sin(rLat1) * cos(rLat2) * cos(dLon);
     bearing = toDeg(atan2(y, x));
-    
+
     // Normalize bearing to 0-360 degrees
     if (bearing < 0.0) {
         bearing += 360.0;
@@ -266,20 +358,71 @@ void calculateWGS84(double lat1, double lon1, double lat2, double lon2, double &
 #define BSZ 5
 float sinbuff[BSZ],cosbuff[BSZ];
 
+bool hasHeading = false;
+float mylongitude = 0.0, mylatitude = 0.0;
+float remlongitude = 0.0, remlatitude = 0.0;
+double distance = 0.0, bearing = 0.0, revbearing = 0.0;
+
+void updateBearings() {
+  calcLatLon(remote, &remlatitude, &remlongitude);
+  calculateWGS84(mylatitude, mylongitude, remlatitude, remlongitude, distance, bearing);
+  calculateWGS84(remlatitude, remlongitude, mylatitude, mylongitude, distance, revbearing);
+
+  char buf[20];
+  sprintf(&buf[0], "%5.1f %4i k  ", revbearing, (int)(distance / 1000));
+  gfx->setTextSize(REVBEAR_SZ);
+  gfx->setCursor(REVBEAR_X, REVBEAR_Y);
+  gfx->print(buf);
+
+  if (!hasHeading) {
+    gfx->setTextSize(BEARSZ);
+    gfx->setCursor(BEARX, BEARY);
+    gfx->print("---.-");
+  }
+
+  sprintf(&buf[0], "%5.1f", bearing);
+  gfx->setTextSize(BEARSZ);
+  gfx->setCursor(TGTBEARX, BEARY);
+  gfx->print(buf);
+
+  char arrl_str[24];
+  double arrl_dist = calculateARRLDistance(mygrid, remote);
+  if (arrl_dist < 1000.0) {
+    sprintf(arrl_str, "ARRL %5.1f k ", arrl_dist);
+  } else {
+    sprintf(arrl_str, "ARRL %5.1f k", arrl_dist);
+  }
+  gfx->setTextSize(ARRL_SZ);
+  gfx->setCursor(ARRL_X, ARRL_Y);
+  gfx->print(arrl_str);
+}
+
 void setup() {
 
   gpsSerial.begin(GPS_BAUD, SERIAL_8N1, RXD2, TXD2);
   Serial.begin (115200);
-  
+
   for (int i = 0; i < BSZ; i++)
     sinbuff[i] = cosbuff[i] = 0.0;
-    
+
   initPins();
   initBacklight();
   initLCD();
   initEncoder();
+
+  calcLocator(mygrid, mylatitude, mylongitude);
+  gfx->setTextSize(LOC_SZ);
+  gfx->setCursor(LOC_X, LOC_Y);
+  gfx->print(mygrid);
+
+  lastEditActivity = millis();
   printrem();
-  
+  updateBearings();
+
+  gfx->setTextSize(TIME_SZ);
+  gfx->setCursor(TIME_X, TIME_Y);
+  gfx->print("--:--Z");
+
 }
 
 void loop() {
@@ -288,42 +431,56 @@ void loop() {
   static float sinavg = 0.0,cosavg=0.0;
   static char sbuff[1000];
   static int ptr = 0;
-  static float mylongitude,mylatitude;
-  static float remlongitude,remlatitude;
   static int hours,minutes;
-  static double distance, bearing, revbearing;
-  
+
   while (1) {
 
     if (hasChanged) {
       hasChanged = false;
-      
-      if (counter>0) INCG(remote[remotec]);
-      else DECG(remote[remotec]);
 
-      printrem();
-      calcLatLon(remote,&remlatitude,&remlongitude);
-      calculateWGS84(mylatitude,mylongitude, remlatitude, remlongitude,distance,bearing);
-      calculateWGS84(remlatitude,remlongitude, mylatitude, mylongitude,distance,revbearing);
+      if (isEditing) {
+        lastEditActivity = millis();
+        if (counter>0) INCG(remote[remotec]);
+        else DECG(remote[remotec]);
 
-      char buf[20];
-      sprintf(&buf[0],"%5.1f %4i k  ",revbearing,(int)(distance/1000));
-      gfx->setTextSize(4);
-      gfx->setCursor(90,400);
-      gfx->print(buf);
-      
+        printrem();
+        updateBearings();
+      }
+
     }
-    
+
+    static bool wasTouched = false;
+    static unsigned long lastTouchTime = 0;
     if (tsPanel.touched()) {
-      CST_TS_Point p = tsPanel.getPoint(0);
-      if (REMSTARTX<p.x && p.x<REMSTOPX && REMSTARTY<p.y && p.y<REMSTOPY){
-        remotec = (p.x-REMSTARTX) / (REMSIZE*6);
+      if (!wasTouched && (millis() - lastTouchTime >= 200)) {
+        CST_TS_Point p = tsPanel.getPoint(0);
+        if (p.x != 0 || p.y != 0) {
+          wasTouched = true;
+          lastTouchTime = millis();
+          if (TOUCH_X_MIN <= p.x && p.x <= TOUCH_X_MAX && TOUCH_Y_MIN <= p.y && p.y <= TOUCH_Y_MAX) {
+            int touched_char = (p.x - REMSTARTX) / CHAR_W(REMSIZE);
+            if (touched_char < 0) touched_char = 0;
+            if (touched_char > 5) touched_char = 5;
+            remotec = touched_char;
+            isEditing = true;
+            lastEditActivity = millis();
+            printrem();
+          }
+        }
+      }
+    } else {
+      wasTouched = false;
+    }
+
+    if (isEditing && EDIT_TIMEOUT_MS > 0) {
+      if (millis() - lastEditActivity >= EDIT_TIMEOUT_MS) {
+        isEditing = false;
         printrem();
       }
     }
 
 
-    
+
     if (int num = gpsSerial.available()) {
       int num1 = gpsSerial.readBytesUntil('\n',&sbuff[ptr],num); // read all the available characters up to the end of line
       ptr += num1;
@@ -331,43 +488,50 @@ void loop() {
         gpsSerial.read();  // consume the '\n'
         sbuff[ptr]=0;      // terminate the string
         ptr=0;             // set the ptr back to 0 for the next line from the gps
-        
-        if (strncmp(sbuff, "$GNHDT",6) == 0) {
-          sinavg -= sinbuff[i];
-          sinavg += sinbuff[i] = sin(toRad(strtof(&sbuff[7], NULL)));
-          cosavg -= cosbuff[i];
-          cosavg += cosbuff[i] = cos(toRad(strtof(&sbuff[7], NULL)));
-         
-          i = (1 + i) % BSZ;
 
-          char str[20];
-          sprintf(&str[0], "%5.1f %5.1f", fmod(((toDeg(atan2(sinavg/BSZ, cosavg/BSZ))) + 270.0),360.0),bearing);
-          gfx->setCursor(BEARX,BEARY);
-          gfx->setTextSize(BEARSZ);
-          gfx->print(&str[0]);
+        if (strncmp(sbuff, "$GNHDT",6) == 0) {
+          if (sbuff[7] != ',' && sbuff[7] != '\0' && sbuff[7] != '\r' && sbuff[7] != '\n') {
+            hasHeading = true;
+            sinavg -= sinbuff[i];
+            sinavg += sinbuff[i] = sin(toRad(strtof(&sbuff[7], NULL)));
+            cosavg -= cosbuff[i];
+            cosavg += cosbuff[i] = cos(toRad(strtof(&sbuff[7], NULL)));
+
+            i = (1 + i) % BSZ;
+
+            char str[20];
+            sprintf(&str[0], "%5.1f %5.1f", fmod(((toDeg(atan2(sinavg/BSZ, cosavg/BSZ))) + 270.0),360.0),bearing);
+            gfx->setTextSize(BEARSZ);
+            gfx->setCursor(BEARX, BEARY);
+            gfx->print(&str[0]);
+          }
 
         }
 
         if (strncmp(sbuff, "$GNGLL",6) == 0) {
           char *ptr;
           char buf[9];
-                    
+
           parselatlon(&sbuff[7],&mylatitude,&mylongitude,&ptr);
           hours = aton(ptr[0])*10.0+aton(ptr[1]);
           minutes = aton(ptr[2])*10.0+aton(ptr[3]);
 
-          if (ptr[10]=='A') {
-          
-            gfx->setCursor(140,40);
-            calcLocator(&buf[0],mylatitude,mylongitude);
-            gfx->setTextSize(4);
+          char *status_comma = strchr(ptr, ',');
+          if ((status_comma != NULL && *(status_comma + 1) == 'A') || ptr[10] == 'A') {
+            hasLocation = true;
+            calcLocator(mygrid, mylatitude, mylongitude);
+
+            gfx->setTextSize(LOC_SZ);
+            gfx->setCursor(LOC_X, LOC_Y);
+            gfx->print(mygrid);
+
+            sprintf(&buf[0], "%02d:%02dZ", hours, minutes);
+            gfx->setTextSize(TIME_SZ);
+            gfx->setCursor(TIME_X, TIME_Y);
             gfx->print(buf);
 
-            sprintf(&buf[0],"%02d:%02d",hours,minutes);
-            gfx->setCursor(140,300);
-            gfx->setTextSize(6);
-            gfx->print(buf);
-         }
+            updateBearings();
+          }
 
         }
       }
