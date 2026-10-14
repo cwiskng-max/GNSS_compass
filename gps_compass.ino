@@ -197,7 +197,7 @@ void calcLocator(char *dst, float lat, float lon) {
 
 void initBacklight() {
   pinMode(BKL_PIN, OUTPUT);
-  analogWrite(BKL_PIN, 200);
+  analogWrite(BKL_PIN, 250);
 }
 
 void initPins() {
@@ -210,7 +210,7 @@ void initPins() {
   pcf8574.pinMode(P5, INPUT_PULLUP);  //encoder SW
 
   if (!pcf8574.begin()) {
-    gpsSerial.println("Can't init pcf8574");
+    Serial.println("Can't init pcf8574");
   }
 
   // LCD
@@ -236,6 +236,7 @@ void initPins() {
   if (!tsPanel.begin(&Wire, I2C_TOUCH_ADDR)) {
     Serial.println("No touchscreen found");
   }
+  Serial.println("reset done");
 }
 
 
@@ -359,6 +360,7 @@ void calculateWGS84(double lat1, double lon1, double lat2, double lon2, double &
 float sinbuff[BSZ],cosbuff[BSZ];
 
 bool hasHeading = false;
+bool rovdist = false;
 float mylongitude = 0.0, mylatitude = 0.0;
 float remlongitude = 0.0, remlatitude = 0.0;
 double distance = 0.0, bearing = 0.0, revbearing = 0.0;
@@ -369,10 +371,15 @@ void updateBearings() {
   calculateWGS84(remlatitude, remlongitude, mylatitude, mylongitude, distance, revbearing);
 
   char buf[20];
-  sprintf(&buf[0], "%5.1f %4i k  ", revbearing, (int)(distance / 1000));
+  int rdist = (int)floor(distance / 1000.0);
+  sprintf(&buf[0], "%5.1f %4i k  ", revbearing, rdist);
+  if ((rdist < 16) && rovdist) {
+    gfx->setTextColor(RED, WHITE);
+  }
   gfx->setTextSize(REVBEAR_SZ);
   gfx->setCursor(REVBEAR_X, REVBEAR_Y);
   gfx->print(buf);
+  gfx->setTextColor(WHITE, BLACK);
 
   if (!hasHeading) {
     gfx->setTextSize(BEARSZ);
@@ -402,8 +409,10 @@ void setup() {
   gpsSerial.begin(GPS_BAUD, SERIAL_8N1, RXD2, TXD2);
   Serial.begin (115200);
 
-  for (int i = 0; i < BSZ; i++)
-    sinbuff[i] = cosbuff[i] = 0.0;
+  for (int i = 0; i < BSZ; i++) {
+    sinbuff[i] = 0.0;
+    cosbuff[i] = 0.0;
+  }
 
   initPins();
   initBacklight();
@@ -440,6 +449,7 @@ void loop() {
 
       if (isEditing) {
         lastEditActivity = millis();
+        rovdist = false;
         if (counter>0) INCG(remote[remotec]);
         else DECG(remote[remotec]);
 
@@ -457,6 +467,20 @@ void loop() {
         if (p.x != 0 || p.y != 0) {
           wasTouched = true;
           lastTouchTime = millis();
+
+          // Tap on local grid (Row 1): copy local grid to target for rover distance check
+          if (100 <= p.x && p.x <= 340 && 0 <= p.y && p.y <= 75) {
+            for (int ii = 0; ii < 6; ii++) {
+              remote[ii] = mygrid[ii];
+            }
+            remlatitude = mylatitude;
+            remlongitude = mylongitude;
+            rovdist = true;
+            printrem();
+            updateBearings();
+          }
+
+          // Tap on target grid (Row 2): select character and enter edit mode
           if (TOUCH_X_MIN <= p.x && p.x <= TOUCH_X_MAX && TOUCH_Y_MIN <= p.y && p.y <= TOUCH_Y_MAX) {
             int touched_char = (p.x - REMSTARTX) / CHAR_W(REMSIZE);
             if (touched_char < 0) touched_char = 0;
@@ -487,9 +511,10 @@ void loop() {
       if (num != num1) {   // if the line ends before all the available characters were read
         gpsSerial.read();  // consume the '\n'
         sbuff[ptr]=0;      // terminate the string
+        Serial.println(sbuff);
         ptr=0;             // set the ptr back to 0 for the next line from the gps
 
-        if (strncmp(sbuff, "$GNHDT",6) == 0) {
+        if (strncmp(sbuff, "$GNTHS", 6) == 0 || strncmp(sbuff, "$GNHDT", 6) == 0) {
           if (sbuff[7] != ',' && sbuff[7] != '\0' && sbuff[7] != '\r' && sbuff[7] != '\n') {
             hasHeading = true;
             sinavg -= sinbuff[i];
@@ -506,9 +531,7 @@ void loop() {
             gfx->print(&str[0]);
           }
 
-        }
-
-        if (strncmp(sbuff, "$GNGLL",6) == 0) {
+        } else if (strncmp(sbuff, "$GNGLL", 6) == 0) {
           char *ptr;
           char buf[9];
 
