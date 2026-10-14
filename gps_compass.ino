@@ -399,11 +399,7 @@ void updateBearings() {
 
   char arrl_str[24];
   double arrl_dist = calculateARRLDistance(mygrid, remote);
-  if (arrl_dist < 1000.0) {
-    sprintf(arrl_str, "ARRL %5.1f k ", arrl_dist);
-  } else {
-    sprintf(arrl_str, "ARRL %5.1f k", arrl_dist);
-  }
+  sprintf(arrl_str, "ARRL %6.1f k  ", arrl_dist);
   gfx->setTextSize(ARRL_SZ);
   gfx->setCursor(ARRL_X, ARRL_Y);
   gfx->print(arrl_str);
