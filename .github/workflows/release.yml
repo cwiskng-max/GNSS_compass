@@ -1,0 +1,117 @@
+name: Release GNSS Compass Firmware
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Tag name (e.g., v0.2)'
+        required: true
+        default: 'v0.0'
+      publish_release:
+        description: 'Publish GitHub release directly (set to false for draft)'
+        required: true
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+        default: 'true'
+
+jobs:
+  release:
+    name: Build & Publish Release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # Required to create releases and push tags
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+
+      - name: Validate Tag Format & Pre-flight Check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ inputs.tag_name || github.ref_name }}"
+          echo "Validating release tag: $TAG"
+
+          # Tag format validation: strictly v<major>.<minor> (e.g., v0.2)
+          TAG_PATTERN='^v[0-9]+\.[0-9]+$'
+          if ! [[ "$TAG" =~ $TAG_PATTERN ]]; then
+            echo "Error: Tag '$TAG' does not match expected format: $TAG_PATTERN"
+            echo "Format must strictly be v<major>.<minor> (e.g., v0.2, without a third digit)"
+            exit 1
+          fi
+
+          # Pre-flight check: ensure tag or release does not already exist
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            if git rev-parse "refs/tags/$TAG" >/dev/null 2>&1; then
+              echo "Error: Git tag '$TAG' already exists in repository. Aborting release."
+              exit 1
+            fi
+            if gh release view "$TAG" >/dev/null 2>&1; then
+              echo "Error: GitHub release '$TAG' already exists. Aborting release."
+              exit 1
+            fi
+          else
+            if gh release view "$TAG" >/dev/null 2>&1; then
+              echo "Release '$TAG' already exists. Aborting."
+              exit 1
+            fi
+          fi
+
+      - name: Setup Arduino CLI
+        uses: arduino/setup-arduino-cli@v2
+
+      - name: Install ESP32 Platform & Libraries
+        run: |
+          arduino-cli config init
+          arduino-cli config set board_manager.additional_urls https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
+          arduino-cli core update-index
+          arduino-cli core install esp32:esp32@2.0.14
+          arduino-cli lib install "GFX Library for Arduino"@1.3.1
+          arduino-cli lib install "PCF8574 library"
+          arduino-cli lib install "Adafruit CST8XX Library"
+          arduino-cli lib install "Adafruit BusIO"
+
+      - name: Compile Firmware & Inject Version
+        run: |
+          TAG="${{ inputs.tag_name || github.ref_name }}"
+          echo "Building firmware for release: $TAG"
+          mkdir -p build/gps_compass
+          cp gps_compass.ino build/gps_compass/
+          sed -i "s/#define FW_VERSION .*/#define FW_VERSION           \"$TAG\"/" build/gps_compass/gps_compass.ino
+          arduino-cli compile --fqbn esp32:esp32:esp32s3:FlashSize=16M,PSRAM=opi --export-binaries build/gps_compass
+          mkdir -p dist
+          cp build/gps_compass/build/esp32.esp32.esp32s3/gps_compass.ino.bin ./dist/gps_compass.ino.esp32s3.bin
+
+          # Generate checksums for release assets
+          cd dist && sha256sum * > CHECKSUMS && cd ..
+
+      - name: Create Release and Upload Assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PUBLISH_RELEASE: ${{ inputs.publish_release }}
+        run: |
+          TAG="${{ inputs.tag_name || github.ref_name }}"
+
+          EXTRA_FLAGS=()
+          if [ "$PUBLISH_RELEASE" = "false" ]; then
+            EXTRA_FLAGS+=(--draft)
+          fi
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            EXTRA_FLAGS+=(--target "${{ github.ref_name }}")
+          fi
+
+          gh release create "$TAG" \
+            "./dist/gps_compass.ino.esp32s3.bin#ESP32-S3 Firmware Binary" \
+            "./dist/CHECKSUMS#Asset Checksums" \
+            --title "GNSS Compass Release: $TAG" \
+            --generate-notes \
+            "${EXTRA_FLAGS[@]}"
