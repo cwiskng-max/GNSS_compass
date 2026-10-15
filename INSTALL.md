@@ -2,7 +2,7 @@
 
 This guide covers flashing pre-compiled firmware binaries (`gps_compass.ino.esp32s3.bin`) onto the Elecrow 2.1" ESP32 Rotary Display without needing to compile from source.
 
-If you are looking to build the firmware from source code using `arduino-cli`, refer to the upcoming Build Guide (`BUILD.md`).
+If you are looking to build the firmware from source code using `arduino-cli`, refer to the [Build Guide](BUILD.md).
 
 ---
 

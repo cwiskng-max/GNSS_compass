@@ -55,4 +55,4 @@ SAVECONFIG
 
 ## 4. Software Build Note
 
-If building the display firmware from source rather than installing the pre-compiled binary, ensure you use the exact library versions specified by Elecrow (see the upcoming `BUILD.md` guide for complete build toolchain instructions).
+If building the display firmware from source rather than installing the pre-compiled binary, ensure you use the exact library versions specified by Elecrow (see the [Build Guide](BUILD.md) for complete build toolchain instructions).
