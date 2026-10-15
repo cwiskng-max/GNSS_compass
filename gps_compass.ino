@@ -262,6 +262,12 @@ int remotec = 0;
 bool isEditing = true;
 unsigned long lastEditActivity = 0;
 
+void printLocalGrid() {
+  gfx->setTextSize(LOC_SZ);
+  gfx->setCursor(LOC_X, LOC_Y);
+  gfx->print(mygrid);
+}
+
 void printrem() {
 
   gfx->setTextSize(REMSIZE);
@@ -415,6 +421,7 @@ void setup() {
   Serial.begin (115200);
   Serial.print("GNSS Compass ");
   Serial.println(FW_VERSION);
+  Serial.println(F("Type 'test' to run visual display demo"));
 
   for (int i = 0; i < BSZ; i++) {
     sinbuff[i] = 0.0;
@@ -440,13 +447,130 @@ void setup() {
   gfx->print("--:--Z");
 
   // Display firmware version footer
-  int ver_w = strlen(FW_VERSION) * CHAR_W(VER_SZ);
+  showFooterText(FW_VERSION, 0x7BEF);
+}
+
+// Display centered text in footer row (used for version and test step titles)
+void showFooterText(const char *msg, uint16_t color) {
+  gfx->fillRect(0, VER_Y, 480, CHAR_H(VER_SZ) + 4, BLACK);
+  int w = strlen(msg) * CHAR_W(VER_SZ);
   gfx->setTextSize(VER_SZ);
-  gfx->setTextColor(0x7BEF, BLACK);
-  gfx->setCursor((480 - ver_w) / 2, VER_Y);
-  gfx->print(FW_VERSION);
+  gfx->setTextColor(color, BLACK);
+  gfx->setCursor((480 - w) / 2, VER_Y);
+  gfx->print(msg);
+  gfx->setTextColor(WHITE, BLACK);
+}
+
+// On-demand visual display self-test demo
+void runVisualSelfTest() {
+  Serial.println(F("\n=== Starting Visual Display Self-Test Demo ==="));
+
+  // Save current live state
+  char saved_remote[7];
+  char saved_mygrid[9];
+  memcpy(saved_remote, remote, sizeof(saved_remote));
+  memcpy(saved_mygrid, mygrid, sizeof(saved_mygrid));
+  float saved_mylat = mylatitude, saved_mylon = mylongitude;
+  bool saved_hasHeading = hasHeading;
+  bool saved_rovdist = rovdist;
+  bool saved_isEditing = isEditing;
+  isEditing = false;
+
+  // Test 1: Same Grid (ARRL 1.0 km minimum rule)
+  Serial.println(F("[Test 1/5] Same Grid (ARRL 1.0 km rule)"));
+  showFooterText("TEST 1: SAME GRID", CYAN);
+  strcpy(mygrid, "CM87wa00");
+  strcpy(remote, "CM87wa");
+  mylatitude = 38.354;
+  mylongitude = -119.458;
+  hasHeading = true;
+  rovdist = false;
+  printLocalGrid();
+  printrem();
+  updateBearings();
+  delay(3000);
+
+  // Test 2: Rover Transit Alert (< 16 km, highlighted RED on WHITE)
+  Serial.println(F("[Test 2/5] Rover Transit Alert (< 16 km, highlighted RED on WHITE)"));
+  showFooterText("TEST 2: ROVER < 16K", YELLOW);
+  strcpy(remote, "CM87wb");
+  rovdist = true;
+  printrem();
+  updateBearings();
+  delay(3000);
+
+  // Test 3: Distance Under 1,000 km
+  Serial.println(F("[Test 3/5] Under 1,000 km formatting (~600 km)"));
+  showFooterText("TEST 3: DIST < 1000K", CYAN);
+  strcpy(remote, "DN13ab");
+  rovdist = false;
+  printrem();
+  updateBearings();
+  delay(3000);
+
+  // Test 4: Distance Over 1,000 km
+  Serial.println(F("[Test 4/5] Over 1,000 km formatting (~2,500 km)"));
+  showFooterText("TEST 4: DIST > 1000K", CYAN);
+  strcpy(remote, "EL29ja");
+  printrem();
+  updateBearings();
+  delay(3000);
+
+  // Test 5: Extreme Distance (> 10,000 km) and Recovery to 1.0 km
+  Serial.println(F("[Test 5/5] Extreme distance (> 10,000 km)"));
+  showFooterText("TEST 5: GHOST RECOVERY", CYAN);
+  strcpy(remote, "ZA00AA");
+  printrem();
+  updateBearings();
+  delay(2000);
+
+  Serial.println(F("  -> Dropping back to 1.0 km (verifying no ghost characters)"));
+  strcpy(remote, "CM87wa");
+  printrem();
+  updateBearings();
+  delay(2000);
+
+  // Display PASS/FAIL Result Banner
+  bool all_pass = true;
+  if (fabs(calculateARRLDistance("CM87wa", "CM87wa") - 1.0) > 0.001) all_pass = false;
+  double lat_wb, lon_wb, rover_dist, rover_bear;
+  calcLatLon("CM87wb", &lat_wb, &lon_wb);
+  calculateWGS84(38.354, -119.458, lat_wb, lon_wb, rover_dist, rover_bear);
+  if ((int)floor(rover_dist / 1000.0) >= 16) all_pass = false;
+
+  if (all_pass) {
+    Serial.println(F("Result: PASS"));
+    gfx->fillRoundRect(50, 215, 380, 52, 8, GREEN);
+    gfx->setTextColor(BLACK, GREEN);
+    gfx->setTextSize(3);
+    gfx->setCursor(96, 230);
+    gfx->print("SELF-TEST PASSED");
+  } else {
+    Serial.println(F("Result: FAIL"));
+    gfx->fillRoundRect(50, 215, 380, 52, 8, RED);
+    gfx->setTextColor(WHITE, RED);
+    gfx->setTextSize(3);
+    gfx->setCursor(96, 230);
+    gfx->print("SELF-TEST FAILED");
+  }
+  delay(2500);
+  gfx->fillRect(50, 215, 380, 52, BLACK);
   gfx->setTextColor(WHITE, BLACK);
 
+  // Restore live state and firmware version footer
+  memcpy(remote, saved_remote, sizeof(remote));
+  memcpy(mygrid, saved_mygrid, sizeof(mygrid));
+  mylatitude = saved_mylat;
+  mylongitude = saved_mylon;
+  hasHeading = saved_hasHeading;
+  rovdist = saved_rovdist;
+  isEditing = saved_isEditing;
+  printLocalGrid();
+  printrem();
+  updateBearings();
+  showFooterText(FW_VERSION, 0x7BEF);
+
+  Serial.println(F("=== Visual Self-Test Complete (Live state restored) ===\n"));
 }
 
 void loop() {
@@ -458,6 +582,20 @@ void loop() {
   static int hours,minutes;
 
   while (1) {
+
+    if (Serial.available()) {
+      char c = Serial.peek();
+      if (c == 't' || c == 'T') {
+        while (Serial.available()) Serial.read();
+        runVisualSelfTest();
+      } else {
+        String cmd = Serial.readStringUntil('\n');
+        cmd.trim();
+        if (cmd.equalsIgnoreCase("test") || cmd.equalsIgnoreCase("demo")) {
+          runVisualSelfTest();
+        }
+      }
+    }
 
     if (hasChanged) {
       hasChanged = false;
@@ -504,6 +642,11 @@ void loop() {
             isEditing = true;
             lastEditActivity = millis();
             printrem();
+          }
+
+          // Tap on firmware version footer (Row 7): trigger visual display demo
+          if (100 <= p.x && p.x <= 380 && p.y >= 435) {
+            runVisualSelfTest();
           }
         }
       }
