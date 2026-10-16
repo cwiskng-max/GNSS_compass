@@ -53,6 +53,7 @@ SAVECONFIG
 
 ---
 
-## 4. Software Build Note
+## 4. Next Steps: Firmware Setup & Installation
 
-If building the display firmware from source rather than installing the pre-compiled binary, ensure you use the exact library versions specified by Elecrow (see the [Build Guide](BUILD.md) for complete build toolchain instructions).
+* **[Getting the Firmware](FIRMWARE.md):** Covers both downloading the pre-compiled release binary (recommended) and building from source code.
+* **[Firmware Installation Guide](INSTALL.md):** Step-by-step flashing instructions using `esptool` for everyone once the firmware binary is ready.

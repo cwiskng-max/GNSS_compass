@@ -1,26 +1,17 @@
 # Firmware Installation Guide
 
-This guide covers flashing pre-compiled firmware binaries (`gps_compass.ino.esp32s3.bin`) onto the Elecrow 2.1" ESP32 Rotary Display without needing to compile from source.
+This guide covers flashing the firmware binary (`gps_compass.ino.esp32s3.bin`) onto the Elecrow 2.1" ESP32 Rotary Display using `esptool`. Whether you downloaded the pre-compiled release binary or compiled your own from source code, the installation steps are identical.
 
-If you are looking to build the firmware from source code using `arduino-cli`, refer to the [Build Guide](BUILD.md).
+> [!TIP]
+> If you do not yet have the `gps_compass.ino.esp32s3.bin` binary file, see **[Getting the Firmware](FIRMWARE.md)** first.
 
 ---
 
-## 1. Prerequisites & Hardware
+## 1. Prerequisites
 
 * **Hardware:** [Elecrow 2.1" ESP32 Rotary Display](BOM.md) (ESP32-S3 with 16MB Flash / 8MB OPI PSRAM).
 * **Cable:** USB Type-C data cable (ensure it supports data transfer, not power-only).
-* **Firmware Binary:** Download the latest `gps_compass.ino.esp32s3.bin` and corresponding `CHECKSUMS` file from the repository [Releases](../../releases).
-
-### Verifying Download Integrity (Optional but Recommended)
-On Linux/macOS, verify the checksum in the directory where you downloaded both files:
-```bash
-sha256sum -c CHECKSUMS
-```
-It should report:
-```text
-gps_compass.ino.esp32s3.bin: OK
-```
+* **Firmware Binary:** `gps_compass.ino.esp32s3.bin` present on your computer (acquired via [FIRMWARE.md](FIRMWARE.md)).
 
 ---
 
@@ -138,4 +129,4 @@ Once flashing completes, the display will restart automatically:
    * **Row 6:** Calculated ARRL contest distance (`ARRL <dist> k`).
    * **Footer:** Firmware version string (e.g., `v0.2`).
 2. **On-Device Self-Test:** Tap directly on the firmware version string at the bottom center of the screen. The display will run through the 5-step visual self-test and display `SELF-TEST PASSED` in green. See [tests/README.md](tests/README.md) for details.
-3. **Connect Receiver:** Connect and configure the Unicore UM982 GNSS receiver following [gnss_instructions.md](gnss_instructions.md).
+3. **Connect Receiver:** Connect and configure the Unicore UM982 GNSS receiver following [RECEIVER.md](RECEIVER.md).
