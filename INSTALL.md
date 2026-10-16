@@ -130,12 +130,12 @@ On systems without a native package manager package for `esptool`, install it vi
 Once flashing completes, the display will restart automatically:
 
 1. **Screen Initialization:** The 480×480 round LCD display should illuminate and show:
-   * **Row 1:** Local Maidenhead grid (defaults to `--------` until GPS lock).
-   * **Row 2:** Target Maidenhead grid.
-   * **Row 3:** Antenna heading and target bearing.
-   * **Row 4:** UTC time (`--:--`).
-   * **Row 5:** Reverse bearing and distance (`--- deg  --- k`).
-   * **Row 6:** ARRL contest distance calculation (`ARRL   ---.- k`).
+   * **Row 1:** Local Maidenhead grid (defaults to `JJ00AA00` until GPS position lock is acquired).
+   * **Row 2:** Target Maidenhead grid (defaults to `ZA00AA` with the yellow editing caret `^`).
+   * **Row 3:** Antenna heading (`---.-` until GPS true heading is received) and calculated target bearing.
+   * **Row 4:** UTC time (`--:--Z` until GPS time is received).
+   * **Row 5:** Calculated reverse bearing and distance (`<bear> deg  <dist> k`) computed between the local and target grids.
+   * **Row 6:** Calculated ARRL contest distance (`ARRL <dist> k`).
    * **Footer:** Firmware version string (e.g., `v0.2`).
 2. **On-Device Self-Test:** Tap directly on the firmware version string at the bottom center of the screen. The display will run through the 5-step visual self-test and display `SELF-TEST PASSED` in green. See [tests/README.md](tests/README.md) for details.
 3. **Connect Receiver:** Connect and configure the Unicore UM982 GNSS receiver following [gnss_instructions.md](gnss_instructions.md).

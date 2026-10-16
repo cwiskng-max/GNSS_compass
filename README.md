@@ -14,9 +14,9 @@ In addition to antenna heading several other functions are included:
 
 ## Documentation
 
-* **[Firmware Installation Guide](INSTALL.md):** How to download pre-compiled release binaries and flash the ESP32-S3 display using `esptool` (covers Fedora, Ubuntu, macOS, and Windows).
-* **[Compiling from Source](BUILD.md):** Step-by-step instructions for building custom firmware using `arduino-cli`.
 * **[Hardware Schematic](Schematic.pdf):** Wiring schematic for the display, power regulation, receiver, and connectors.
 * **[Bill of Materials (BOM)](BOM.md):** Complete hardware list, part descriptions, and sourcing links.
 * **[GNSS Receiver Configuration](gnss_instructions.md):** Instructions for configuring the Unicore UM982 receiver messages (`$GNHDT`, `$GNGLL`) and dual-antenna baseline.
+* **[Compiling from Source](BUILD.md):** Step-by-step instructions for building custom firmware using `arduino-cli`.
+* **[Firmware Installation Guide](INSTALL.md):** How to download pre-compiled release binaries and flash the ESP32-S3 display using `esptool` (covers Fedora, Ubuntu, macOS, and Windows).
 * **[Testing & Self-Test Guide](tests/README.md):** Information on automated host unit tests and the on-device visual self-test.
