@@ -31,29 +31,36 @@ The test suite runs automatically on every push and pull request in [`.github/wo
 6. **Round-Trip Locator Consistency (`calcLocator`):** Ensures coordinates derived from `calcLatLon` reconstruct the identical Maidenhead grid string when passed through `calcLocator`.
 7. **Buffer Bounds & Ghost Character Erasure:** Formats distances across all ranges ($1.0\text{ km}$ to $> 10,000\text{ km}$) using `"ARRL %6.1f k  "`. Verifies string lengths stay strictly within the 24-byte buffer and trailing spaces exist to erase ghost characters on screen redraws.
 8. **Rover Transit Threshold:** Asserts that distances $< 16,000\text{ m}$ activate the rover relocation alert, while $\ge 16,000\text{ m}$ clear it.
+9. **Field Extraction (`getNthField`):** Validates comma-delimited token parsing, empty fields, and bounds.
+10. **`$KSXT` Sentence Parsing:** Validates dual-antenna heading extraction and RTK Fixed (3/4), RTK Float (1/2/5), and Invalid/Lost (0) states.
+11. **Legacy Sentence Parsing:** Tests fallback parsing of `$GNHDT` and `$GNTHS` and detects lost signal from empty fields.
+12. **Current Bearing Calculation:** Validates $270^\circ$ orthogonal baseline offset and circular wrap-around $[0, 360^\circ)$.
+13. **GPS Stream Evaluation:** Validates deterministic link verdicts (Disconnected, Corrupt, Acquiring, Float, Fixed).
 
 ---
 
 ## 2. On-Demand Visual Display Self-Test (Hardware)
 
-The firmware includes an interactive self-test demo to visually verify LCD rendering, font alignment, color highlighting, and state recovery directly on the physical 480×480 screen.
+The firmware includes an interactive self-test demo to visually verify LCD rendering, font alignment, color highlighting, GPS stream diagnosis, and state recovery directly on the physical 480×480 screen.
 
 ### How to Trigger the Test
-* **Touchscreen:** Tap directly on the **firmware version string** at the bottom center of the display (`v0.2-dev`).
+* **Touchscreen:** Tap directly on the **firmware version string** at the bottom center of the display (`v0.3-dev`).
 * **USB Serial:** Send `t` or `test` to `/dev/ttyACM0` at `115200` baud.
+* *(Note: To run only the GPS stream diagnosis without the visual demo, send `status` or `gps` via USB Serial).*
 
 ### Test Sequence
-The test automatically cycles through 5 visual scenarios, displaying the current test name in the bottom footer in cyan/yellow:
+The test automatically cycles through 6 visual scenarios, displaying the current test name in the bottom footer in cyan/yellow:
 
 | Step | Footer Title | Screen State & Verification |
 | :--- | :--- | :--- |
-| **1** | `TEST 1: SAME GRID` | Local grid displays `CM87wa00` and target displays `CM87wa`. Verifies ARRL distance reads **`ARRL    1.0 k  `**. |
+| **1** | `TEST 1: SAME GRID` | Local grid displays `CM87wa00` and target displays `CM87wa`. Verifies ARRL distance reads **`ARRL    1.0 k  `** (bearing remains White). |
 | **2** | `TEST 2: ROVER < 16K` | Target grid set to adjacent subsquare `CM87wb` ($\sim 4.6\text{ km}$) with rover transit active. Verifies Row 5 turns **RED text on WHITE background**. |
 | **3** | `TEST 3: DIST < 1000K` | Target grid set to `DN13ab` ($\sim 600\text{ km}$). Verifies 3-digit distance formatting. |
 | **4** | `TEST 4: DIST > 1000K` | Target grid set to `EL29ja` ($\sim 2,500\text{ km}$). Verifies 4-digit distance formatting without screen wrapping. |
-| **5** | `TEST 5: GHOST RECOVERY` | Target grid jumps to $> 10,000\text{ km}$ (`ZA00AA`), then immediately drops back to $1.0\text{ km}$ (`CM87wa`). Verifies position 14 is cleanly erased and no ghost `'k'` remains. |
+| **5** | `TEST 5: GHOST RECOVERY` | Target grid jumps to $> 10,000\text{ km}$ (`ZA00AA`), then drops back to $1.0\text{ km}$ (`CM87wa`). Verifies position 14 is cleanly erased and no ghost `'k'` remains. |
+| **6** | `TEST 6: BEARING / GPS` | Rapidly tests bearing quality colors (1s White $\to$ 1s Yellow $\to$ 1s Red), then evaluates live `Serial2` data stream from UM982 receiver. Displays centered popup card: **`GPS: RTK FIXED (OK)`** (Green), **`GPS: RTK FLOAT (WARN)`** (Yellow), **`GPS: ACQUIRING`** (Yellow), or **`GPS: NO DATA / CABLE`** (Red). Prints full diagnostic report to serial console. |
 
 ### Pass/Fail Confirmation & Clean Restoration
 * **Programmatic Assertions:** The firmware computes programmatic verification checks for the ARRL 1 km rule and rover threshold.
 * **On-Screen Banner:** A centered green **`SELF-TEST PASSED`** banner pops up across the screen for 2.5 seconds upon completion.
-* **State Restoration:** Erases the banner and cleanly restores your live GPS coordinates, local grid, target grid, heading, and the centered grey version footer (`v0.2-dev`).
+* **State Restoration:** Erases the banner and cleanly restores your live GPS coordinates, local grid, target grid, heading, and the centered grey version footer (`v0.3-dev`).

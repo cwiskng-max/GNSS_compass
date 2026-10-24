@@ -5,6 +5,24 @@
 #include <math.h>
 #include <ctype.h>
 
+// --- Bearing Quality & Link Diagnostic Enums ---
+enum BearingQuality {
+  BEARING_NONE = 0,    // Fresh start, never acquired -> WHITE (---.-)
+  BEARING_FIXED = 1,   // High precision (RTK Fixed) -> WHITE
+  BEARING_FLOAT = 2,   // Reduced quality (RTK Float) -> YELLOW
+  BEARING_LOST = 3     // Signal lost / stale timeout -> RED
+};
+
+enum GpsLinkVerdict {
+  GPS_LINK_DISCONNECTED = 0,   // No bytes received (>3s) or total bytes == 0
+  GPS_LINK_NOISY_CORRUPT = 1,  // Raw bytes received, but no valid NMEA/KSXT sentences
+  GPS_LINK_ACQUIRING = 2,      // Valid sentences streaming, waiting for satellites
+  GPS_LINK_POSITION_ONLY = 3,  // Position valid, waiting for dual-antenna heading
+  GPS_LINK_HEADING_FLOAT = 4,  // Dual-antenna heading active in Float mode (Yellow)
+  GPS_LINK_OK_FIXED = 5        // Dual-antenna heading active in Fixed mode (White)
+};
+// --- End Bearing Quality & Link Diagnostic Enums ---
+
 // I2C to PCF8574
 #define I2C_SDA_PIN 38
 #define I2C_SCL_PIN 39
@@ -77,7 +95,7 @@
 #endif
 
 // Row 7: Firmware Version Footer
-#define FW_VERSION           "v0.2-dev"
+#define FW_VERSION           "v0.3-dev"
 #define VER_SZ               2
 #define VER_Y                444
 
@@ -369,14 +387,165 @@ void calculateWGS84(double lat1, double lon1, double lat2, double lon2, double &
 
 
 
+// --- Bearing Quality & State Machine ---
+#define HEADING_TIMEOUT_MS   1500
 #define BSZ 5
-float sinbuff[BSZ],cosbuff[BSZ];
+
+const char* getNthField(const char* str, int n) {
+  int count = 0;
+  while (*str) {
+    if (count == n) return str;
+    if (*str == ',') count++;
+    str++;
+  }
+  if (count == n) return str;
+  return NULL;
+}
+
+bool parseKSXT(const char *sentence, float *heading_out, BearingQuality *quality_out) {
+  const char *h_field = getNthField(sentence, 5);
+  if (h_field == NULL || *h_field == ',' || *h_field == '*' || *h_field == '\0' || *h_field == '\r' || *h_field == '\n') {
+    *quality_out = BEARING_LOST;
+    return false;
+  }
+
+  const char *q_field = getNthField(sentence, 11);
+  int qual = 0;
+  if (q_field != NULL && *q_field >= '0' && *q_field <= '9') {
+    qual = *q_field - '0';
+  }
+
+  if (qual == 3 || qual == 4) {
+    *quality_out = BEARING_FIXED;
+  } else if (qual == 2 || qual == 5 || qual == 1) {
+    *quality_out = BEARING_FLOAT;
+  } else {
+    *quality_out = BEARING_LOST;
+    return false;
+  }
+
+  *heading_out = strtof(h_field, NULL);
+  return true;
+}
+
+bool parseHDT(const char *sentence, float *heading_out, BearingQuality *quality_out) {
+  const char *h_field = getNthField(sentence, 1);
+  if (h_field == NULL || *h_field == ',' || *h_field == '*' || *h_field == '\0' || *h_field == '\r' || *h_field == '\n') {
+    *quality_out = BEARING_LOST;
+    return false;
+  }
+
+  *heading_out = strtof(h_field, NULL);
+  *quality_out = BEARING_FIXED;
+  return true;
+}
+
+bool parseTHS(const char *sentence, float *heading_out, BearingQuality *quality_out) {
+  const char *h_field = getNthField(sentence, 1);
+  if (h_field == NULL || *h_field == ',' || *h_field == '*' || *h_field == '\0' || *h_field == '\r' || *h_field == '\n') {
+    *quality_out = BEARING_LOST;
+    return false;
+  }
+
+  const char *m_field = getNthField(sentence, 2);
+  if (m_field == NULL || *m_field == 'V' || *m_field == 'v' || *m_field == ',' || *m_field == '*') {
+    *quality_out = BEARING_LOST;
+    return false;
+  }
+
+  *heading_out = strtof(h_field, NULL);
+  *quality_out = BEARING_FIXED;
+  return true;
+}
+
+bool parseHeadingSentence(const char *sentence, float *heading_out, BearingQuality *quality_out) {
+  if (strncmp(sentence, "$KSXT", 5) == 0) {
+    return parseKSXT(sentence, heading_out, quality_out);
+  } else if (strncmp(sentence, "$GNTHS", 6) == 0 || strncmp(sentence, "$GPTHS", 6) == 0) {
+    return parseTHS(sentence, heading_out, quality_out);
+  } else if (strncmp(sentence, "$GNHDT", 6) == 0 || strncmp(sentence, "$GPHDT", 6) == 0) {
+    return parseHDT(sentence, heading_out, quality_out);
+  }
+  return false;
+}
+
+double calcCurrentBearing(float s_avg, float c_avg) {
+  double b = fmod(toDeg(atan2((double)s_avg / (double)BSZ, (double)c_avg / (double)BSZ)) + 270.0, 360.0);
+  if (b < 0.0) b += 360.0;
+  return b;
+}
+
+GpsLinkVerdict evaluateGpsStream(
+    unsigned long now,
+    unsigned long totalBytes,
+    unsigned long lastByteTime,
+    unsigned int gllCount,
+    unsigned int ksxtCount,
+    unsigned int hdtCount,
+    bool hasLoc,
+    bool hasHdg,
+    BearingQuality quality)
+{
+  if (totalBytes == 0 || (now - lastByteTime > 3000)) {
+    return GPS_LINK_DISCONNECTED;
+  }
+  if (gllCount == 0 && ksxtCount == 0 && hdtCount == 0) {
+    return GPS_LINK_NOISY_CORRUPT;
+  }
+  if (hasHdg) {
+    if (quality == BEARING_FIXED) return GPS_LINK_OK_FIXED;
+    if (quality == BEARING_FLOAT) return GPS_LINK_HEADING_FLOAT;
+  }
+  if (hasLoc) {
+    return GPS_LINK_POSITION_ONLY;
+  }
+  return GPS_LINK_ACQUIRING;
+}
+// --- End Bearing Parsing Functions ---
+
+float sinbuff[BSZ], cosbuff[BSZ];
+float sinavg = 0.0f, cosavg = 0.0f;
+int sin_i = 0;
 
 bool hasHeading = false;
+BearingQuality currentBearingQuality = BEARING_NONE;
+unsigned long lastHeadingUpdate = 0;
 bool rovdist = false;
 float mylongitude = 0.0, mylatitude = 0.0;
 double remlongitude = 0.0, remlatitude = 0.0;
 double distance = 0.0, bearing = 0.0, revbearing = 0.0;
+
+// GPS Stream Diagnostic Counters
+unsigned long totalGpsBytesReceived = 0;
+unsigned long lastGpsByteMillis = 0;
+unsigned int gllPacketCount = 0;
+unsigned long lastGllMillis = 0;
+unsigned int ksxtPacketCount = 0;
+unsigned long lastKsxtMillis = 0;
+unsigned int hdtPacketCount = 0;
+unsigned long lastHdtMillis = 0;
+
+void drawCurrentBearing() {
+  uint16_t color = WHITE;
+  if (currentBearingQuality == BEARING_FLOAT) {
+    color = YELLOW;
+  } else if (currentBearingQuality == BEARING_LOST) {
+    color = RED;
+  }
+
+  gfx->setTextSize(BEARSZ);
+  gfx->setCursor(BEARX, BEARY);
+  gfx->setTextColor(color, BLACK);
+
+  if (!hasHeading) {
+    gfx->print("---.-");
+  } else {
+    char str[10];
+    sprintf(str, "%5.1f", calcCurrentBearing(sinavg, cosavg));
+    gfx->print(str);
+  }
+  gfx->setTextColor(WHITE, BLACK);
+}
 
 void updateBearings() {
   calcLatLon(remote, &remlatitude, &remlongitude);
@@ -394,11 +563,7 @@ void updateBearings() {
   gfx->print(buf);
   gfx->setTextColor(WHITE, BLACK);
 
-  if (!hasHeading) {
-    gfx->setTextSize(BEARSZ);
-    gfx->setCursor(BEARX, BEARY);
-    gfx->print("---.-");
-  }
+  drawCurrentBearing();
 
   sprintf(&buf[0], "%5.1f", bearing);
   gfx->setTextSize(BEARSZ);
@@ -421,7 +586,7 @@ void setup() {
   Serial.begin (115200);
   Serial.print("GNSS Compass ");
   Serial.println(FW_VERSION);
-  Serial.println(F("Type 'test' to run visual display demo"));
+  Serial.println(F("Commands: 'status' (GPS stream diagnosis), 'test' (visual demo)"));
 
   for (int i = 0; i < BSZ; i++) {
     sinbuff[i] = 0.0;
@@ -461,6 +626,122 @@ void showFooterText(const char *msg, uint16_t color) {
   gfx->setTextColor(WHITE, BLACK);
 }
 
+// Display centered rounded banner card across the screen (used for test results and diagnostics)
+void showStatusCard(const char *msg, uint16_t bgColor, uint16_t fgColor) {
+  int w = strlen(msg) * CHAR_W(2);
+  gfx->fillRoundRect(40, 215, 400, 52, 8, bgColor);
+  gfx->setTextColor(fgColor, bgColor);
+  gfx->setTextSize(2);
+  gfx->setCursor((480 - w) / 2, 233);
+  gfx->print(msg);
+  gfx->setTextColor(WHITE, BLACK);
+}
+
+// Full GNSS Receiver & Data Stream diagnostic report
+void printGpsStatusReport() {
+  unsigned long now = millis();
+  GpsLinkVerdict v = evaluateGpsStream(
+    now, totalGpsBytesReceived, lastGpsByteMillis,
+    gllPacketCount, ksxtPacketCount, hdtPacketCount,
+    hasLocation, hasHeading, currentBearingQuality
+  );
+
+  Serial.println(F("\n========================================"));
+  Serial.println(F("     GNSS Receiver Stream Diagnosis     "));
+  Serial.println(F("========================================"));
+
+  if (v == GPS_LINK_DISCONNECTED) {
+    Serial.println(F("Physical Link:  DISCONNECTED / NO DATA"));
+    if (totalGpsBytesReceived == 0) {
+      Serial.println(F("Details:        0 bytes received on Serial2 since boot."));
+    } else {
+      Serial.print(F("Details:        Last byte received "));
+      Serial.print((now - lastGpsByteMillis) / 1000.0, 1);
+      Serial.println(F(" seconds ago."));
+    }
+    Serial.println(F("Verdict:        [FAIL] NO GPS DATA STREAM DETECTED"));
+    Serial.println(F("Troubleshooting:"));
+    Serial.println(F("  1. Verify GX12 3-pin cable is securely connected."));
+    Serial.println(F("  2. Check 5V / 12V power to the UM982 receiver enclosure."));
+    Serial.println(F("  3. Verify RX pin (GPIO 44) wiring to UM982 TX."));
+  } else if (v == GPS_LINK_NOISY_CORRUPT) {
+    Serial.println(F("Physical Link:  BYTES RECEIVED, BUT NO VALID NMEA/KSXT"));
+    Serial.print(F("Total Bytes:    "));
+    Serial.println(totalGpsBytesReceived);
+    Serial.println(F("Verdict:        [FAIL] FRAMING / BAUD RATE MISMATCH"));
+    Serial.println(F("Troubleshooting:"));
+    Serial.println(F("  1. Verify receiver COM1 baud rate is set to 115200 (8N1)."));
+    Serial.println(F("  2. Check for loose connection or electrical noise on signal line."));
+  } else {
+    Serial.println(F("Physical Link:  CONNECTED (Hardware Serial Link Active)"));
+    Serial.print(F("Total Bytes:    "));
+    Serial.print(totalGpsBytesReceived);
+    Serial.print(F(" (last byte "));
+    Serial.print(now - lastGpsByteMillis);
+    Serial.println(F(" ms ago)"));
+
+    Serial.println(F("\nMessage Streams:"));
+    Serial.print(F("  - $GNGLL (Position):   "));
+    Serial.print(gllPacketCount);
+    Serial.print(F(" pkts (last "));
+    if (gllPacketCount > 0) {
+      Serial.print((now - lastGllMillis) / 1000.0, 1);
+      Serial.println(F("s ago)"));
+    } else {
+      Serial.println(F("none)"));
+    }
+
+    Serial.print(F("  - $KSXT (Dual-Ant):    "));
+    Serial.print(ksxtPacketCount);
+    Serial.print(F(" pkts (last "));
+    if (ksxtPacketCount > 0) {
+      Serial.print(now - lastKsxtMillis);
+      Serial.println(F(" ms ago)"));
+    } else {
+      Serial.println(F("none)"));
+    }
+
+    Serial.print(F("  - $GNHDT/$THS:         "));
+    Serial.print(hdtPacketCount);
+    Serial.println(F(" pkts"));
+
+    Serial.println(F("\nFix Status:"));
+    Serial.print(F("  - Position:            "));
+    if (hasLocation) {
+      Serial.print(F("LOCKED (Grid: "));
+      Serial.print(mygrid);
+      Serial.println(F(")"));
+    } else {
+      Serial.println(F("SEARCHING (No fix yet)"));
+    }
+
+    Serial.print(F("  - Dual-Antenna Heading:"));
+    if (hasHeading) {
+      if (currentBearingQuality == BEARING_FIXED) {
+        Serial.println(F("RTK FIXED (Pure White - High Precision)"));
+      } else if (currentBearingQuality == BEARING_FLOAT) {
+        Serial.println(F("RTK FLOAT (Bright Yellow - Degraded Sky View)"));
+      } else {
+        Serial.println(F("LOST / STALE (Bright Red - Tracking Dropped)"));
+      }
+    } else {
+      Serial.println(F("ACQUIRING (Waiting for initial heading lock)"));
+    }
+
+    Serial.print(F("\nOverall Verdict:        "));
+    if (v == GPS_LINK_OK_FIXED) {
+      Serial.println(F("[PASS] FULLY OPERATIONAL (RTK Fixed)"));
+    } else if (v == GPS_LINK_HEADING_FLOAT) {
+      Serial.println(F("[PASS - WARN] OPERATIONAL (RTK Float - Degraded reception)"));
+    } else if (v == GPS_LINK_POSITION_ONLY) {
+      Serial.println(F("[WAIT] POSITION LOCKED, WAITING FOR HEADING BASELINE"));
+    } else {
+      Serial.println(F("[WAIT] RECEIVER TALKING, ACQUIRING SATELLITES"));
+    }
+  }
+  Serial.println(F("========================================\n"));
+}
+
 // On-demand visual display self-test demo
 void runVisualSelfTest() {
   Serial.println(F("\n=== Starting Visual Display Self-Test Demo ==="));
@@ -474,16 +755,21 @@ void runVisualSelfTest() {
   bool saved_hasHeading = hasHeading;
   bool saved_rovdist = rovdist;
   bool saved_isEditing = isEditing;
+  BearingQuality saved_quality = currentBearingQuality;
+  unsigned long saved_lastHeading = lastHeadingUpdate;
   isEditing = false;
 
   // Test 1: Same Grid (ARRL 1.0 km minimum rule)
-  Serial.println(F("[Test 1/5] Same Grid (ARRL 1.0 km rule)"));
+  Serial.println(F("[Test 1/6] Same Grid (ARRL 1.0 km rule)"));
   showFooterText("TEST 1: SAME GRID", CYAN);
   strcpy(mygrid, "CM87wa00");
   strcpy(remote, "CM87wa");
   mylatitude = 38.354;
   mylongitude = -119.458;
   hasHeading = true;
+  currentBearingQuality = BEARING_FIXED;
+  sinavg = sin(toRad(180.0)) * BSZ;
+  cosavg = cos(toRad(180.0)) * BSZ;
   rovdist = false;
   printLocalGrid();
   printrem();
@@ -491,33 +777,36 @@ void runVisualSelfTest() {
   delay(3000);
 
   // Test 2: Rover Transit Alert (< 16 km, highlighted RED on WHITE)
-  Serial.println(F("[Test 2/5] Rover Transit Alert (< 16 km, highlighted RED on WHITE)"));
+  Serial.println(F("[Test 2/6] Rover Transit Alert (< 16 km, highlighted RED on WHITE)"));
   showFooterText("TEST 2: ROVER < 16K", YELLOW);
   strcpy(remote, "CM87wb");
+  currentBearingQuality = BEARING_FIXED;
   rovdist = true;
   printrem();
   updateBearings();
   delay(3000);
 
-  // Test 3: Distance Under 1,000 km
-  Serial.println(F("[Test 3/5] Under 1,000 km formatting (~600 km)"));
+  // Test 3: Distance Under 1,000 km (~600 km)
+  Serial.println(F("[Test 3/6] Under 1,000 km formatting (~600 km)"));
   showFooterText("TEST 3: DIST < 1000K", CYAN);
   strcpy(remote, "DN13ab");
+  currentBearingQuality = BEARING_FIXED;
   rovdist = false;
   printrem();
   updateBearings();
   delay(3000);
 
-  // Test 4: Distance Over 1,000 km
-  Serial.println(F("[Test 4/5] Over 1,000 km formatting (~2,500 km)"));
+  // Test 4: Distance Over 1,000 km (~2,500 km)
+  Serial.println(F("[Test 4/6] Over 1,000 km formatting (~2,500 km)"));
   showFooterText("TEST 4: DIST > 1000K", CYAN);
   strcpy(remote, "EL29ja");
+  currentBearingQuality = BEARING_FIXED;
   printrem();
   updateBearings();
   delay(3000);
 
   // Test 5: Extreme Distance (> 10,000 km) and Recovery to 1.0 km
-  Serial.println(F("[Test 5/5] Extreme distance (> 10,000 km)"));
+  Serial.println(F("[Test 5/6] Extreme distance (> 10,000 km)"));
   showFooterText("TEST 5: GHOST RECOVERY", CYAN);
   strcpy(remote, "ZA00AA");
   printrem();
@@ -529,6 +818,51 @@ void runVisualSelfTest() {
   printrem();
   updateBearings();
   delay(2000);
+
+  // Test 6: Bearing Color States & Live GPS Receiver Link Diagnostic
+  Serial.println(F("[Test 6/6] Bearing Color States & Live GPS Stream Diagnostic"));
+  Serial.println(F("  -> Bearing Color: Pure White (RTK Fixed)"));
+  showFooterText("TEST 6: BEARING WHITE", WHITE);
+  currentBearingQuality = BEARING_FIXED;
+  drawCurrentBearing();
+  delay(1000);
+
+  Serial.println(F("  -> Bearing Color: Bright Yellow (RTK Float / Degraded)"));
+  showFooterText("TEST 6: BEARING YELLOW", YELLOW);
+  currentBearingQuality = BEARING_FLOAT;
+  drawCurrentBearing();
+  delay(1000);
+
+  Serial.println(F("  -> Bearing Color: Bright Red (Lost / Stale)"));
+  showFooterText("TEST 6: BEARING RED", RED);
+  currentBearingQuality = BEARING_LOST;
+  drawCurrentBearing();
+  delay(1000);
+
+  // Restore bearing to fixed before showing live GPS stream ruling
+  currentBearingQuality = BEARING_FIXED;
+  drawCurrentBearing();
+  showFooterText("TEST 6: GPS STREAM", CYAN);
+  printGpsStatusReport();
+
+  GpsLinkVerdict liveVerdict = evaluateGpsStream(
+    millis(), totalGpsBytesReceived, lastGpsByteMillis,
+    gllPacketCount, ksxtPacketCount, hdtPacketCount,
+    hasLocation, hasHeading, currentBearingQuality
+  );
+
+  if (liveVerdict == GPS_LINK_OK_FIXED) {
+    showStatusCard("GPS: RTK FIXED (OK)", GREEN, BLACK);
+  } else if (liveVerdict == GPS_LINK_HEADING_FLOAT) {
+    showStatusCard("GPS: RTK FLOAT (WARN)", YELLOW, BLACK);
+  } else if (liveVerdict == GPS_LINK_ACQUIRING || liveVerdict == GPS_LINK_POSITION_ONLY) {
+    showStatusCard("GPS: ACQUIRING (WAIT)", YELLOW, BLACK);
+  } else {
+    showStatusCard("GPS: NO DATA / CABLE", RED, WHITE);
+  }
+  delay(2500);
+  gfx->fillRect(40, 215, 400, 52, BLACK);
+  gfx->setTextColor(WHITE, BLACK);
 
   // Display PASS/FAIL Result Banner
   bool all_pass = true;
@@ -563,6 +897,8 @@ void runVisualSelfTest() {
   mylatitude = saved_mylat;
   mylongitude = saved_mylon;
   hasHeading = saved_hasHeading;
+  currentBearingQuality = saved_quality;
+  lastHeadingUpdate = saved_lastHeading;
   rovdist = saved_rovdist;
   isEditing = saved_isEditing;
   printLocalGrid();
@@ -575,24 +911,53 @@ void runVisualSelfTest() {
 
 void loop() {
 
-  static int i = 0;
-  static float sinavg = 0.0,cosavg=0.0;
   static char sbuff[1000];
   static int ptr = 0;
-  static int hours,minutes;
+  static int hours, minutes;
 
   while (1) {
+
+    // Heading staleness watchdog: turns bearing RED after timeout if previously acquired
+    if (hasHeading && currentBearingQuality != BEARING_LOST) {
+      if (millis() - lastHeadingUpdate >= HEADING_TIMEOUT_MS) {
+        currentBearingQuality = BEARING_LOST;
+        drawCurrentBearing();
+      }
+    }
 
     if (Serial.available()) {
       char c = Serial.peek();
       if (c == 't' || c == 'T') {
         while (Serial.available()) Serial.read();
         runVisualSelfTest();
+      } else if (c == 's' || c == 'S' || c == 'g' || c == 'G' || c == 'd' || c == 'D') {
+        String cmd = Serial.readStringUntil('\n');
+        cmd.trim();
+        if (cmd.equalsIgnoreCase("status") || cmd.equalsIgnoreCase("gps") || cmd.equalsIgnoreCase("diag") || cmd.equalsIgnoreCase("s") || cmd.equalsIgnoreCase("g")) {
+          printGpsStatusReport();
+        } else if (cmd.equalsIgnoreCase("test") || cmd.equalsIgnoreCase("demo")) {
+          runVisualSelfTest();
+        }
+      } else if (c == 'h' || c == 'H' || c == '?') {
+        while (Serial.available()) Serial.read();
+        Serial.println(F("\n=== GNSS Compass Serial Commands ==="));
+        Serial.println(F("  status (or gps) - Live GNSS receiver stream diagnostic"));
+        Serial.println(F("  test            - Run visual display self-test demo"));
+        Serial.println(F("  help (or ?)     - Show this help menu"));
+        Serial.println(F("====================================\n"));
       } else {
         String cmd = Serial.readStringUntil('\n');
         cmd.trim();
         if (cmd.equalsIgnoreCase("test") || cmd.equalsIgnoreCase("demo")) {
           runVisualSelfTest();
+        } else if (cmd.equalsIgnoreCase("status") || cmd.equalsIgnoreCase("gps") || cmd.equalsIgnoreCase("diag")) {
+          printGpsStatusReport();
+        } else if (cmd.equalsIgnoreCase("help") || cmd.equals("?")) {
+          Serial.println(F("\n=== GNSS Compass Serial Commands ==="));
+          Serial.println(F("  status (or gps) - Live GNSS receiver stream diagnostic"));
+          Serial.println(F("  test            - Run visual display self-test demo"));
+          Serial.println(F("  help (or ?)     - Show this help menu"));
+          Serial.println(F("====================================\n"));
         }
       }
     }
@@ -666,30 +1031,56 @@ void loop() {
     if (int num = gpsSerial.available()) {
       int num1 = gpsSerial.readBytesUntil('\n',&sbuff[ptr],num); // read all the available characters up to the end of line
       ptr += num1;
+      totalGpsBytesReceived += num1;
+      lastGpsByteMillis = millis();
+
       if (num != num1) {   // if the line ends before all the available characters were read
         gpsSerial.read();  // consume the '\n'
+        totalGpsBytesReceived++;
         sbuff[ptr]=0;      // terminate the string
         Serial.println(sbuff);
         ptr=0;             // set the ptr back to 0 for the next line from the gps
 
-        if (strncmp(sbuff, "$GNTHS", 6) == 0 || strncmp(sbuff, "$GNHDT", 6) == 0) {
-          if (sbuff[7] != ',' && sbuff[7] != '\0' && sbuff[7] != '\r' && sbuff[7] != '\n') {
-            hasHeading = true;
-            sinavg -= sinbuff[i];
-            sinavg += sinbuff[i] = sin(toRad(strtof(&sbuff[7], NULL)));
-            cosavg -= cosbuff[i];
-            cosavg += cosbuff[i] = cos(toRad(strtof(&sbuff[7], NULL)));
+        float new_heading = 0.0f;
+        BearingQuality new_quality = BEARING_LOST;
 
-            i = (1 + i) % BSZ;
-
-            char str[20];
-            sprintf(&str[0], "%5.1f %5.1f", fmod(((toDeg(atan2(sinavg/BSZ, cosavg/BSZ))) + 270.0),360.0),bearing);
-            gfx->setTextSize(BEARSZ);
-            gfx->setCursor(BEARX, BEARY);
-            gfx->print(&str[0]);
+        if (parseHeadingSentence(sbuff, &new_heading, &new_quality)) {
+          if (strncmp(sbuff, "$KSXT", 5) == 0) {
+            ksxtPacketCount++;
+            lastKsxtMillis = millis();
+          } else {
+            hdtPacketCount++;
+            lastHdtMillis = millis();
           }
+          hasHeading = true;
+          lastHeadingUpdate = millis();
+          currentBearingQuality = new_quality;
 
+          sinavg -= sinbuff[sin_i];
+          sinavg += sinbuff[sin_i] = sin(toRad(new_heading));
+          cosavg -= cosbuff[sin_i];
+          cosavg += cosbuff[sin_i] = cos(toRad(new_heading));
+          sin_i = (1 + sin_i) % BSZ;
+
+          drawCurrentBearing();
+        } else if (strncmp(sbuff, "$KSXT", 5) == 0 ||
+                   strncmp(sbuff, "$GNTHS", 6) == 0 || strncmp(sbuff, "$GPTHS", 6) == 0 ||
+                   strncmp(sbuff, "$GNHDT", 6) == 0 || strncmp(sbuff, "$GPHDT", 6) == 0) {
+          if (strncmp(sbuff, "$KSXT", 5) == 0) {
+            ksxtPacketCount++;
+            lastKsxtMillis = millis();
+          } else {
+            hdtPacketCount++;
+            lastHdtMillis = millis();
+          }
+          // Received heading sentence but no valid heading solution (e.g. baseline lost)
+          if (hasHeading && currentBearingQuality != BEARING_LOST) {
+            currentBearingQuality = BEARING_LOST;
+            drawCurrentBearing();
+          }
         } else if (strncmp(sbuff, "$GNGLL", 6) == 0) {
+          gllPacketCount++;
+          lastGllMillis = millis();
           char *ptr;
           char buf[9];
 
@@ -719,3 +1110,4 @@ void loop() {
     }
   }
 }
+

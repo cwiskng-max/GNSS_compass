@@ -6,11 +6,18 @@ This document describes how to configure the Unicore UM982 dual-antenna RTK rece
 
 ## 1. Receiver Overview & Output Messages
 
-The compass firmware parses only two NMEA messages from the UM982 receiver on its `COM1` port:
-* **`$GNHDT`**: True heading between the primary and secondary antennas (updated at 5 Hz / 0.2 s).
+The compass firmware parses messages from the UM982 receiver on its `COM1` port:
+* **`$KSXT`** *(Recommended)*: High-precision heading, baseline, and solution quality indicator (updated at 5 Hz / 0.2 s).
 * **`$GNGLL`**: Geographic latitude and longitude position (updated at 0.1 Hz / 10 s).
+* **`$GNHDT` / `$GNTHS`** *(Legacy)*: Supported for backward compatibility with previous configurations.
 
 All other messages should be disabled or left at defaults so the ESP32 serial buffer is not flooded.
+
+### Heading Display Color States
+The displayed antenna bearing (Row 3, left) dynamically color codes reception quality:
+* ⚪ **Pure White (`0xFFFF`)**: **RTK Fixed (High Precision)** — Full differential carrier-phase ambiguity resolved (~0.1° accuracy). Also used during initial satellite acquisition (`---.-`) and for legacy `$GNHDT` valid tracking.
+* 🟡 **Bright Yellow (`0xFFE0`)**: **RTK Float (Reduced Quality)** — Satellites acquired, but degraded sky view, obstructions, or floating baseline ambiguities. Heading may be noisy or slightly off.
+* 🔴 **Bright Red (`0xF800`)**: **Lost / Stale** — Differential signal lost, empty heading sentence, or no update received for > 1.5 seconds. Protects the operator against frozen stale readings.
 
 ---
 
@@ -32,7 +39,7 @@ The UM982 module must be configured manually via its USB-C port before connectin
 MODE ROVER UAV
 CONFIG SIGNALGROUP 3 6
 GPGLL com1 10
-GPHDT com1 0.2
+KSXT com1 0.2
 SAVECONFIG
 ```
 
@@ -40,8 +47,20 @@ SAVECONFIG
 * `MODE ROVER UAV`: Configures the receiver in moving baseline / heading mode.
 * `CONFIG SIGNALGROUP 3 6`: Selects multi-frequency constellations (GPS, BDS, GLONASS, Galileo).
 * `GPGLL com1 10`: Outputs `$GNGLL` positioning sentence on `COM1` every 10 seconds.
-* `GPHDT com1 0.2`: Outputs `$GNHDT` true heading sentence on `COM1` every 0.2 seconds (5 Hz).
+* `KSXT com1 0.2`: Outputs `$KSXT` heading, baseline, and RTK quality status on `COM1` every 0.2 seconds (5 Hz).
 * `SAVECONFIG`: Saves the current configuration to receiver flash so it persists across power cycles.
+
+*(Note for existing setups: If your receiver is already configured with `GPHDT com1 0.2`, the firmware will continue to function normally. Reconfiguring to `KSXT com1 0.2` enables the Bright Yellow RTK Float warning).*
+
+### Upgrading an Existing Receiver
+If your UM982 was previously configured for `GPHDT`, connect via USB-C and run these three commands to unlog (disable) the old heading sentence, activate `$KSXT`, and save:
+
+```text
+UNLOG COM1 GPHDT
+KSXT com1 0.2
+SAVECONFIG
+```
+*(The `UNLOG COM1 GPHDT` command disables `$GNHDT` output on `COM1` so you avoid duplicate heading streams).*
 
 ---
 
