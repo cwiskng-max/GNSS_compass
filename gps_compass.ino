@@ -116,6 +116,9 @@ HardwareSerial gpsSerial(2);
 char remote[7] = "ZA00AA";
 char mygrid[9] = "JJ00AA00";
 bool hasLocation = false;
+bool hasTime = false;
+int hours = 0;
+int minutes = 0;
 
 #define ENCODER_CLK 42
 #define ENCODER_DT 4
@@ -417,14 +420,71 @@ bool parseKSXT(const char *sentence, float *heading_out, BearingQuality *quality
 
   if (qual == 3 || qual == 4) {
     *quality_out = BEARING_FIXED;
-  } else if (qual == 2 || qual == 5 || qual == 1) {
+  } else if (qual == 2 || qual == 5) {
     *quality_out = BEARING_FLOAT;
   } else {
+    // qual <= 1: 0 (invalid) or 1 (single-point / non-differential): NOT a differential bearing
     *quality_out = BEARING_LOST;
     return false;
   }
 
   *heading_out = strtof(h_field, NULL);
+  return true;
+}
+
+bool parseKSXTTime(const char *sentence, int *hours_out, int *minutes_out) {
+  const char *utc_field = getNthField(sentence, 1);
+  if (utc_field == NULL || *utc_field == ',' || *utc_field == '*' || *utc_field == '\0') {
+    return false;
+  }
+
+  int len = 0;
+  while (isdigit((unsigned char)utc_field[len])) {
+    len++;
+  }
+
+  int h = -1, m = -1;
+  if (len >= 12) {
+    // Format: yyyymmddhhmmss (14) or yyyymmddhhmm (12)
+    h = (utc_field[8] - '0') * 10 + (utc_field[9] - '0');
+    m = (utc_field[10] - '0') * 10 + (utc_field[11] - '0');
+  } else if (len == 6 || len == 4) {
+    // Format: hhmmss (6) or hhmm (4)
+    h = (utc_field[0] - '0') * 10 + (utc_field[1] - '0');
+    m = (utc_field[2] - '0') * 10 + (utc_field[3] - '0');
+  } else {
+    return false;
+  }
+
+  if (h >= 0 && h < 24 && m >= 0 && m < 60) {
+    *hours_out = h;
+    *minutes_out = m;
+    return true;
+  }
+  return false;
+}
+
+bool parseKSXTLocation(const char *sentence, float *lat_out, float *lon_out) {
+  const char *q_field = getNthField(sentence, 10);
+  if (q_field == NULL || *q_field <= '0' || *q_field > '9') {
+    return false;
+  }
+
+  const char *lon_field = getNthField(sentence, 2);
+  const char *lat_field = getNthField(sentence, 3);
+  if (lon_field == NULL || *lon_field == ',' || *lon_field == '*' ||
+      lat_field == NULL || *lat_field == ',' || *lat_field == '*') {
+    return false;
+  }
+
+  float lon = strtof(lon_field, NULL);
+  float lat = strtof(lat_field, NULL);
+  if (lat < -90.0f || lat > 90.0f || lon < -180.0f || lon > 180.0f || (lat == 0.0f && lon == 0.0f)) {
+    return false;
+  }
+
+  *lat_out = lat;
+  *lon_out = lon;
   return true;
 }
 
@@ -706,6 +766,15 @@ void printGpsStatusReport() {
     Serial.println(F(" pkts"));
 
     Serial.println(F("\nFix Status:"));
+    Serial.print(F("  - Time:                "));
+    if (hasTime) {
+      char tbuf[16];
+      sprintf(tbuf, "%02d:%02d UTC", hours, minutes);
+      Serial.println(tbuf);
+    } else {
+      Serial.println(F("SEARCHING (Syncing...)"));
+    }
+
     Serial.print(F("  - Position:            "));
     if (hasLocation) {
       Serial.print(F("LOCKED (Grid: "));
@@ -913,7 +982,6 @@ void loop() {
 
   static char sbuff[1000];
   static int ptr = 0;
-  static int hours, minutes;
 
   while (1) {
 
@@ -1078,6 +1146,41 @@ void loop() {
             currentBearingQuality = BEARING_LOST;
             drawCurrentBearing();
           }
+        }
+
+        // Extract Time and Position from $KSXT (5 Hz)
+        if (strncmp(sbuff, "$KSXT", 5) == 0) {
+          int ksxt_h = 0, ksxt_m = 0;
+          if (parseKSXTTime(sbuff, &ksxt_h, &ksxt_m)) {
+            if (!hasTime || ksxt_h != hours || ksxt_m != minutes) {
+              hasTime = true;
+              hours = ksxt_h;
+              minutes = ksxt_m;
+              char tbuf[9];
+              sprintf(tbuf, "%02d:%02dZ", hours, minutes);
+              gfx->setTextSize(TIME_SZ);
+              gfx->setCursor(TIME_X, TIME_Y);
+              gfx->setTextColor(WHITE, BLACK);
+              gfx->print(tbuf);
+            }
+          }
+
+          float ksxt_lat = 0.0f, ksxt_lon = 0.0f;
+          if (parseKSXTLocation(sbuff, &ksxt_lat, &ksxt_lon)) {
+            if (!hasLocation || fabs(ksxt_lat - mylatitude) > 0.0001f || fabs(ksxt_lon - mylongitude) > 0.0001f) {
+              hasLocation = true;
+              mylatitude = ksxt_lat;
+              mylongitude = ksxt_lon;
+              calcLocator(mygrid, mylatitude, mylongitude);
+
+              gfx->setTextSize(LOC_SZ);
+              gfx->setCursor(LOC_X, LOC_Y);
+              gfx->setTextColor(WHITE, BLACK);
+              gfx->print(mygrid);
+
+              updateBearings();
+            }
+          }
         } else if (strncmp(sbuff, "$GNGLL", 6) == 0) {
           gllPacketCount++;
           lastGllMillis = millis();
@@ -1085,8 +1188,8 @@ void loop() {
           char buf[9];
 
           parselatlon(&sbuff[7],&mylatitude,&mylongitude,&ptr);
-          hours = aton(ptr[0])*10.0+aton(ptr[1]);
-          minutes = aton(ptr[2])*10.0+aton(ptr[3]);
+          int gll_h = aton(ptr[0])*10.0+aton(ptr[1]);
+          int gll_m = aton(ptr[2])*10.0+aton(ptr[3]);
 
           char *status_comma = strchr(ptr, ',');
           if ((status_comma != NULL && *(status_comma + 1) == 'A') || ptr[10] == 'A') {
@@ -1095,12 +1198,19 @@ void loop() {
 
             gfx->setTextSize(LOC_SZ);
             gfx->setCursor(LOC_X, LOC_Y);
+            gfx->setTextColor(WHITE, BLACK);
             gfx->print(mygrid);
 
-            sprintf(&buf[0], "%02d:%02dZ", hours, minutes);
-            gfx->setTextSize(TIME_SZ);
-            gfx->setCursor(TIME_X, TIME_Y);
-            gfx->print(buf);
+            if (!hasTime || gll_h != hours || gll_m != minutes) {
+              hasTime = true;
+              hours = gll_h;
+              minutes = gll_m;
+              sprintf(&buf[0], "%02d:%02dZ", hours, minutes);
+              gfx->setTextSize(TIME_SZ);
+              gfx->setCursor(TIME_X, TIME_Y);
+              gfx->setTextColor(WHITE, BLACK);
+              gfx->print(buf);
+            }
 
             updateBearings();
           }

@@ -7,11 +7,10 @@ This document describes how to configure the Unicore UM982 dual-antenna RTK rece
 ## 1. Receiver Overview & Output Messages
 
 The compass firmware parses messages from the UM982 receiver on its `COM1` port:
-* **`$KSXT`** *(Recommended)*: High-precision heading, baseline, and solution quality indicator (updated at 5 Hz / 0.2 s).
-* **`$GNGLL`**: Geographic latitude and longitude position (updated at 0.1 Hz / 10 s).
-* **`$GNHDT` / `$GNTHS`** *(Legacy)*: Supported for backward compatibility with previous configurations.
+* **`$KSXT`** *(Recommended)*: All-in-one message streaming heading, RTK differential quality, precise decimal latitude/longitude, and UTC time at 5 Hz (every 0.2 s). With `$KSXT`, no other message logs are needed.
+* **`$GNGLL` & `$GNHDT` / `$GNTHS`** *(Legacy)*: Fully supported for backward compatibility with existing receiver setups or generic NMEA receivers, but redundant when `$KSXT` is active.
 
-All other messages should be disabled or left at defaults so the ESP32 serial buffer is not flooded.
+All other messages should be disabled so the ESP32 serial buffer is not flooded.
 
 ### Heading Display Color States
 The displayed antenna bearing (Row 3, left) dynamically color codes reception quality:
@@ -33,34 +32,36 @@ The UM982 module must be configured manually via its USB-C port before connectin
    * **Stop bits:** `1` (`8N1`)
    * **Flow control:** None
 3. Once connected, you will see raw NMEA/binary output streaming from the receiver.
-4. Send the following commands one by one to configure the operational mode, signal constellation, message rates, and commit settings to non-volatile storage:
+4. Send the following commands one by one to configure the operational mode, signal constellations, message stream, and commit settings to non-volatile storage:
 
 ```text
 MODE ROVER UAV
 CONFIG SIGNALGROUP 3 6
-GPGLL com1 10
 KSXT com1 0.2
 SAVECONFIG
 ```
 
 ### Explanation of Commands
-* `MODE ROVER UAV`: Configures the receiver in moving baseline / heading mode.
+* `MODE ROVER UAV`: Configures the receiver in moving baseline / dual-antenna heading mode.
 * `CONFIG SIGNALGROUP 3 6`: Selects multi-frequency constellations (GPS, BDS, GLONASS, Galileo).
-* `GPGLL com1 10`: Outputs `$GNGLL` positioning sentence on `COM1` every 10 seconds.
-* `KSXT com1 0.2`: Outputs `$KSXT` heading, baseline, and RTK quality status on `COM1` every 0.2 seconds (5 Hz).
+* `KSXT com1 0.2`: Outputs the unified `$KSXT` sentence on `COM1` every 0.2 seconds (5 Hz), providing dual-antenna heading, RTK quality, decimal coordinates, and UTC time in a single stream.
 * `SAVECONFIG`: Saves the current configuration to receiver flash so it persists across power cycles.
 
-*(Note for existing setups: If your receiver is already configured with `GPHDT com1 0.2`, the firmware will continue to function normally. Reconfiguring to `KSXT com1 0.2` enables the Bright Yellow RTK Float warning).*
+*(Note: `GPGLL` is no longer needed because `$KSXT` provides position and time 5 times per second).*
 
-### Upgrading an Existing Receiver
-If your UM982 was previously configured for `GPHDT`, connect via USB-C and run these three commands to unlog (disable) the old heading sentence, activate `$KSXT`, and save:
+### Modifying / Upgrading an Existing Receiver
+If your UM982 was previously configured with legacy commands (`GPHDT com1 0.2` and/or `GPGLL com1 10`), connect via USB-C and run these commands to unlog (disable) the obsolete sentences, activate `$KSXT`, and save:
 
 ```text
 UNLOG COM1 GPHDT
+UNLOG COM1 GPGLL
 KSXT com1 0.2
 SAVECONFIG
 ```
-*(The `UNLOG COM1 GPHDT` command disables `$GNHDT` output on `COM1` so you avoid duplicate heading streams).*
+* `UNLOG COM1 GPHDT`: Disables the legacy `$GNHDT` heading sentence to prevent duplicate heading data.
+* `UNLOG COM1 GPGLL`: Disables the redundant 10-second `$GNGLL` position message to eliminate unnecessary serial traffic.
+* `KSXT com1 0.2`: Enables the unified 5 Hz stream for instantaneous time sync, position lock, and color-coded bearing status.
+* `SAVECONFIG`: Commits the updated configuration to non-volatile memory.
 
 ---
 

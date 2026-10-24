@@ -32,10 +32,11 @@ The test suite runs automatically on every push and pull request in [`.github/wo
 7. **Buffer Bounds & Ghost Character Erasure:** Formats distances across all ranges ($1.0\text{ km}$ to $> 10,000\text{ km}$) using `"ARRL %6.1f k  "`. Verifies string lengths stay strictly within the 24-byte buffer and trailing spaces exist to erase ghost characters on screen redraws.
 8. **Rover Transit Threshold:** Asserts that distances $< 16,000\text{ m}$ activate the rover relocation alert, while $\ge 16,000\text{ m}$ clear it.
 9. **Field Extraction (`getNthField`):** Validates comma-delimited token parsing, empty fields, and bounds.
-10. **`$KSXT` Sentence Parsing:** Validates dual-antenna heading extraction and RTK Fixed (3/4), RTK Float (1/2/5), and Invalid/Lost (0) states.
-11. **Legacy Sentence Parsing:** Tests fallback parsing of `$GNHDT` and `$GNTHS` and detects lost signal from empty fields.
-12. **Current Bearing Calculation:** Validates $270^\circ$ orthogonal baseline offset and circular wrap-around $[0, 360^\circ)$.
-13. **GPS Stream Evaluation:** Validates deterministic link verdicts (Disconnected, Corrupt, Acquiring, Float, Fixed).
+10. **`$KSXT` Sentence Parsing:** Validates dual-antenna heading extraction: RTK Fixed (3/4), RTK Float (2/5), and Single-Point / Invalid rejection (0/1).
+11. **`$KSXT` Time & Location Extraction:** Validates UTC timestamp (14-digit full and 6-digit short) and geographic decimal coordinate parsing with solution status checking.
+12. **Legacy Sentence Parsing:** Tests fallback parsing of `$GNHDT` and `$GNTHS` and detects lost signal from empty fields.
+13. **Current Bearing Calculation:** Validates $270^\circ$ orthogonal baseline offset and circular wrap-around $[0, 360^\circ)$.
+14. **GPS Stream Evaluation:** Validates deterministic link verdicts (Disconnected, Corrupt, Acquiring, Position-Only, Float, Fixed).
 
 ---
 
