@@ -20,6 +20,8 @@ HEADER
 sed -n '/void calcLocator/,/^}/p' "$REPO_DIR/gps_compass.ino" >> "$SCRIPT_DIR/extracted_math.h"
 sed -n '/double toRad/,/void calculateWGS84/p' "$REPO_DIR/gps_compass.ino" | sed '$d' >> "$SCRIPT_DIR/extracted_math.h"
 sed -n '/void calculateWGS84/,/^}/p' "$REPO_DIR/gps_compass.ino" >> "$SCRIPT_DIR/extracted_math.h"
+sed -n '/\/\/ --- Bearing Quality & Link Diagnostic Enums ---/,/\/\/ --- End Bearing Quality & Link Diagnostic Enums ---/p' "$REPO_DIR/gps_compass.ino" >> "$SCRIPT_DIR/extracted_math.h"
+sed -n '/\/\/ --- Bearing Quality & State Machine ---/,/\/\/ --- End Bearing Parsing Functions ---/p' "$REPO_DIR/gps_compass.ino" >> "$SCRIPT_DIR/extracted_math.h"
 
 echo "=== Compiling unit test suite ==="
 g++ -O2 -Wall -Wextra -I"$SCRIPT_DIR" "$SCRIPT_DIR/test_calculations.cpp" -o "$SCRIPT_DIR/run_tests"
