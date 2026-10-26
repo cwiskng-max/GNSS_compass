@@ -1,6 +1,6 @@
 # Getting the Firmware
 
-To program the GNSS Compass display, you need the compiled firmware binary (`gps_compass.ino.esp32s3.bin`). You can obtain this file in one of two ways:
+To program the GNSS Compass display, you need the compiled firmware binary ([`gps_compass.ino.esp32s3.bin`](https://github.com/cwiskng-max/GNSS_compass/releases/latest/download/gps_compass.ino.esp32s3.bin)). You can obtain this file in one of two ways:
 
 * **[Option A: Download Pre-Compiled Binary (Recommended)](#option-a-download-pre-compiled-binary-recommended)**: Fast and straightforward. Recommended for most users who simply want to flash and run the compass.
 * **[Option B: Compile from Source Code](#option-b-compile-from-source-code)**: For developers who want to inspect the source, modify features, or build locally using `arduino-cli`.
@@ -11,10 +11,10 @@ Once you have the binary file from either option, proceed to the **[Firmware Ins
 
 ## Option A: Download Pre-Compiled Binary (Recommended)
 
-1. Go to the repository's [Releases](../../releases) page.
+1. Go to the repository's [Releases](https://github.com/cwiskng-max/GNSS_compass/releases) page.
 2. Under the latest release, download the following two files:
-   * **`gps_compass.ino.esp32s3.bin`** (the compiled application firmware)
-   * **`CHECKSUMS`** (SHA-256 verification hashes)
+   * [**`gps_compass.ino.esp32s3.bin`**](https://github.com/cwiskng-max/GNSS_compass/releases/latest/download/gps_compass.ino.esp32s3.bin) (the compiled application firmware)
+   * [**`CHECKSUMS`**](https://github.com/cwiskng-max/GNSS_compass/releases/latest/download/CHECKSUMS) (SHA-256 verification hashes)
 
 3. *(Optional but Recommended)* Verify the downloaded file integrity in your terminal:
    ```bash

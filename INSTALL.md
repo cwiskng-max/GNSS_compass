@@ -1,9 +1,9 @@
 # Firmware Installation Guide
 
-This guide covers flashing the firmware binary (`gps_compass.ino.esp32s3.bin`) onto the Elecrow 2.1" ESP32 Rotary Display using `esptool`. Whether you downloaded the pre-compiled release binary or compiled your own from source code, the installation steps are identical.
+This guide covers flashing the firmware binary ([`gps_compass.ino.esp32s3.bin`](https://github.com/cwiskng-max/GNSS_compass/releases/latest/download/gps_compass.ino.esp32s3.bin)) onto the Elecrow 2.1" ESP32 Rotary Display using `esptool`. Whether you downloaded the pre-compiled release binary or compiled your own from source code, the installation steps are identical.
 
 > [!TIP]
-> If you do not yet have the `gps_compass.ino.esp32s3.bin` binary file, see **[Getting the Firmware](FIRMWARE.md)** first.
+> If you do not yet have the [`gps_compass.ino.esp32s3.bin`](https://github.com/cwiskng-max/GNSS_compass/releases/latest/download/gps_compass.ino.esp32s3.bin) binary file, see **[Getting the Firmware](FIRMWARE.md)** first.
 
 ---
 
@@ -11,7 +11,7 @@ This guide covers flashing the firmware binary (`gps_compass.ino.esp32s3.bin`) o
 
 * **Hardware:** [Elecrow 2.1" ESP32 Rotary Display](BOM.md) (ESP32-S3 with 16MB Flash / 8MB OPI PSRAM).
 * **Cable:** USB Type-C data cable (ensure it supports data transfer, not power-only).
-* **Firmware Binary:** `gps_compass.ino.esp32s3.bin` present on your computer (acquired via [FIRMWARE.md](FIRMWARE.md)).
+* **Firmware Binary:** [`gps_compass.ino.esp32s3.bin`](https://github.com/cwiskng-max/GNSS_compass/releases/latest/download/gps_compass.ino.esp32s3.bin) present on your computer (acquired via [FIRMWARE.md](FIRMWARE.md)).
 
 ---
 
