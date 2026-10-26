@@ -25,12 +25,23 @@ The displayed antenna bearing (Row 3, left) dynamically color codes reception qu
 The UM982 module must be configured manually via its USB-C port before connecting it to the compass display:
 
 1. Connect the UM982 module to your computer using a USB Type-C data cable.
-2. Open a serial terminal emulator (e.g., `picocom`, `minicom`, PuTTY, or Serial Studio) configured for:
-   * **Baud rate:** `115200`
-   * **Data bits:** `8`
-   * **Parity:** `None`
-   * **Stop bits:** `1` (`8N1`)
-   * **Flow control:** None
+2. Connect to the receiver using either **Unicore UPrecise** (GUI, recommended) or a **Serial Terminal Emulator**:
+
+   * **Method A: Unicore UPrecise Software (Recommended / Easiest)**
+     * Download and install **UPrecise** (Unicore's official graphical evaluation software, available from Unicorecomm or ArduSimple).
+     * Connect to the UM982 USB serial port at `115200` baud.
+     * Open the **Receiver Command** console window at the bottom to send configuration commands.
+     * *Advantage:* UPrecise provides visual confirmation of commands (`<OK`), live satellite SNR bars, constellation skyplots, computed baseline distance, and real-time RTK status without terminal echo issues.
+
+   * **Method B: Serial Terminal Emulator (`picocom`, PuTTY, Tera Term, `minicom`)**
+     * Configure port settings:
+       * **Baud rate:** `115200`
+       * **Data bits:** `8`, **Parity:** `None`, **Stop bits:** `1` (`8N1`)
+       * **Flow control:** None
+     * **Important — Enable Local Echo & CR+LF:** The UM982 firmware does **not** echo typed characters back to the terminal. To see what you are typing and ensure commands execute:
+       * **Local Echo:** Set to **ON** (e.g., `picocom --echo -b 115200 /dev/ttyUSB0`, in PuTTY: *Terminal $\to$ Local echo: Force on*, in Tera Term: *Setup $\to$ Terminal $\to$ Local echo: ON*). Otherwise, your keystrokes are invisible.
+       * **Line Endings:** Ensure the terminal transmits carriage return + line feed (**CR+LF** / `\r\n`) when pressing Enter.
+
 3. Once connected, you will see raw NMEA/binary output streaming from the receiver.
 4. Send the following commands one by one to configure the operational mode, signal constellations, message stream, and commit settings to non-volatile storage:
 
@@ -48,6 +59,30 @@ SAVECONFIG
 * `SAVECONFIG`: Saves the current configuration to receiver flash so it persists across power cycles.
 
 *(Note: `GPGLL` is no longer needed because `$KSXT` provides position and time 5 times per second).*
+
+### Optional: Fixed Baseline Distance Constraint (Recommended)
+By default, the receiver operates with an unconstrained baseline (it does not know the physical distance between your antennas). You can optionally lock the known physical baseline distance into the receiver:
+
+```text
+CONFIG HEADING FIXLENGTH
+CONFIG HEADING LENGTH <length_cm> <tolerance_cm>
+SAVECONFIG
+```
+
+#### Benefits
+* **Faster RTK Lock:** Reduces initial carrier-phase ambiguity resolution time (Yellow $\to$ White) from ~30+ seconds down to 2–5 seconds by restricting the mathematical search space from an open 3D volume to a thin 2D spherical shell.
+* **Prevents False Fixes:** Protects against false integer ambiguity fixes (such as momentary 90° or 180° heading jumps) that can occasionally occur during hot antenna reconnects, severe multipath reflections from metal towers or dishes, or degraded satellite geometry.
+
+#### Parameter Definitions
+* **`Parameter 1 (<length_cm>)`**: The center-to-center baseline distance between the two antenna phase centers in **centimeters** (e.g., `101.6` for a 40-inch / 1-meter boom with end mounts, or your exact measured distance between the SMA bulkhead connectors).
+* **`Parameter 2 (<tolerance_cm>)`**: The allowable error tolerance margin in **centimeters** (typically `2.5` to `3.0`). This accommodates natural antenna phase-center variation, thermal expansion, and slight boom flex while remaining tight enough to reject false ambiguity cycle jumps (which differ by 10–20+ cm). A standard tape-measure measurement is plenty accurate.
+
+*(Example for the 1-meter pole build with end-mount clamps measuring 40 inches / 101.6 cm center-to-center):*
+```text
+CONFIG HEADING FIXLENGTH
+CONFIG HEADING LENGTH 101.6 2.5
+SAVECONFIG
+```
 
 ### Modifying / Upgrading an Existing Receiver
 If your UM982 was previously configured with legacy commands (`GPHDT com1 0.2` and/or `GPGLL com1 10`), connect via USB-C and run these commands to unlog (disable) the obsolete sentences, activate `$KSXT`, and save:
