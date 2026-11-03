@@ -9,4 +9,14 @@ In addition to antenna heading several other functions are included:
 - UTC time HH:MM
 - reverse bearing from target grid
 - distance between target and current grids in km
-  
+
+---
+
+## Documentation
+
+* **[Hardware Schematic](Schematic.pdf):** Wiring schematic for the display, power regulation, receiver, and connectors.
+* **[Bill of Materials (BOM)](BOM.md):** Complete hardware list, electronics, mast/boom mounting hardware, and sourcing links.
+* **[GNSS Receiver Configuration](RECEIVER.md):** Instructions for configuring the Unicore UM982 receiver messages (`$KSXT`) and dual-antenna baseline.
+* **[Getting the Firmware](FIRMWARE.md):** How to obtain the firmware binary ([`gps_compass.ino.esp32s3.bin`](https://github.com/cwiskng-max/GNSS_compass/releases/latest/download/gps_compass.ino.esp32s3.bin)) — either by downloading a pre-compiled release (recommended) or compiling from source code.
+* **[Firmware Installation Guide](INSTALL.md):** How to flash the firmware binary onto the ESP32-S3 display using `esptool` (covers Fedora, Ubuntu, macOS, and Windows).
+* **[Testing & Self-Test Guide](tests/README.md):** Information on automated host unit tests and the on-device visual self-test.
