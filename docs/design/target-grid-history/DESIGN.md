@@ -203,8 +203,10 @@ This gives the rover instant situational awareness: when arriving at a new summi
 
 Because typing text with gloves on a small round screen can be tedious, names are entered through three complementary mechanisms:
 
-#### 1. USB Serial CLI Provisioning (Primary Pre-Contest Method)
-Before heading into the field, operators can connect the compass to a laptop or phone via USB-C serial (`115200` baud) and configure their weekend target list in seconds:
+#### 1. USB Serial CLI Provisioning & Batch File Streaming (Primary Pre-Contest Method)
+Before heading into the field, operators can connect the compass to a laptop or phone via USB-C serial (`/dev/ttyACM0` at `115200` baud) and configure their weekend target list in seconds.
+
+##### Interactive Serial Commands
 ```text
 === Target Preset Serial Commands ===
 target add <GRID> [LABEL]   - Add or update a target (e.g., "target add CM87vu DIABLO")
@@ -212,21 +214,73 @@ target del <INDEX|GRID>     - Remove a specific target by 1-based index or grid
 target list                 - Print all saved targets with index, grid, label, and NVS slot
 target clear                - Wipe all target presets
 ```
-* **Example Session:**
-  ```text
-  > target add CM87vu DIABLO
-  [TARGET] Added #1: CM87vu (DIABLO)
-  > target add CM97be UMUNHUM
-  [TARGET] Added #2: CM97be (UMUNHUM)
-  > target add CM88no ST_HELENA
-  [TARGET] Added #3: CM88no (ST_HELENA)
-  > target list
-  === Saved Target Presets (3/20) ===
-    #1: CM87vu - DIABLO
-    #2: CM97be - UMUNHUM
-    #3: CM88no - ST_HELENA
-  ===================================
-  ```
+
+##### Batch Provisioning via Script / Config File Streaming
+Rather than requiring complex file transfer protocols (like XMODEM/YMODEM) or flashing raw filesystem partition images (LittleFS/SPIFFS), the serial interface acts as a **stream loader**:
+
+1. **Create a Contest Config File (`contest_targets.txt`):**
+   ```text
+   # ----------------------------------------------------
+   # ARRL 10 GHz Contest - NorCal Rover Summit Roster
+   # ----------------------------------------------------
+   target clear
+   target add CM87vu DIABLO
+   target add CM97be UMUNHUM
+   target add CM97bb LOMA_P
+   target add CM88no ST_HELN
+   target add CM87uv TAMALPAIS
+   target add DM04ms FRAZIER
+   target add DM13dr SADDLEBK
+   target list
+   ```
+
+2. **Pushing the File to the ESP32:**
+   * **Via Minicom:** Press `Ctrl+A`, then `S` (*Send file*), select `ascii`, and choose `contest_targets.txt`.
+   * **Via SecureCRT:** Go to **Transfer → Send ASCII...** and select `contest_targets.txt` (or simply copy the text and right-click paste into the terminal window).
+   * **Via Linux Shell (1-line pipe):**
+     ```bash
+     stty -F /dev/ttyACM0 115200 raw -echo
+     cat contest_targets.txt > /dev/ttyACM0
+     ```
+   * **Via Python Script:**
+     ```python
+     import serial, time
+     with serial.Serial("/dev/ttyACM0", 115200, timeout=1) as ser:
+         with open("contest_targets.txt") as f:
+             for line in f:
+                 if line.strip() and not line.startswith("#"):
+                     ser.write((line.strip() + "\r\n").encode())
+                     time.sleep(0.05)
+     ```
+
+3. **Device Execution & Confirmation:**
+   As lines stream across USB CDC, `processSerialInput()` parses each command, validates the Maidenhead format, and writes the `TargetPresetList` struct into NVS flash with atomic wear leveling. The device confirms:
+   ```text
+   [TARGET] Cleared all presets.
+   [TARGET] Added #1: CM87vu (DIABLO)
+   [TARGET] Added #2: CM97be (UMUNHUM)
+   [TARGET] Added #3: CM97bb (LOMA_P)
+   [TARGET] Added #4: CM88no (ST_HELN)
+   [TARGET] Added #5: CM87uv (TAMALPAIS)
+   [TARGET] Added #6: DM04ms (FRAZIER)
+   [TARGET] Added #7: DM13dr (SADDLEBK)
+   === Saved Target Presets (7/20) ===
+     #1: CM87vu - DIABLO
+     #2: CM97be - UMUNHUM
+     #3: CM97bb - LOMA_P
+     #4: CM88no - ST_HELN
+     #5: CM87uv - TAMALPAIS
+     #6: DM04ms - FRAZIER
+     #7: DM13dr - SADDLEBK
+   ===================================
+   ```
+   All targets are now permanently committed to flash. The operator can unplug the USB cable, drive to any operating site, and find all summits waiting in the on-screen preset picker.
+
+##### Why Serial Streaming is Chosen Over Flash Filesystem Images (LittleFS)
+* **Zero Partitioning Overhead:** No need to carve out a 1.5 MB flash partition or reflash partition tables.
+* **Direct NVS Integration:** Reuses the existing robust ESP-IDF `Preferences` wear-leveling log structure.
+* **Human-Editable in Any Editor:** Files can be edited in Notepad, Vim, or exported from contest logging spreadsheets without build toolchains (`mklittlefs` / `esptool`).
+* **Interactive Verification:** Immediate CLI feedback confirms whether each grid was valid or full before packing for the field.
 
 #### 2. Pre-Loaded Regional Summit Table (Zero-Effort Field Auto-Detection)
 In major contest regions (e.g., Northern California, Southern California, Pacific Northwest), rovers repeatedly work the same classic microwave peaks. A small lookup table in firmware flash (`PROGMEM`) automatically maps known 6-character subsquares to default summit names:
