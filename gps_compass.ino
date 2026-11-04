@@ -687,6 +687,23 @@ void drawProposedOffsetRow() {
   gfx->setTextColor(WHITE, BLACK);
 }
 
+void drawRawHeadingInModal() {
+  if (currentUiMode != UI_MODE_CALIBRATING) return;
+  gfx->fillRect(55, 146, 370, 22, 0x10A2);
+  gfx->setTextSize(2);
+  gfx->setTextColor(WHITE, 0x10A2);
+  gfx->setCursor(55, 148);
+  char buf[36];
+  if (hasHeading) {
+    double rawHdg = calcCurrentBearing(sinavg, cosavg, 0.0f);
+    sprintf(buf, "Raw GNSS Hdg   : %5.1f", rawHdg);
+  } else {
+    sprintf(buf, "Raw GNSS Hdg   : ---.-");
+  }
+  gfx->print(buf);
+  gfx->setTextColor(WHITE, BLACK);
+}
+
 void drawSaveButton(bool isHolding, float progress) {
   uint16_t bg = isHolding ? 0x0540 : 0x0320;
   gfx->fillRoundRect(55, 284, 370, 48, 8, bg);
@@ -732,14 +749,7 @@ void drawCalibrationModal() {
   gfx->print(buf);
 
   // Raw GNSS Heading
-  gfx->setCursor(55, 148);
-  if (hasHeading) {
-    double rawHdg = calcCurrentBearing(sinavg, cosavg, 0.0f);
-    sprintf(buf, "Raw GNSS Hdg   : %5.1f", rawHdg);
-  } else {
-    sprintf(buf, "Raw GNSS Hdg   : ---.-");
-  }
-  gfx->print(buf);
+  drawRawHeadingInModal();
 
   // Current Stored Offset
   gfx->setCursor(55, 172);
@@ -856,6 +866,11 @@ void handleCalSerialCommand(const String &cmd) {
 }
 
 void drawCurrentBearing() {
+  if (currentUiMode == UI_MODE_CALIBRATING) {
+    drawRawHeadingInModal();
+    return;
+  }
+
   uint16_t color = WHITE;
   if (currentBearingQuality == BEARING_FLOAT) {
     color = YELLOW;
@@ -881,6 +896,10 @@ void updateBearings() {
   calcLatLon(remote, &remlatitude, &remlongitude);
   calculateWGS84(mylatitude, mylongitude, remlatitude, remlongitude, distance, bearing);
   calculateWGS84(remlatitude, remlongitude, mylatitude, mylongitude, distance, revbearing);
+
+  if (currentUiMode == UI_MODE_CALIBRATING) {
+    return;
+  }
 
   char buf[20];
   int rdist = (int)floor(distance / 1000.0);
@@ -1575,12 +1594,14 @@ void loop() {
               hasTime = true;
               hours = ksxt_h;
               minutes = ksxt_m;
-              char tbuf[9];
-              sprintf(tbuf, "%02d:%02dZ", hours, minutes);
-              gfx->setTextSize(TIME_SZ);
-              gfx->setCursor(TIME_X, TIME_Y);
-              gfx->setTextColor(WHITE, BLACK);
-              gfx->print(tbuf);
+              if (currentUiMode != UI_MODE_CALIBRATING) {
+                char tbuf[9];
+                sprintf(tbuf, "%02d:%02dZ", hours, minutes);
+                gfx->setTextSize(TIME_SZ);
+                gfx->setCursor(TIME_X, TIME_Y);
+                gfx->setTextColor(WHITE, BLACK);
+                gfx->print(tbuf);
+              }
             }
           }
 
@@ -1592,10 +1613,12 @@ void loop() {
               mylongitude = ksxt_lon;
               calcLocator(mygrid, mylatitude, mylongitude);
 
-              gfx->setTextSize(LOC_SZ);
-              gfx->setCursor(LOC_X, LOC_Y);
-              gfx->setTextColor(WHITE, BLACK);
-              gfx->print(mygrid);
+              if (currentUiMode != UI_MODE_CALIBRATING) {
+                gfx->setTextSize(LOC_SZ);
+                gfx->setCursor(LOC_X, LOC_Y);
+                gfx->setTextColor(WHITE, BLACK);
+                gfx->print(mygrid);
+              }
 
               updateBearings();
             }
@@ -1615,20 +1638,24 @@ void loop() {
             hasLocation = true;
             calcLocator(mygrid, mylatitude, mylongitude);
 
-            gfx->setTextSize(LOC_SZ);
-            gfx->setCursor(LOC_X, LOC_Y);
-            gfx->setTextColor(WHITE, BLACK);
-            gfx->print(mygrid);
+            if (currentUiMode != UI_MODE_CALIBRATING) {
+              gfx->setTextSize(LOC_SZ);
+              gfx->setCursor(LOC_X, LOC_Y);
+              gfx->setTextColor(WHITE, BLACK);
+              gfx->print(mygrid);
+            }
 
             if (!hasTime || gll_h != hours || gll_m != minutes) {
               hasTime = true;
               hours = gll_h;
               minutes = gll_m;
-              sprintf(&buf[0], "%02d:%02dZ", hours, minutes);
-              gfx->setTextSize(TIME_SZ);
-              gfx->setCursor(TIME_X, TIME_Y);
-              gfx->setTextColor(WHITE, BLACK);
-              gfx->print(buf);
+              if (currentUiMode != UI_MODE_CALIBRATING) {
+                sprintf(&buf[0], "%02d:%02dZ", hours, minutes);
+                gfx->setTextSize(TIME_SZ);
+                gfx->setCursor(TIME_X, TIME_Y);
+                gfx->setTextColor(WHITE, BLACK);
+                gfx->print(buf);
+              }
             }
 
             updateBearings();
