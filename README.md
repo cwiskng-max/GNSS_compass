@@ -20,3 +20,4 @@ In addition to antenna heading several other functions are included:
 * **[Getting the Firmware](FIRMWARE.md):** How to obtain the firmware binary ([`gps_compass.ino.esp32s3.bin`](https://github.com/cwiskng-max/GNSS_compass/releases/latest/download/gps_compass.ino.esp32s3.bin)) — either by downloading a pre-compiled release (recommended) or compiling from source code.
 * **[Firmware Installation Guide](INSTALL.md):** How to flash the firmware binary onto the ESP32-S3 display using `esptool` (covers Fedora, Ubuntu, macOS, and Windows).
 * **[Testing & Self-Test Guide](tests/README.md):** Information on automated host unit tests and the on-device visual self-test.
+* **[Design Documentation](docs/design/README.md):** Technical specifications, UI/UX layouts, and architectural designs for compass subsystems and features.
