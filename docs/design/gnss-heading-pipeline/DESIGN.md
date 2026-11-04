@@ -122,7 +122,7 @@ stateDiagram-v2
 | :--- | :--- | :--- | :--- | :--- |
 | **`BEARING_NONE`** | Boot / Unlocked | **Pure White** | `---.-` | Initial power on. Carrier baseline search in progress. |
 | **`BEARING_FIXED`** | RTK Fixed | **Pure White** | `180.2` | Sub-degree dual-antenna carrier-phase integer lock. |
-| **`BEARING_FLOAT`** | RTK Float | **Bright Yellow** | `180.2` | Reduced accuracy. Heading may drift slightly. |
+| **`BEARING_FLOAT`** | RTK Float | **Rich Golden Yellow** (`0xFEA0`) | `180.2` | Reduced accuracy. Sunlight-optimized gold tint avoids bleaching to white. |
 | **`BEARING_LOST`** | Watchdog Expired | **Bright Red** | `180.2` | **Data Stale ($>1.5\text{ s}$).** Signal blocked or cable severed. |
 
 ### Watchdog Implementation

@@ -10,7 +10,7 @@
 enum BearingQuality {
   BEARING_NONE = 0,    // Fresh start, never acquired -> WHITE (---.-)
   BEARING_FIXED = 1,   // High precision (RTK Fixed) -> WHITE
-  BEARING_FLOAT = 2,   // Reduced quality (RTK Float) -> YELLOW
+  BEARING_FLOAT = 2,   // Reduced quality (RTK Float) -> RICH_YELLOW
   BEARING_LOST = 3     // Signal lost / stale timeout -> RED
 };
 
@@ -36,6 +36,13 @@ enum GpsLinkVerdict {
 #define DECN(x) (((x-1)<'0')?'9':(x-1))
 #define INCG(x) (x=(x>='0' && x<='9')?INCN(x):INCA(x))
 #define DECG(x) (x=(x>='0' && x<='9')?DECN(x):DECA(x))
+
+// --- Color Palette Adjustments ---
+// Rich golden yellow (RGB565: R=31, G=53, B=0 = 0xFEA0, ~#FFD400)
+// Sunlight-optimized: standard yellow (0xFFE0, R=31, G=63, B=0) washes out to near-white under intense sunlight.
+// Reducing green slightly to ~84% creates a rich, warm golden-amber hue clearly differentiated from white,
+// while keeping full red and 0 blue to maintain maximum contrast and photopic brightness.
+#define RICH_YELLOW          0xFEA0
 
 // --- Display Layout (480 x 480) ---
 #define CHAR_W(sz)           (6 * (sz))
@@ -317,7 +324,7 @@ void printrem() {
 
   for (int i = 0; i < 6; i++) {
     if (isEditing && i == remotec) {
-      gfx->setTextColor(YELLOW, BLACK);
+      gfx->setTextColor(RICH_YELLOW, BLACK);
     } else {
       gfx->setTextColor(WHITE, BLACK);
     }
@@ -325,7 +332,7 @@ void printrem() {
     gfx->print(remote[i]);
   }
 
-  gfx->setTextColor(YELLOW, BLACK);
+  gfx->setTextColor(RICH_YELLOW, BLACK);
   gfx->setCursor(REMSTARTX, REMSTARTY + CHAR_H(REMSIZE));
   gfx->print("      ");
   if (isEditing) {
@@ -679,7 +686,7 @@ void drawCalibrationPill() {
 void drawProposedOffsetRow() {
   gfx->fillRect(50, 198, 380, 26, 0x10A2);
   gfx->setTextSize(2);
-  gfx->setTextColor(YELLOW, 0x10A2);
+  gfx->setTextColor(RICH_YELLOW, 0x10A2);
   char buf[36];
   sprintf(buf, "Proposed Offset: %+5.1f", proposedCalibrationOffset);
   gfx->setCursor(55, 202);
@@ -918,7 +925,7 @@ void drawCurrentBearing() {
 
   uint16_t color = WHITE;
   if (currentBearingQuality == BEARING_FLOAT) {
-    color = YELLOW;
+    color = RICH_YELLOW;
   } else if (currentBearingQuality == BEARING_LOST) {
     color = RED;
   }
@@ -1185,7 +1192,7 @@ void runVisualSelfTest() {
 
   // Test 2: Rover Transit Alert (< 16 km, highlighted RED on WHITE)
   Serial.println(F("[Test 2/6] Rover Transit Alert (< 16 km, highlighted RED on WHITE)"));
-  showFooterText("TEST 2: ROVER < 16K", YELLOW);
+  showFooterText("TEST 2: ROVER < 16K", RICH_YELLOW);
   strcpy(remote, "CM87wb");
   currentBearingQuality = BEARING_FIXED;
   rovdist = true;
@@ -1235,7 +1242,7 @@ void runVisualSelfTest() {
   delay(1000);
 
   Serial.println(F("  -> Bearing Color: Bright Yellow (RTK Float / Degraded)"));
-  showFooterText("TEST 6: BEARING YELLOW", YELLOW);
+  showFooterText("TEST 6: BEARING YELLOW", RICH_YELLOW);
   currentBearingQuality = BEARING_FLOAT;
   drawCurrentBearing();
   delay(1000);
@@ -1261,9 +1268,9 @@ void runVisualSelfTest() {
   if (liveVerdict == GPS_LINK_OK_FIXED) {
     showStatusCard("GPS: RTK FIXED (OK)", GREEN, BLACK);
   } else if (liveVerdict == GPS_LINK_HEADING_FLOAT) {
-    showStatusCard("GPS: RTK FLOAT (WARN)", YELLOW, BLACK);
+    showStatusCard("GPS: RTK FLOAT (WARN)", RICH_YELLOW, BLACK);
   } else if (liveVerdict == GPS_LINK_ACQUIRING || liveVerdict == GPS_LINK_POSITION_ONLY) {
-    showStatusCard("GPS: ACQUIRING (WAIT)", YELLOW, BLACK);
+    showStatusCard("GPS: ACQUIRING (WAIT)", RICH_YELLOW, BLACK);
   } else {
     showStatusCard("GPS: NO DATA / CABLE", RED, WHITE);
   }
@@ -1288,7 +1295,7 @@ void runVisualSelfTest() {
   delay(1500);
 
   Serial.println(F("  -> Demonstrating Calibration Modal Dialog"));
-  showFooterText("TEST 7: CAL MODAL", YELLOW);
+  showFooterText("TEST 7: CAL MODAL", RICH_YELLOW);
   proposedCalibrationOffset = 4.2f;
   currentUiMode = UI_MODE_CALIBRATING;
   drawCalibrationModal();

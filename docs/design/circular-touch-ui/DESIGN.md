@@ -84,6 +84,15 @@ if (TOUCH_X_MIN <= p.x && p.x <= TOUCH_X_MAX && TOUCH_Y_MIN <= p.y && p.y <= TOU
 }
 ```
 
+### Visual Highlighting & Sunlight Readability (`RICH_YELLOW` `0xFEA0`)
+To clearly differentiate the active character under edit and the caret `^` from non-editing white characters (`0xFFFF`) in bright outdoor sunlight:
+* Standard RGB565 yellow (`0xFFE0`, R=31, G=63, B=0) easily washes out to white when combined with ambient daylight reflection on the display glass.
+* The editor uses `RICH_YELLOW` (`0xFEA0`, R=31, G=53, B=0, $\sim\text{\#FFD400}$):
+  * **Red channel:** Maintained at maximum output (31 / 100%).
+  * **Green channel:** Slightly dialed back to $\sim 84\%$ (53 / 63).
+  * **Blue channel:** 0 (maximum chromatic distance from White).
+* This provides a rich, warm golden-amber tint that remains unmistakably distinct from white text in direct sunlight without sacrificing photopic brightness.
+
 ---
 
 ## 4. Inactivity Auto-Lock Architecture
