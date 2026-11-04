@@ -11,6 +11,12 @@ Each major subsystem or feature design is organized into its own subfolder to ke
 | Feature / Subsystem | Directory | Status | Summary |
 | :--- | :--- | :--- | :--- |
 | **Antenna Heading Calibration** | [`antenna-calibration/`](antenna-calibration/DESIGN.md) | **Implemented** | Non-volatile antenna alignment offset via NVS (`Preferences`), touch UI pill, snap modal, rotary knob fine-tuning, and serial CLI. |
+| **Visual Self-Test & GNSS Diagnostics** | [`visual-self-test/`](visual-self-test/DESIGN.md) | **Implemented** | On-device visual display self-test demo sequence, link health state machine (`GpsLinkVerdict`), and serial stream diagnostics. |
+| **Rover Station Transit Check** | [`rover-transit/`](rover-transit/DESIGN.md) | **Implemented** | ARRL 10 GHz rover $<16\text{ km}$ proximity alert (highlighted Red-on-White), 1-tap origin grid copy, and auto-reset lifecycle. |
+| **Dual-Antenna GNSS Heading Pipeline** | [`gnss-heading-pipeline/`](gnss-heading-pipeline/DESIGN.md) | **Implemented** | Unicore UM982 `$KSXT` / NMEA parsing, circular mean vector smoothing ($\sin/\cos$), 1.5s staleness watchdog, and 4-tier color states. |
+| **Maidenhead Geodetics & ARRL Rules** | [`maidenhead-geodetics/`](maidenhead-geodetics/DESIGN.md) | **Implemented** | Double-precision Maidenhead subsquare center calculation, great-circle azimuths, ARRL 1.0 km contest clamp, and host C++ unit testing. |
+| **Circular Display Touch Interface** | [`circular-touch-ui/`](circular-touch-ui/DESIGN.md) | **Implemented** | 480x480 circular layout budget, 6-character touch Maidenhead editor with field rules, 5-second auto-lock, and rotary encoder input. |
+| **CI Build & Release Pipeline** | [`ci-firmware-pipeline/`](ci-firmware-pipeline/DESIGN.md) | **Implemented** | Headless `arduino-cli` ESP32-S3 CI builds, dynamic git version injection (`FW_VERSION`), release tag validation, and binary checksums. |
 
 ---
 
