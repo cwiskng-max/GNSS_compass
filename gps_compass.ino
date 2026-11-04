@@ -724,6 +724,71 @@ void drawSaveButton(bool isHolding, float progress) {
   gfx->setTextColor(WHITE, BLACK);
 }
 
+void drawSnapButton(bool highlighted) {
+  if (currentUiMode != UI_MODE_CALIBRATING) return;
+
+  uint16_t snapBg, snapBorder, snapFg;
+  if (!hasHeading) {
+    snapBg = 0x2104;      // Disabled dark gray
+    snapBorder = 0x4208;  // Dim outline
+    snapFg = 0x7BEF;      // Dim text
+  } else if (highlighted) {
+    snapBg = CYAN;        // Vibrant electric cyan highlight flash
+    snapBorder = WHITE;
+    snapFg = BLACK;
+  } else {
+    snapBg = 0x1B19;      // Vibrant Cobalt / Royal Blue (#1961CD)
+    snapBorder = 0x3DFF;  // Electric Dodger Blue / Sky border
+    snapFg = WHITE;
+  }
+
+  gfx->fillRoundRect(55, 234, 180, 40, 8, snapBg);
+  gfx->drawRoundRect(55, 234, 180, 40, 8, snapBorder);
+  const char* snapText = "SNAP TARGET";
+  int stw = strlen(snapText) * CHAR_W(2);
+  gfx->setTextSize(2);
+  gfx->setTextColor(snapFg, snapBg);
+  gfx->setCursor(55 + (180 - stw) / 2, 246);
+  gfx->print(snapText);
+  gfx->setTextColor(WHITE, BLACK);
+}
+
+void drawResetButton(bool highlighted) {
+  if (currentUiMode != UI_MODE_CALIBRATING) return;
+
+  uint16_t rstBg = highlighted ? RED : 0x5000;
+  uint16_t rstBorder = highlighted ? WHITE : RED;
+  uint16_t rstFg = WHITE;
+
+  gfx->fillRoundRect(245, 234, 180, 40, 8, rstBg);
+  gfx->drawRoundRect(245, 234, 180, 40, 8, rstBorder);
+  const char* rstText = "RESET (0.0)";
+  int rtw = strlen(rstText) * CHAR_W(2);
+  gfx->setTextSize(2);
+  gfx->setTextColor(rstFg, rstBg);
+  gfx->setCursor(245 + (180 - rtw) / 2, 246);
+  gfx->print(rstText);
+  gfx->setTextColor(WHITE, BLACK);
+}
+
+void drawCancelButton(bool highlighted) {
+  if (currentUiMode != UI_MODE_CALIBRATING) return;
+
+  uint16_t canBg = highlighted ? WHITE : 0x2945;
+  uint16_t canBorder = WHITE;
+  uint16_t canFg = highlighted ? BLACK : WHITE;
+
+  gfx->fillRoundRect(140, 342, 200, 36, 8, canBg);
+  gfx->drawRoundRect(140, 342, 200, 36, 8, canBorder);
+  const char* canText = "CANCEL";
+  int ctw = strlen(canText) * CHAR_W(2);
+  gfx->setTextSize(2);
+  gfx->setTextColor(canFg, canBg);
+  gfx->setCursor(140 + (200 - ctw) / 2, 352);
+  gfx->print(canText);
+  gfx->setTextColor(WHITE, BLACK);
+}
+
 void drawCalibrationModal() {
   // Semi-modal dark card in center
   gfx->fillRoundRect(35, 75, 410, 335, 12, 0x10A2); // Dark slate navy
@@ -761,25 +826,11 @@ void drawCalibrationModal() {
 
   // Button 1: [ SNAP TARGET ] (tap only, updates display without saving)
   // X: 55 to 235 (Width 180), Y: 234 to 274 (Height 40)
-  uint16_t snapBg = (hasHeading) ? 0x0210 : 0x2104;
-  uint16_t snapFg = (hasHeading) ? CYAN : 0x7BEF;
-  gfx->fillRoundRect(55, 234, 180, 40, 8, snapBg);
-  gfx->drawRoundRect(55, 234, 180, 40, 8, (hasHeading) ? CYAN : 0x7BEF);
-  const char* snapText = "SNAP TARGET";
-  int stw = strlen(snapText) * CHAR_W(2);
-  gfx->setTextColor(snapFg, snapBg);
-  gfx->setCursor(55 + (180 - stw) / 2, 246);
-  gfx->print(snapText);
+  drawSnapButton(false);
 
   // Button 2: [ RESET (0.0) ] (tap only, resets display without saving)
   // X: 245 to 425 (Width 180), Y: 234 to 274 (Height 40)
-  gfx->fillRoundRect(245, 234, 180, 40, 8, 0x4000); // Dark red
-  gfx->drawRoundRect(245, 234, 180, 40, 8, RED);
-  const char* rstText = "RESET (0.0)";
-  int rtw = strlen(rstText) * CHAR_W(2);
-  gfx->setTextColor(WHITE, 0x4000);
-  gfx->setCursor(245 + (180 - rtw) / 2, 246);
-  gfx->print(rstText);
+  drawResetButton(false);
 
   // Button 3: [ HOLD TO SAVE OFFSET ] (requires 1.5s long-press)
   // X: 55 to 425 (Width 370), Y: 284 to 332 (Height 48)
@@ -787,13 +838,7 @@ void drawCalibrationModal() {
 
   // Button 4: [ CANCEL ] (tap is OK)
   // X: 140 to 340 (Width 200), Y: 342 to 378 (Height 36)
-  gfx->fillRoundRect(140, 342, 200, 36, 8, 0x2945); // Slate gray
-  gfx->drawRoundRect(140, 342, 200, 36, 8, WHITE);
-  const char* canText = "CANCEL";
-  int ctw = strlen(canText) * CHAR_W(2);
-  gfx->setTextColor(WHITE, 0x2945);
-  gfx->setCursor(140 + (200 - ctw) / 2, 352);
-  gfx->print(canText);
+  drawCancelButton(false);
 
   // Instruction footer
   gfx->setTextColor(0x7BEF, 0x10A2);
@@ -1247,7 +1292,11 @@ void runVisualSelfTest() {
   proposedCalibrationOffset = 4.2f;
   currentUiMode = UI_MODE_CALIBRATING;
   drawCalibrationModal();
-  delay(2500);
+  delay(1200);
+  drawSnapButton(true);
+  delay(300);
+  drawSnapButton(false);
+  delay(1000);
 
   // Display PASS/FAIL Result Banner
   bool all_pass = true;
@@ -1402,6 +1451,12 @@ void loop() {
               // Save button: X 55..425, Y 284..332
               if (55 <= p.x && p.x <= 425 && 284 <= p.y && p.y <= 332) {
                 holdingSaveBtn = true;
+              } else if (55 <= p.x && p.x <= 235 && 230 <= p.y && p.y <= 278) {
+                if (hasHeading) drawSnapButton(true);
+              } else if (245 <= p.x && p.x <= 425 && 230 <= p.y && p.y <= 278) {
+                drawResetButton(true);
+              } else if (130 <= p.x && p.x <= 350 && 340 <= p.y && p.y <= 385) {
+                drawCancelButton(true);
               }
             }
           }
@@ -1414,6 +1469,11 @@ void loop() {
             if (holdingSaveBtn) {
               holdingSaveBtn = false;
               drawSaveButton(false, 0.0f);
+            }
+            if (currentUiMode == UI_MODE_CALIBRATING) {
+              drawSnapButton(false);
+              drawResetButton(false);
+              drawCancelButton(false);
             }
           }
 
@@ -1442,6 +1502,10 @@ void loop() {
         if (holdingSaveBtn) {
           holdingSaveBtn = false;
           drawSaveButton(false, 0.0f);
+        } else if (currentUiMode == UI_MODE_CALIBRATING && pressDuration >= LONG_PRESS_MS) {
+          drawSnapButton(false);
+          drawResetButton(false);
+          drawCancelButton(false);
         }
 
         // Handle short taps if long press did not trigger
@@ -1453,21 +1517,33 @@ void loop() {
 
             // Button 1: [ SNAP TARGET ] (X: 55..235, Y: 230..278) -> Tap updates display only!
             if (55 <= p.x && p.x <= 235 && 230 <= p.y && p.y <= 278) {
+              drawSnapButton(true);
               if (hasHeading) {
                 double rawHdg = calcCurrentBearing(sinavg, cosavg, 0.0f);
                 proposedCalibrationOffset = normalizeOffset((float)(bearing - rawHdg));
                 drawProposedOffsetRow();
               }
+              delay(120);
+              drawSnapButton(false);
             }
             // Button 2: [ RESET (0.0) ] (X: 245..425, Y: 230..278) -> Tap resets display only!
             else if (245 <= p.x && p.x <= 425 && 230 <= p.y && p.y <= 278) {
+              drawResetButton(true);
               proposedCalibrationOffset = 0.0f;
               drawProposedOffsetRow();
+              delay(120);
+              drawResetButton(false);
             }
             // Button 4: [ CANCEL ] (X: 130..350, Y: 340..385) -> Tap cancels immediately!
             else if (130 <= p.x && p.x <= 350 && 340 <= p.y && p.y <= 385) {
+              drawCancelButton(true);
+              delay(120);
               currentUiMode = UI_MODE_NORMAL;
               redrawMainScreen();
+            } else {
+              drawSnapButton(false);
+              drawResetButton(false);
+              drawCancelButton(false);
             }
           } else {
             // Normal Mode Short Taps

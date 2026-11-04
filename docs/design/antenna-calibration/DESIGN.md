@@ -143,12 +143,20 @@ Tapping the center `CAL` pill opens a high-contrast modal dialog card with layer
 +---------------------------------------------------+
 ```
 
-### Safety Interaction Model
-* **`[ SNAP TARGET ]` (Tap):** Snaps `Proposed Offset` on screen to `Target - Raw`. **Does NOT write to flash.**
-* **`[ RESET (0.0) ]` (Tap):** Sets `Proposed Offset` on screen to `+0.0`. **Does NOT write to flash.**
+### Safety Interaction Model & Button Styling
+* **`[ SNAP TARGET ]` (Cobalt/Royal Blue `0x1B19`, Electric Cyan border `0x3DFF`, White text):**
+  * Tapping snaps `Proposed Offset` on screen to `Target - Raw`. **Does NOT write to flash.**
+  * Disabled (Muted gray `0x2104`, text `0x7BEF`) when no GNSS heading fix is available.
+  * Provides active touch feedback: illuminates instantly in electric cyan (`CYAN`) with white border and black text on press/tap for 120 ms.
+* **`[ RESET (0.0) ]` (Dark Crimson `0x5000`, Red border `RED`, White text):**
+  * Tapping sets `Proposed Offset` on screen to `+0.0`. **Does NOT write to flash.**
+  * Provides active touch feedback: illuminates instantly in vivid solid red (`RED`) with white border on press/tap for 120 ms.
 * **Rotary Knob (Turn):** Nudges `Proposed Offset` on screen by $\pm 0.1^\circ$. **Does NOT write to flash.**
-* **`[ HOLD TO SAVE OFFSET ]` (Long-Press 1.5s):** Commits the proposed offset to NVS flash and exits to the main screen. Displays dynamic filling progress and text `"HOLDING TO SAVE..."`. A short tap does not save.
-* **`[ CANCEL ]` (Tap):** Discards any proposed changes immediately and returns to the main screen without writing to flash.
+* **`[ HOLD TO SAVE OFFSET ]` (Dark Forest Green `0x0320`, Green border `GREEN`, White text):**
+  * Requires a 1.5s long-press. Commits the proposed offset to NVS flash and exits to the main screen. Displays dynamic filling progress bar (`0x07E0`) and text `"HOLDING TO SAVE..."`. A short tap does not save.
+* **`[ CANCEL ]` (Slate Gray `0x2945`, White border, White text):**
+  * Discards any proposed changes immediately and returns to the main screen without writing to flash.
+  * Provides active touch feedback: illuminates instantly in inverted white (`WHITE`) with black text for 120 ms before closing the modal dialog.
 * **Auto-Timeout:** 15 seconds of inactivity automatically cancels and returns to the normal screen without saving.
 
 ### Touch Hitboxes
