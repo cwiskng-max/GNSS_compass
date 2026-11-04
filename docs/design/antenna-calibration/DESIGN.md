@@ -115,13 +115,14 @@ Row 3 ($Y = 223$, Height = $48\text{ px}$) displays the bearings at text size `B
 ### Center Status Pill States
 * **Uncalibrated ($0.0^\circ$):** Dark gray rounded frame (`0x39E7`), dim gray text (`0x7BEF`) reading `CAL / OFF`.
 * **Calibrated ($\neq 0.0^\circ$):** Vibrant cyan frame (`0x07FF`) and cyan text reading `CAL / %+4.1f` (e.g. `CAL / +4.2`).
-* **Touch Hitbox:** Extended padding covering $X \in [180, 300]$, $Y \in [210, 280]$ ($120 \times 70\text{ px}$) for effortless finger or glove tapping.
+* **Touch Hitbox:** Extended padding covering $X \in [180, 300]$, $Y \in [210, 280]$ ($120 \times 70\text{ px}$).
+* **Tap Action:** A direct single tap opens the Calibration Modal Dialog immediately.
 
 ---
 
 ## 5. Calibration Modal Dialog
 
-Tapping the center `CAL` pill opens a high-contrast modal dialog card preventing accidental changes:
+Tapping the center `CAL` pill opens a high-contrast modal dialog card with layered safety protections:
 
 ```text
 +---------------------------------------------------+
@@ -132,19 +133,29 @@ Tapping the center `CAL` pill opens a high-contrast modal dialog card preventing
 |   Current Offset :   +0.0                         |
 |   Proposed Offset:   +4.2                         |
 |                                                   |
-|          [  SNAP / SAVE OFFSET  ]                 |
+|   [ SNAP TARGET ]          [ RESET (0.0) ]        |
 |                                                   |
-|     [ RESET (0.0) ]          [  CANCEL  ]         |
+|             [ HOLD TO SAVE OFFSET ]               |
+|                                                   |
+|                   [ CANCEL ]                      |
 |                                                   |
 |             (Turn knob to nudge +-0.1)            |
 +---------------------------------------------------+
 ```
 
+### Safety Interaction Model
+* **`[ SNAP TARGET ]` (Tap):** Snaps `Proposed Offset` on screen to `Target - Raw`. **Does NOT write to flash.**
+* **`[ RESET (0.0) ]` (Tap):** Sets `Proposed Offset` on screen to `+0.0`. **Does NOT write to flash.**
+* **Rotary Knob (Turn):** Nudges `Proposed Offset` on screen by $\pm 0.1^\circ$. **Does NOT write to flash.**
+* **`[ HOLD TO SAVE OFFSET ]` (Long-Press 1.5s):** Commits the proposed offset to NVS flash and exits to the main screen. Displays dynamic filling progress and text `"HOLDING TO SAVE..."`. A short tap does not save.
+* **`[ CANCEL ]` (Tap):** Discards any proposed changes immediately and returns to the main screen without writing to flash.
+* **Auto-Timeout:** 15 seconds of inactivity automatically cancels and returns to the normal screen without saving.
+
 ### Touch Hitboxes
-* **`[ SNAP / SAVE OFFSET ]`**: $X \in [55, 425]$, $Y \in [250, 300]$ (Width: $370\text{ px}$, Height: $50\text{ px}$). Snaps offset to target or saves knob-nudged offset, saves to NVS, and exits.
-* **`[ RESET (0.0) ]`**: $X \in [55, 235]$, $Y \in [305, 355]$ (Width: $180\text{ px}$, Height: $50\text{ px}$). Resets offset to $0.0^\circ$, saves to NVS, and exits.
-* **`[ CANCEL ]`**: $X \in [245, 425]$, $Y \in [305, 355]$ (Width: $180\text{ px}$, Height: $50\text{ px}$). Discards changes and exits.
-* **Auto-Timeout:** 15 seconds of inactivity automatically cancels and returns to normal screen.
+* **`[ SNAP TARGET ]`**: $X \in [55, 235]$, $Y \in [230, 278]$ ($180 \times 48\text{ px}$).
+* **`[ RESET (0.0) ]`**: $X \in [245, 425]$, $Y \in [230, 278]$ ($180 \times 48\text{ px}$).
+* **`[ HOLD TO SAVE OFFSET ]`**: $X \in [55, 425]$, $Y \in [284, 332]$ ($370 \times 48\text{ px}$).
+* **`[ CANCEL ]`**: $X \in [130, 350]$, $Y \in [340, 385]$ ($220 \times 45\text{ px}$).
 
 ### Rotary Encoder Nudging
 When in the calibration modal, turning the physical rotary knob (`ENCODER_CLK 42, ENCODER_DT 4`) increments or decrements the proposed offset by $\pm 0.1^\circ$ in real-time, giving manual fine-tuning capability without requiring an on-screen keypad.

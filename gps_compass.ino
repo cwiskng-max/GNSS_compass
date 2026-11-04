@@ -677,13 +677,33 @@ void drawCalibrationPill() {
 }
 
 void drawProposedOffsetRow() {
-  gfx->fillRect(50, 218, 380, 28, 0x10A2);
+  gfx->fillRect(50, 198, 380, 26, 0x10A2);
   gfx->setTextSize(2);
   gfx->setTextColor(YELLOW, 0x10A2);
   char buf[36];
   sprintf(buf, "Proposed Offset: %+5.1f", proposedCalibrationOffset);
-  gfx->setCursor(55, 222);
+  gfx->setCursor(55, 202);
   gfx->print(buf);
+  gfx->setTextColor(WHITE, BLACK);
+}
+
+void drawSaveButton(bool isHolding, float progress) {
+  uint16_t bg = isHolding ? 0x0540 : 0x0320;
+  gfx->fillRoundRect(55, 284, 370, 48, 8, bg);
+  gfx->drawRoundRect(55, 284, 370, 48, 8, GREEN);
+
+  if (isHolding && progress > 0.0f) {
+    int fillW = (int)(366.0f * progress);
+    if (fillW > 366) fillW = 366;
+    gfx->fillRoundRect(57, 286, fillW, 44, 6, 0x07E0);
+  }
+
+  const char* saveText = isHolding ? "HOLDING TO SAVE..." : "HOLD TO SAVE OFFSET";
+  int stw = strlen(saveText) * CHAR_W(2);
+  gfx->setTextColor(WHITE, (isHolding && progress > 0.5f) ? 0x07E0 : bg);
+  gfx->setTextSize(2);
+  gfx->setCursor((480 - stw) / 2, 300);
+  gfx->print(saveText);
   gfx->setTextColor(WHITE, BLACK);
 }
 
@@ -698,21 +718,21 @@ void drawCalibrationModal() {
   gfx->setTextColor(CYAN, 0x10A2);
   const char* title = "ANTENNA CALIBRATION";
   int tw = strlen(title) * CHAR_W(2);
-  gfx->setCursor((480 - tw) / 2, 92);
+  gfx->setCursor((480 - tw) / 2, 88);
   gfx->print(title);
 
   // Separator line
-  gfx->drawFastHLine(55, 118, 370, 0x39E7);
+  gfx->drawFastHLine(55, 112, 370, 0x39E7);
 
   // Target Bearing
   char buf[36];
   gfx->setTextColor(WHITE, 0x10A2);
-  gfx->setCursor(55, 132);
+  gfx->setCursor(55, 124);
   sprintf(buf, "Target Bearing : %5.1f", bearing);
   gfx->print(buf);
 
   // Raw GNSS Heading
-  gfx->setCursor(55, 160);
+  gfx->setCursor(55, 148);
   if (hasHeading) {
     double rawHdg = calcCurrentBearing(sinavg, cosavg, 0.0f);
     sprintf(buf, "Raw GNSS Hdg   : %5.1f", rawHdg);
@@ -722,50 +742,54 @@ void drawCalibrationModal() {
   gfx->print(buf);
 
   // Current Stored Offset
-  gfx->setCursor(55, 188);
+  gfx->setCursor(55, 172);
   sprintf(buf, "Current Offset : %+5.1f", calibrationOffset);
   gfx->print(buf);
 
   // Proposed Offset (with fine-tuning knob)
   drawProposedOffsetRow();
 
-  // Button 1: [ SNAP / SAVE OFFSET ]
-  // X: 55 to 425 (Width 370), Y: 255 to 295 (Height 40)
-  uint16_t snapBtnBg = (hasHeading || fabs(proposedCalibrationOffset) > 0.01f) ? 0x0400 : 0x2104; // Dark green if valid
-  uint16_t snapBtnFg = (hasHeading || fabs(proposedCalibrationOffset) > 0.01f) ? WHITE : 0x7BEF;
-  gfx->fillRoundRect(55, 255, 370, 40, 8, snapBtnBg);
-  gfx->drawRoundRect(55, 255, 370, 40, 8, GREEN);
-  const char* snapText = "SNAP / SAVE OFFSET";
+  // Button 1: [ SNAP TARGET ] (tap only, updates display without saving)
+  // X: 55 to 235 (Width 180), Y: 234 to 274 (Height 40)
+  uint16_t snapBg = (hasHeading) ? 0x0210 : 0x2104;
+  uint16_t snapFg = (hasHeading) ? CYAN : 0x7BEF;
+  gfx->fillRoundRect(55, 234, 180, 40, 8, snapBg);
+  gfx->drawRoundRect(55, 234, 180, 40, 8, (hasHeading) ? CYAN : 0x7BEF);
+  const char* snapText = "SNAP TARGET";
   int stw = strlen(snapText) * CHAR_W(2);
-  gfx->setTextColor(snapBtnFg, snapBtnBg);
-  gfx->setCursor((480 - stw) / 2, 267);
+  gfx->setTextColor(snapFg, snapBg);
+  gfx->setCursor(55 + (180 - stw) / 2, 246);
   gfx->print(snapText);
 
-  // Button 2: [ RESET 0.0 ]
-  // X: 55 to 230 (Width 175), Y: 308 to 348 (Height 40)
-  gfx->fillRoundRect(55, 308, 175, 40, 8, 0x8000); // Dark maroon/red
-  gfx->drawRoundRect(55, 308, 175, 40, 8, RED);
+  // Button 2: [ RESET (0.0) ] (tap only, resets display without saving)
+  // X: 245 to 425 (Width 180), Y: 234 to 274 (Height 40)
+  gfx->fillRoundRect(245, 234, 180, 40, 8, 0x4000); // Dark red
+  gfx->drawRoundRect(245, 234, 180, 40, 8, RED);
   const char* rstText = "RESET (0.0)";
   int rtw = strlen(rstText) * CHAR_W(2);
-  gfx->setTextColor(WHITE, 0x8000);
-  gfx->setCursor(55 + (175 - rtw) / 2, 320);
+  gfx->setTextColor(WHITE, 0x4000);
+  gfx->setCursor(245 + (180 - rtw) / 2, 246);
   gfx->print(rstText);
 
-  // Button 3: [ CANCEL ]
-  // X: 250 to 425 (Width 175), Y: 308 to 348 (Height 40)
-  gfx->fillRoundRect(250, 308, 175, 40, 8, 0x39E7); // Dark gray
-  gfx->drawRoundRect(250, 308, 175, 40, 8, WHITE);
+  // Button 3: [ HOLD TO SAVE OFFSET ] (requires 1.5s long-press)
+  // X: 55 to 425 (Width 370), Y: 284 to 332 (Height 48)
+  drawSaveButton(false, 0.0f);
+
+  // Button 4: [ CANCEL ] (tap is OK)
+  // X: 140 to 340 (Width 200), Y: 342 to 378 (Height 36)
+  gfx->fillRoundRect(140, 342, 200, 36, 8, 0x2945); // Slate gray
+  gfx->drawRoundRect(140, 342, 200, 36, 8, WHITE);
   const char* canText = "CANCEL";
   int ctw = strlen(canText) * CHAR_W(2);
-  gfx->setTextColor(WHITE, 0x39E7);
-  gfx->setCursor(250 + (175 - ctw) / 2, 320);
+  gfx->setTextColor(WHITE, 0x2945);
+  gfx->setCursor(140 + (200 - ctw) / 2, 352);
   gfx->print(canText);
 
   // Instruction footer
   gfx->setTextColor(0x7BEF, 0x10A2);
   const char* hint = "(Turn knob to nudge +-0.1)";
   int htw = strlen(hint) * CHAR_W(2);
-  gfx->setCursor((480 - htw) / 2, 362);
+  gfx->setCursor((480 - htw) / 2, 386);
   gfx->print(hint);
 
   gfx->setTextColor(WHITE, BLACK);
@@ -1334,43 +1358,102 @@ void loop() {
       }
     }
 
-    static bool wasTouched = false;
-    static unsigned long lastTouchTime = 0;
-    if (tsPanel.touched()) {
-      if (!wasTouched && (millis() - lastTouchTime >= 200)) {
-        CST_TS_Point p = tsPanel.getPoint(0);
-        if (p.x != 0 || p.y != 0) {
-          wasTouched = true;
-          lastTouchTime = millis();
+    #define LONG_PRESS_MS 1500
 
-          if (currentUiMode == UI_MODE_CALIBRATING) {
-            calModalOpenedMillis = millis();
-            // Button 1: [ SNAP / SAVE OFFSET ] (X: 55..425, Y: 250..300)
-            if (55 <= p.x && p.x <= 425 && 250 <= p.y && p.y <= 300) {
-              if (hasHeading && fabs(proposedCalibrationOffset - calibrationOffset) < 0.01f) {
-                // If user didn't turn knob, snap to target
-                double rawHdg = calcCurrentBearing(sinavg, cosavg, 0.0f);
-                proposedCalibrationOffset = normalizeOffset((float)(bearing - rawHdg));
+    static bool isTouching = false;
+    static unsigned long touchStartTime = 0;
+    static CST_TS_Point touchStartPoint;
+    static bool longPressTriggered = false;
+    static bool holdingSaveBtn = false;
+    static unsigned long lastTouchReleaseTime = 0;
+
+    if (tsPanel.touched()) {
+      CST_TS_Point p = tsPanel.getPoint(0);
+      if (p.x != 0 || p.y != 0) {
+        if (!isTouching) {
+          if (millis() - lastTouchReleaseTime >= 100) {
+            isTouching = true;
+            touchStartTime = millis();
+            touchStartPoint = p;
+            longPressTriggered = false;
+            holdingSaveBtn = false;
+
+            if (currentUiMode == UI_MODE_CALIBRATING) {
+              calModalOpenedMillis = millis(); // Refresh modal timeout
+              // Save button: X 55..425, Y 284..332
+              if (55 <= p.x && p.x <= 425 && 284 <= p.y && p.y <= 332) {
+                holdingSaveBtn = true;
               }
+            }
+          }
+        } else {
+          // Touch is being held
+          unsigned long holdDuration = millis() - touchStartTime;
+
+          // Check if finger drifted too far
+          if (abs(p.x - touchStartPoint.x) > 35 || abs(p.y - touchStartPoint.y) > 35) {
+            if (holdingSaveBtn) {
+              holdingSaveBtn = false;
+              drawSaveButton(false, 0.0f);
+            }
+          }
+
+          if (holdingSaveBtn && !longPressTriggered) {
+            calModalOpenedMillis = millis();
+            float prog = (float)holdDuration / (float)LONG_PRESS_MS;
+            drawSaveButton(true, prog);
+
+            if (holdDuration >= LONG_PRESS_MS) {
+              longPressTriggered = true;
+              holdingSaveBtn = false;
               saveCalibration(proposedCalibrationOffset);
               currentUiMode = UI_MODE_NORMAL;
               redrawMainScreen();
             }
-            // Button 2: [ RESET 0.0 ] (X: 55..235, Y: 305..355)
-            else if (55 <= p.x && p.x <= 235 && 305 <= p.y && p.y <= 355) {
-              saveCalibration(0.0f);
-              currentUiMode = UI_MODE_NORMAL;
-              redrawMainScreen();
+          }
+        }
+      }
+    } else {
+      // Touch released
+      if (isTouching) {
+        unsigned long pressDuration = millis() - touchStartTime;
+        isTouching = false;
+        lastTouchReleaseTime = millis();
+
+        if (holdingSaveBtn) {
+          holdingSaveBtn = false;
+          drawSaveButton(false, 0.0f);
+        }
+
+        // Handle short taps if long press did not trigger
+        if (!longPressTriggered && pressDuration < LONG_PRESS_MS) {
+          CST_TS_Point p = touchStartPoint;
+
+          if (currentUiMode == UI_MODE_CALIBRATING) {
+            calModalOpenedMillis = millis();
+
+            // Button 1: [ SNAP TARGET ] (X: 55..235, Y: 230..278) -> Tap updates display only!
+            if (55 <= p.x && p.x <= 235 && 230 <= p.y && p.y <= 278) {
+              if (hasHeading) {
+                double rawHdg = calcCurrentBearing(sinavg, cosavg, 0.0f);
+                proposedCalibrationOffset = normalizeOffset((float)(bearing - rawHdg));
+                drawProposedOffsetRow();
+              }
             }
-            // Button 3: [ CANCEL ] (X: 245..425, Y: 305..355)
-            else if (245 <= p.x && p.x <= 425 && 305 <= p.y && p.y <= 355) {
+            // Button 2: [ RESET (0.0) ] (X: 245..425, Y: 230..278) -> Tap resets display only!
+            else if (245 <= p.x && p.x <= 425 && 230 <= p.y && p.y <= 278) {
+              proposedCalibrationOffset = 0.0f;
+              drawProposedOffsetRow();
+            }
+            // Button 4: [ CANCEL ] (X: 130..350, Y: 340..385) -> Tap cancels immediately!
+            else if (130 <= p.x && p.x <= 350 && 340 <= p.y && p.y <= 385) {
               currentUiMode = UI_MODE_NORMAL;
               redrawMainScreen();
             }
           } else {
-            // Normal Mode Touch Targets
+            // Normal Mode Short Taps
 
-            // Tap on CAL Pill (Row 3 center slot)
+            // Tap on CAL Pill (Row 3 center slot) -> Immediate tap opens modal!
             if (CAL_TOUCH_X_MIN <= p.x && p.x <= CAL_TOUCH_X_MAX && CAL_TOUCH_Y_MIN <= p.y && p.y <= CAL_TOUCH_Y_MAX) {
               if (hasHeading) {
                 double rawHdg = calcCurrentBearing(sinavg, cosavg, 0.0f);
@@ -1414,8 +1497,6 @@ void loop() {
           }
         }
       }
-    } else {
-      wasTouched = false;
     }
 
     if (currentUiMode == UI_MODE_CALIBRATING) {
