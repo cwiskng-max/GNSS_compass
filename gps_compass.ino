@@ -632,7 +632,7 @@ void loadCalibration() {
   prefs.begin("compass", true);
   calibrationOffset = prefs.getFloat("cal_offset", 0.0f);
   prefs.end();
-  Serial.printf("[NVS] Loaded antenna calibration offset: %+5.1f deg\n", calibrationOffset);
+  Serial.printf("[NVS] Loaded antenna calibration offset: %+5.1f deg\r\n", calibrationOffset);
 }
 
 void saveCalibration(float offset) {
@@ -643,7 +643,7 @@ void saveCalibration(float offset) {
     prefs.begin("compass", false);
     prefs.putFloat("cal_offset", calibrationOffset);
     prefs.end();
-    Serial.printf("[NVS] Saved antenna calibration offset: %+5.1f deg\n", calibrationOffset);
+    Serial.printf("[NVS] Saved antenna calibration offset: %+5.1f deg\r\n", calibrationOffset);
   }
 }
 
@@ -877,17 +877,19 @@ void handleCalSerialCommand(const String &cmd) {
   String arg = cmd.substring(3);
   arg.trim();
   if (arg.length() == 0 || arg.equalsIgnoreCase("status") || arg.equalsIgnoreCase("show")) {
-    Serial.println(F("\n=== Antenna Calibration Status ==="));
-    Serial.printf("  Stored Offset : %+5.1f deg\n", calibrationOffset);
-    Serial.printf("  Target Bearing: %5.1f deg\n", bearing);
+    Serial.println();
+    Serial.println(F("=== Antenna Calibration Status ==="));
+    Serial.printf("  Stored Offset : %+5.1f deg\r\n", calibrationOffset);
+    Serial.printf("  Target Bearing: %5.1f deg\r\n", bearing);
     if (hasHeading) {
       double rawHdg = calcCurrentBearing(sinavg, cosavg, 0.0f);
-      Serial.printf("  Raw GNSS Hdg  : %5.1f deg\n", rawHdg);
-      Serial.printf("  Calibrated Hdg: %5.1f deg\n", calcCurrentBearing(sinavg, cosavg, calibrationOffset));
+      Serial.printf("  Raw GNSS Hdg  : %5.1f deg\r\n", rawHdg);
+      Serial.printf("  Calibrated Hdg: %5.1f deg\r\n", calcCurrentBearing(sinavg, cosavg, calibrationOffset));
     } else {
       Serial.println(F("  Raw GNSS Hdg  : ---.- (No heading fix)"));
     }
-    Serial.println(F("==================================\n"));
+    Serial.println(F("=================================="));
+    Serial.println();
   } else if (arg.equalsIgnoreCase("zero") || arg.equalsIgnoreCase("reset") || arg.equals("0")) {
     saveCalibration(0.0f);
     updateBearings();
@@ -900,20 +902,20 @@ void handleCalSerialCommand(const String &cmd) {
       float newOffset = normalizeOffset((float)(bearing - rawHdg));
       saveCalibration(newOffset);
       updateBearings();
-      Serial.printf("[CAL] Snapped! New offset: %+5.1f deg\n", newOffset);
+      Serial.printf("[CAL] Snapped! New offset: %+5.1f deg\r\n", newOffset);
     }
   } else if (arg.startsWith("set ") || arg.startsWith("SET ")) {
     float val = arg.substring(4).toFloat();
     val = normalizeOffset(val);
     saveCalibration(val);
     updateBearings();
-    Serial.printf("[CAL] Offset set to %+5.1f deg\n", val);
+    Serial.printf("[CAL] Offset set to %+5.1f deg\r\n", val);
   } else {
     float val = arg.toFloat();
     val = normalizeOffset(val);
     saveCalibration(val);
     updateBearings();
-    Serial.printf("[CAL] Offset set to %+5.1f deg\n", val);
+    Serial.printf("[CAL] Offset set to %+5.1f deg\r\n", val);
   }
 }
 
@@ -1049,7 +1051,8 @@ void printGpsStatusReport() {
     hasLocation, hasHeading, currentBearingQuality
   );
 
-  Serial.println(F("\n========================================"));
+  Serial.println();
+  Serial.println(F("========================================"));
   Serial.println(F("     GNSS Receiver Stream Diagnosis     "));
   Serial.println(F("========================================"));
 
@@ -1083,7 +1086,8 @@ void printGpsStatusReport() {
     Serial.print(now - lastGpsByteMillis);
     Serial.println(F(" ms ago)"));
 
-    Serial.println(F("\nMessage Streams:"));
+    Serial.println();
+    Serial.println(F("Message Streams:"));
     Serial.print(F("  - $GNGLL (Position):   "));
     Serial.print(gllPacketCount);
     Serial.print(F(" pkts (last "));
@@ -1350,6 +1354,60 @@ void runVisualSelfTest() {
   Serial.println(F("=== Visual Self-Test Complete (Live state restored) ===\n"));
 }
 
+void handleSerialCommandLine(const String &cmd) {
+  String line = cmd;
+  line.trim();
+  if (line.length() == 0) return;
+
+  if (line.equalsIgnoreCase("help") || line.equals("?")) {
+    Serial.println();
+    Serial.println(F("=== GNSS Compass Serial Commands ==="));
+    Serial.println(F("  status (or gps)       - Live GNSS receiver stream diagnostic"));
+    Serial.println(F("  test (or demo)        - Run visual display self-test demo"));
+    Serial.println(F("  cal [snap|zero|<val>] - View or configure antenna calibration"));
+    Serial.println(F("  help (or ?)           - Show this help menu"));
+    Serial.println(F("===================================="));
+    Serial.println();
+  } else if (line.equalsIgnoreCase("status") || line.equalsIgnoreCase("gps") || line.equalsIgnoreCase("diag") || line.equalsIgnoreCase("s") || line.equalsIgnoreCase("g")) {
+    printGpsStatusReport();
+  } else if (line.equalsIgnoreCase("test") || line.equalsIgnoreCase("demo") || line.equalsIgnoreCase("t")) {
+    runVisualSelfTest();
+  } else if (line.startsWith("cal") || line.startsWith("CAL")) {
+    handleCalSerialCommand(line);
+  } else {
+    Serial.print(F("Unknown command: '"));
+    Serial.print(line);
+    Serial.println(F("'. Type 'help' for available commands."));
+  }
+}
+
+void processSerialInput() {
+  static char lineBuf[128];
+  static size_t lineIdx = 0;
+
+  while (Serial.available()) {
+    char c = (char)Serial.read();
+    if (c == '\r' || c == '\n') {
+      if (lineIdx > 0) {
+        Serial.println(); // Echo newline to terminal
+        lineBuf[lineIdx] = '\0';
+        handleSerialCommandLine(String(lineBuf));
+        lineIdx = 0;
+      }
+    } else if (c == '\b' || c == 127) { // Backspace or DEL
+      if (lineIdx > 0) {
+        lineIdx--;
+        Serial.print(F("\b \b")); // Visually erase character from terminal screen
+      }
+    } else if (lineIdx < sizeof(lineBuf) - 1) {
+      if (c >= 32 && c <= 126) {
+        lineBuf[lineIdx++] = c;
+        Serial.write(c); // Echo character back to terminal
+      }
+    }
+  }
+}
+
 void loop() {
 
   static char sbuff[1000];
@@ -1365,52 +1423,8 @@ void loop() {
       }
     }
 
-    if (Serial.available()) {
-      char c = Serial.peek();
-      if (c == 't' || c == 'T') {
-        while (Serial.available()) Serial.read();
-        runVisualSelfTest();
-      } else if (c == 'c' || c == 'C') {
-        String cmd = Serial.readStringUntil('\n');
-        cmd.trim();
-        handleCalSerialCommand(cmd);
-      } else if (c == 's' || c == 'S' || c == 'g' || c == 'G' || c == 'd' || c == 'D') {
-        String cmd = Serial.readStringUntil('\n');
-        cmd.trim();
-        if (cmd.equalsIgnoreCase("status") || cmd.equalsIgnoreCase("gps") || cmd.equalsIgnoreCase("diag") || cmd.equalsIgnoreCase("s") || cmd.equalsIgnoreCase("g")) {
-          printGpsStatusReport();
-        } else if (cmd.equalsIgnoreCase("test") || cmd.equalsIgnoreCase("demo")) {
-          runVisualSelfTest();
-        } else if (cmd.startsWith("cal") || cmd.startsWith("CAL")) {
-          handleCalSerialCommand(cmd);
-        }
-      } else if (c == 'h' || c == 'H' || c == '?') {
-        while (Serial.available()) Serial.read();
-        Serial.println(F("\n=== GNSS Compass Serial Commands ==="));
-        Serial.println(F("  status (or gps) - Live GNSS receiver stream diagnostic"));
-        Serial.println(F("  test            - Run visual display self-test demo"));
-        Serial.println(F("  cal [snap|zero|<val>] - View or configure antenna calibration"));
-        Serial.println(F("  help (or ?)     - Show this help menu"));
-        Serial.println(F("====================================\n"));
-      } else {
-        String cmd = Serial.readStringUntil('\n');
-        cmd.trim();
-        if (cmd.equalsIgnoreCase("test") || cmd.equalsIgnoreCase("demo")) {
-          runVisualSelfTest();
-        } else if (cmd.equalsIgnoreCase("status") || cmd.equalsIgnoreCase("gps") || cmd.equalsIgnoreCase("diag")) {
-          printGpsStatusReport();
-        } else if (cmd.startsWith("cal") || cmd.startsWith("CAL")) {
-          handleCalSerialCommand(cmd);
-        } else if (cmd.equalsIgnoreCase("help") || cmd.equals("?")) {
-          Serial.println(F("\n=== GNSS Compass Serial Commands ==="));
-          Serial.println(F("  status (or gps) - Live GNSS receiver stream diagnostic"));
-          Serial.println(F("  test            - Run visual display self-test demo"));
-          Serial.println(F("  cal [snap|zero|<val>] - View or configure antenna calibration"));
-          Serial.println(F("  help (or ?)     - Show this help menu"));
-          Serial.println(F("====================================\n"));
-        }
-      }
-    }
+    // Non-blocking serial command processor (handles CR, LF, and CRLF)
+    processSerialInput();
 
     if (hasChanged) {
       hasChanged = false;

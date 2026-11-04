@@ -119,7 +119,7 @@ sed -i 's/#define FW_VERSION .*/#define FW_VERSION           "v0.2-custom"/' bui
 
 Compile and export the binary artifacts:
 ```bash
-arduino-cli compile --fqbn esp32:esp32:esp32s3:FlashSize=16M,PSRAM=opi --export-binaries build/gps_compass
+arduino-cli compile --fqbn esp32:esp32:esp32s3:FlashSize=16M,PSRAM=opi,CDCOnBoot=cdc --export-binaries build/gps_compass
 ```
 
 Your compiled application binary will be located at:

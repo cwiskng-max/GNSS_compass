@@ -19,7 +19,7 @@ cp "$REPO_ROOT/gps_compass.ino" "$SCRATCH_DIR/"
 
 # Compile using modern --output-dir (replaces deprecated --export-binaries)
 arduino-cli compile \
-    --fqbn esp32:esp32:esp32s3:FlashSize=16M,PSRAM=opi \
+    --fqbn esp32:esp32:esp32s3:FlashSize=16M,PSRAM=opi,CDCOnBoot=cdc \
     --output-dir "$BUILD_DIR" \
     "$SCRATCH_DIR"
 

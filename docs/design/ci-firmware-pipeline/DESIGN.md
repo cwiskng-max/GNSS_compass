@@ -64,14 +64,14 @@ During CI execution, GitHub Actions extracts the exact commit SHA or tag name an
 ```bash
 # Branch / PR Builds
 SHORT_SHA=$(git rev-parse --short "$HEAD_SHA")
-arduino-cli compile --fqbn esp32:esp32:esp32s3:CDCOnBoot=default,PSRAM=opi \
+arduino-cli compile --fqbn esp32:esp32:esp32s3:FlashSize=16M,PSRAM=opi,CDCOnBoot=cdc \
   --build-property "build.extra_flags=-DFW_VERSION=\"v0.2-${SHORT_SHA}\"" \
   gps_compass.ino
 ```
 
 ```bash
 # Official Tagged Releases (e.g. tag v0.2)
-arduino-cli compile --fqbn esp32:esp32:esp32s3:CDCOnBoot=default,PSRAM=opi \
+arduino-cli compile --fqbn esp32:esp32:esp32s3:FlashSize=16M,PSRAM=opi,CDCOnBoot=cdc \
   --build-property "build.extra_flags=-DFW_VERSION=\"${GITHUB_REF_NAME}\"" \
   gps_compass.ino
 ```
@@ -87,7 +87,7 @@ The ESP32-S3 round display module requires specific hardware options that are co
 | Parameter | Configuration Value | Reason |
 | :--- | :--- | :--- |
 | **FQBN** | `esp32:esp32:esp32s3` | Targets dual-core Xtensa LX7 ESP32-S3 |
-| **USB CDC On Boot** | `CDCOnBoot=default` | Enables USB CDC serial monitor and diagnostics |
+| **USB CDC On Boot** | `CDCOnBoot=cdc` | Enables USB CDC serial monitor and diagnostics on `/dev/ttyACM0` |
 | **PSRAM Type** | `PSRAM=opi` | Configures 8 MB Octal-SPI PSRAM for framebuffers |
 | **Flash Mode** | `FlashMode=qio` | High-speed Quad I/O flash |
 | **Flash Size** | `FlashSize=16M` | Allocates 16 MB onboard flash for code, NVS, and OTA |
