@@ -358,6 +358,46 @@ void test_current_bearing_calculation() {
     PASS();
 }
 
+void test_antenna_calibration() {
+    TEST("Antenna offset normalization, bearing offset application, and circular wrapping");
+
+    // 1. normalizeOffset
+    ASSERT_NEAR(normalizeOffset(0.0f), 0.0f, 1e-4);
+    ASSERT_NEAR(normalizeOffset(4.2f), 4.2f, 1e-4);
+    ASSERT_NEAR(normalizeOffset(-12.5f), -12.5f, 1e-4);
+    ASSERT_NEAR(normalizeOffset(180.0f), 180.0f, 1e-4);
+    ASSERT_NEAR(normalizeOffset(-180.0f), -180.0f, 1e-4);
+    // Wrap around over 180 deg
+    ASSERT_NEAR(normalizeOffset(185.0f), -175.0f, 1e-4);
+    ASSERT_NEAR(normalizeOffset(-185.0f), 175.0f, 1e-4);
+    // Wrap around from compass subtraction: Target = 5 deg, Raw = 355 deg -> delta = -350 deg -> normalized +10 deg
+    ASSERT_NEAR(normalizeOffset(5.0f - 355.0f), 10.0f, 1e-4);
+    // Target = 355 deg, Raw = 5 deg -> delta = +350 deg -> normalized -10 deg
+    ASSERT_NEAR(normalizeOffset(355.0f - 5.0f), -10.0f, 1e-4);
+
+    // 2. applyBearingOffset
+    ASSERT_NEAR(applyBearingOffset(120.3, 4.2f), 124.5, 1e-4);
+    ASSERT_NEAR(applyBearingOffset(358.0, 4.0f), 2.0, 1e-4);
+    ASSERT_NEAR(applyBearingOffset(2.0, -5.0f), 357.0, 1e-4);
+    ASSERT_NEAR(applyBearingOffset(0.0, 0.0f), 0.0, 1e-4);
+
+    // 3. calcCurrentBearing with calibration offset
+    float s0 = std::sin(toRad(0.0)) * BSZ;
+    float c0 = std::cos(toRad(0.0)) * BSZ;
+    // Raw is 270.0 deg. With +10.0 offset -> 280.0 deg
+    ASSERT_NEAR(calcCurrentBearing(s0, c0, 10.0f), 280.0, 1e-3);
+    // Raw 270.0 deg with -10.0 offset -> 260.0 deg
+    ASSERT_NEAR(calcCurrentBearing(s0, c0, -10.0f), 260.0, 1e-3);
+
+    float s90 = std::sin(toRad(90.0)) * BSZ;
+    float c90 = std::cos(toRad(90.0)) * BSZ;
+    // Raw is 0.0 deg. With -5.0 offset -> 355.0 deg
+    ASSERT_NEAR(calcCurrentBearing(s90, c90, -5.0f), 355.0, 1e-3);
+    // Default offset parameter should equal 0.0 offset
+    ASSERT_NEAR(calcCurrentBearing(s90, c90), 0.0, 1e-3);
+    PASS();
+}
+
 void test_gps_stream_evaluation() {
     TEST("evaluateGpsStream link verdicts (Disconnected, Corrupt, Acquiring, Float, Fixed)");
 
@@ -409,6 +449,7 @@ int main() {
     test_ksxt_time_and_location();
     test_legacy_hdt_ths_parsing();
     test_current_bearing_calculation();
+    test_antenna_calibration();
     test_gps_stream_evaluation();
 
     std::cout << "========================================" << std::endl;

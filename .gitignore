@@ -1,0 +1,15 @@
+# Compiled firmware binaries and debug maps
+*.bin
+build/*.bin
+*.elf
+build/*.elf
+*.map
+build/*.map
+
+# Build scratch and temporary compilation trees
+build/tmp/
+
+# Host unit test artifacts
+tests/extracted_math.h
+tests/run_tests
+

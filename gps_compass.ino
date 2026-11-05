@@ -2,6 +2,7 @@
 #include <Arduino_GFX_Library.h>
 #include <PCF8574.h>
 #include <Adafruit_CST8XX.h>
+#include <Preferences.h>
 #include <math.h>
 #include <ctype.h>
 
@@ -9,7 +10,7 @@
 enum BearingQuality {
   BEARING_NONE = 0,    // Fresh start, never acquired -> WHITE (---.-)
   BEARING_FIXED = 1,   // High precision (RTK Fixed) -> WHITE
-  BEARING_FLOAT = 2,   // Reduced quality (RTK Float) -> YELLOW
+  BEARING_FLOAT = 2,   // Reduced quality (RTK Float) -> RICH_YELLOW
   BEARING_LOST = 3     // Signal lost / stale timeout -> RED
 };
 
@@ -36,6 +37,13 @@ enum GpsLinkVerdict {
 #define INCG(x) (x=(x>='0' && x<='9')?INCN(x):INCA(x))
 #define DECG(x) (x=(x>='0' && x<='9')?DECN(x):DECA(x))
 
+// --- Color Palette Adjustments ---
+// Rich golden yellow (RGB565: R=31, G=53, B=0 = 0xFEA0, ~#FFD400)
+// Sunlight-optimized: standard yellow (0xFFE0, R=31, G=63, B=0) washes out to near-white under intense sunlight.
+// Reducing green slightly to ~84% creates a rich, warm golden-amber hue clearly differentiated from white,
+// while keeping full red and 0 blue to maintain maximum contrast and photopic brightness.
+#define RICH_YELLOW          0xFEA0
+
 // --- Display Layout (480 x 480) ---
 #define CHAR_W(sz)           (6 * (sz))
 #define CHAR_H(sz)           (8 * (sz))
@@ -60,9 +68,20 @@ enum GpsLinkVerdict {
 
 // Row 3: Antenna Heading & Target Bearing
 #define BEARSZ               6
-#define BEARX                30
+#define BEARX                20
 #define BEARY                REMSTOPY
-#define TGTBEARX             (BEARX + 6 * CHAR_W(BEARSZ))
+#define TGTBEARX             280
+
+// Row 3 Center: Calibration Status Pill & Touch Target
+#define CAL_PILL_X           200
+#define CAL_PILL_Y           225
+#define CAL_PILL_W           80
+#define CAL_PILL_H           44
+#define CAL_TOUCH_X_MIN      180
+#define CAL_TOUCH_X_MAX      300
+#define CAL_TOUCH_Y_MIN      210
+#define CAL_TOUCH_Y_MAX      280
+#define CAL_MODAL_TIMEOUT_MS 15000
 
 // Set to 1 to show ARRL contest distance (Row 6), 0 to hide
 #define ENABLE_ARRL_DIST     1
@@ -119,6 +138,16 @@ bool hasLocation = false;
 bool hasTime = false;
 int hours = 0;
 int minutes = 0;
+
+// --- Calibration & UI State Variables ---
+float calibrationOffset = 0.0f;
+enum UiMode {
+  UI_MODE_NORMAL = 0,
+  UI_MODE_CALIBRATING = 1
+};
+UiMode currentUiMode = UI_MODE_NORMAL;
+float proposedCalibrationOffset = 0.0f;
+unsigned long calModalOpenedMillis = 0;
 
 #define ENCODER_CLK 42
 #define ENCODER_DT 4
@@ -295,7 +324,7 @@ void printrem() {
 
   for (int i = 0; i < 6; i++) {
     if (isEditing && i == remotec) {
-      gfx->setTextColor(YELLOW, BLACK);
+      gfx->setTextColor(RICH_YELLOW, BLACK);
     } else {
       gfx->setTextColor(WHITE, BLACK);
     }
@@ -303,7 +332,7 @@ void printrem() {
     gfx->print(remote[i]);
   }
 
-  gfx->setTextColor(YELLOW, BLACK);
+  gfx->setTextColor(RICH_YELLOW, BLACK);
   gfx->setCursor(REMSTARTX, REMSTARTY + CHAR_H(REMSIZE));
   gfx->print("      ");
   if (isEditing) {
@@ -529,8 +558,21 @@ bool parseHeadingSentence(const char *sentence, float *heading_out, BearingQuali
   return false;
 }
 
-double calcCurrentBearing(float s_avg, float c_avg) {
-  double b = fmod(toDeg(atan2((double)s_avg / (double)BSZ, (double)c_avg / (double)BSZ)) + 270.0, 360.0);
+// --- Antenna Calibration Math Helpers ---
+float normalizeOffset(float delta_deg) {
+  while (delta_deg > 180.0f) delta_deg -= 360.0f;
+  while (delta_deg < -180.0f) delta_deg += 360.0f;
+  return delta_deg;
+}
+
+double applyBearingOffset(double uncalibrated_bearing, float offset_deg) {
+  double b = fmod(uncalibrated_bearing + (double)offset_deg, 360.0);
+  if (b < 0.0) b += 360.0;
+  return b;
+}
+
+double calcCurrentBearing(float s_avg, float c_avg, float cal_offset = 0.0f) {
+  double b = fmod(toDeg(atan2((double)s_avg / (double)BSZ, (double)c_avg / (double)BSZ)) + 270.0 + (double)cal_offset, 360.0);
   if (b < 0.0) b += 360.0;
   return b;
 }
@@ -585,10 +627,307 @@ unsigned long lastKsxtMillis = 0;
 unsigned int hdtPacketCount = 0;
 unsigned long lastHdtMillis = 0;
 
+void loadCalibration() {
+  Preferences prefs;
+  prefs.begin("compass", true);
+  calibrationOffset = prefs.getFloat("cal_offset", 0.0f);
+  prefs.end();
+  Serial.printf("[NVS] Loaded antenna calibration offset: %+5.1f deg\r\n", calibrationOffset);
+}
+
+void saveCalibration(float offset) {
+  offset = normalizeOffset(offset);
+  if (fabs(offset - calibrationOffset) > 0.01f) {
+    calibrationOffset = offset;
+    Preferences prefs;
+    prefs.begin("compass", false);
+    prefs.putFloat("cal_offset", calibrationOffset);
+    prefs.end();
+    Serial.printf("[NVS] Saved antenna calibration offset: %+5.1f deg\r\n", calibrationOffset);
+  }
+}
+
+void drawCalibrationPill() {
+  if (currentUiMode == UI_MODE_CALIBRATING) return;
+
+  // Clear pill region
+  gfx->fillRect(CAL_PILL_X - 2, CAL_PILL_Y - 2, CAL_PILL_W + 4, CAL_PILL_H + 4, BLACK);
+
+  uint16_t borderColor = 0x39E7; // Dark gray border
+  uint16_t textColor = 0x7BEF;   // Dim gray text
+
+  if (fabs(calibrationOffset) >= 0.05f) {
+    borderColor = 0x07FF;        // Cyan border when active
+    textColor = 0x07FF;          // Cyan text when active
+  }
+
+  // Draw rounded pill frame
+  gfx->drawRoundRect(CAL_PILL_X, CAL_PILL_Y, CAL_PILL_W, CAL_PILL_H, 6, borderColor);
+
+  // Line 1: "CAL"
+  gfx->setTextSize(2);
+  gfx->setTextColor(textColor, BLACK);
+  gfx->setCursor(CAL_PILL_X + 22, CAL_PILL_Y + 4);
+  gfx->print("CAL");
+
+  // Line 2: "OFF" or "+4.2"
+  char valStr[12];
+  if (fabs(calibrationOffset) < 0.05f) {
+    strcpy(valStr, "OFF");
+  } else {
+    sprintf(valStr, "%+4.1f", calibrationOffset);
+  }
+  int txtW = strlen(valStr) * CHAR_W(2);
+  gfx->setCursor(CAL_PILL_X + (CAL_PILL_W - txtW) / 2, CAL_PILL_Y + 24);
+  gfx->print(valStr);
+  gfx->setTextColor(WHITE, BLACK);
+}
+
+void drawProposedOffsetRow() {
+  gfx->fillRect(50, 198, 380, 26, 0x10A2);
+  gfx->setTextSize(2);
+  gfx->setTextColor(RICH_YELLOW, 0x10A2);
+  char buf[36];
+  sprintf(buf, "Proposed Offset: %+5.1f", proposedCalibrationOffset);
+  gfx->setCursor(55, 202);
+  gfx->print(buf);
+  gfx->setTextColor(WHITE, BLACK);
+}
+
+void drawRawHeadingInModal() {
+  if (currentUiMode != UI_MODE_CALIBRATING) return;
+  gfx->fillRect(55, 146, 370, 22, 0x10A2);
+  gfx->setTextSize(2);
+  gfx->setTextColor(WHITE, 0x10A2);
+  gfx->setCursor(55, 148);
+  char buf[36];
+  if (hasHeading) {
+    double rawHdg = calcCurrentBearing(sinavg, cosavg, 0.0f);
+    sprintf(buf, "Raw GNSS Hdg   : %5.1f", rawHdg);
+  } else {
+    sprintf(buf, "Raw GNSS Hdg   : ---.-");
+  }
+  gfx->print(buf);
+  gfx->setTextColor(WHITE, BLACK);
+}
+
+void drawSaveButton(bool isHolding, float progress) {
+  uint16_t bg = isHolding ? 0x0540 : 0x0320;
+  gfx->fillRoundRect(55, 284, 370, 48, 8, bg);
+  gfx->drawRoundRect(55, 284, 370, 48, 8, GREEN);
+
+  if (isHolding && progress > 0.0f) {
+    int fillW = (int)(366.0f * progress);
+    if (fillW > 366) fillW = 366;
+    gfx->fillRoundRect(57, 286, fillW, 44, 6, 0x07E0);
+  }
+
+  const char* saveText = isHolding ? "HOLDING TO SAVE..." : "HOLD TO SAVE OFFSET";
+  int stw = strlen(saveText) * CHAR_W(2);
+  gfx->setTextColor(WHITE, (isHolding && progress > 0.5f) ? 0x07E0 : bg);
+  gfx->setTextSize(2);
+  gfx->setCursor((480 - stw) / 2, 300);
+  gfx->print(saveText);
+  gfx->setTextColor(WHITE, BLACK);
+}
+
+void drawSnapButton(bool highlighted) {
+  if (currentUiMode != UI_MODE_CALIBRATING) return;
+
+  uint16_t snapBg, snapBorder, snapFg;
+  if (!hasHeading) {
+    snapBg = 0x2104;      // Disabled dark gray
+    snapBorder = 0x4208;  // Dim outline
+    snapFg = 0x7BEF;      // Dim text
+  } else if (highlighted) {
+    snapBg = CYAN;        // Vibrant electric cyan highlight flash
+    snapBorder = WHITE;
+    snapFg = BLACK;
+  } else {
+    snapBg = 0x1B19;      // Vibrant Cobalt / Royal Blue (#1961CD)
+    snapBorder = 0x3DFF;  // Electric Dodger Blue / Sky border
+    snapFg = WHITE;
+  }
+
+  gfx->fillRoundRect(55, 234, 180, 40, 8, snapBg);
+  gfx->drawRoundRect(55, 234, 180, 40, 8, snapBorder);
+  const char* snapText = "SNAP TARGET";
+  int stw = strlen(snapText) * CHAR_W(2);
+  gfx->setTextSize(2);
+  gfx->setTextColor(snapFg, snapBg);
+  gfx->setCursor(55 + (180 - stw) / 2, 246);
+  gfx->print(snapText);
+  gfx->setTextColor(WHITE, BLACK);
+}
+
+void drawResetButton(bool highlighted) {
+  if (currentUiMode != UI_MODE_CALIBRATING) return;
+
+  uint16_t rstBg = highlighted ? RED : 0x5000;
+  uint16_t rstBorder = highlighted ? WHITE : RED;
+  uint16_t rstFg = WHITE;
+
+  gfx->fillRoundRect(245, 234, 180, 40, 8, rstBg);
+  gfx->drawRoundRect(245, 234, 180, 40, 8, rstBorder);
+  const char* rstText = "RESET (0.0)";
+  int rtw = strlen(rstText) * CHAR_W(2);
+  gfx->setTextSize(2);
+  gfx->setTextColor(rstFg, rstBg);
+  gfx->setCursor(245 + (180 - rtw) / 2, 246);
+  gfx->print(rstText);
+  gfx->setTextColor(WHITE, BLACK);
+}
+
+void drawCancelButton(bool highlighted) {
+  if (currentUiMode != UI_MODE_CALIBRATING) return;
+
+  uint16_t canBg = highlighted ? WHITE : 0x2945;
+  uint16_t canBorder = WHITE;
+  uint16_t canFg = highlighted ? BLACK : WHITE;
+
+  gfx->fillRoundRect(140, 342, 200, 36, 8, canBg);
+  gfx->drawRoundRect(140, 342, 200, 36, 8, canBorder);
+  const char* canText = "CANCEL";
+  int ctw = strlen(canText) * CHAR_W(2);
+  gfx->setTextSize(2);
+  gfx->setTextColor(canFg, canBg);
+  gfx->setCursor(140 + (200 - ctw) / 2, 352);
+  gfx->print(canText);
+  gfx->setTextColor(WHITE, BLACK);
+}
+
+void drawCalibrationModal() {
+  // Semi-modal dark card in center
+  gfx->fillRoundRect(35, 75, 410, 335, 12, 0x10A2); // Dark slate navy
+  gfx->drawRoundRect(35, 75, 410, 335, 12, 0x07FF); // Cyan border
+  gfx->drawRoundRect(36, 76, 408, 333, 11, 0x07FF); // Double border
+
+  // Title: "ANTENNA CALIBRATION"
+  gfx->setTextSize(2);
+  gfx->setTextColor(CYAN, 0x10A2);
+  const char* title = "ANTENNA CALIBRATION";
+  int tw = strlen(title) * CHAR_W(2);
+  gfx->setCursor((480 - tw) / 2, 88);
+  gfx->print(title);
+
+  // Separator line
+  gfx->drawFastHLine(55, 112, 370, 0x39E7);
+
+  // Target Bearing
+  char buf[36];
+  gfx->setTextColor(WHITE, 0x10A2);
+  gfx->setCursor(55, 124);
+  sprintf(buf, "Target Bearing : %5.1f", bearing);
+  gfx->print(buf);
+
+  // Raw GNSS Heading
+  drawRawHeadingInModal();
+
+  // Current Stored Offset
+  gfx->setCursor(55, 172);
+  sprintf(buf, "Current Offset : %+5.1f", calibrationOffset);
+  gfx->print(buf);
+
+  // Proposed Offset (with fine-tuning knob)
+  drawProposedOffsetRow();
+
+  // Button 1: [ SNAP TARGET ] (tap only, updates display without saving)
+  // X: 55 to 235 (Width 180), Y: 234 to 274 (Height 40)
+  drawSnapButton(false);
+
+  // Button 2: [ RESET (0.0) ] (tap only, resets display without saving)
+  // X: 245 to 425 (Width 180), Y: 234 to 274 (Height 40)
+  drawResetButton(false);
+
+  // Button 3: [ HOLD TO SAVE OFFSET ] (requires 1.5s long-press)
+  // X: 55 to 425 (Width 370), Y: 284 to 332 (Height 48)
+  drawSaveButton(false, 0.0f);
+
+  // Button 4: [ CANCEL ] (tap is OK)
+  // X: 140 to 340 (Width 200), Y: 342 to 378 (Height 36)
+  drawCancelButton(false);
+
+  // Instruction footer
+  gfx->setTextColor(0x7BEF, 0x10A2);
+  const char* hint = "(Turn knob to nudge +-0.1)";
+  int htw = strlen(hint) * CHAR_W(2);
+  gfx->setCursor((480 - htw) / 2, 386);
+  gfx->print(hint);
+
+  gfx->setTextColor(WHITE, BLACK);
+}
+
+void redrawMainScreen() {
+  gfx->fillScreen(BLACK);
+  printLocalGrid();
+  printrem();
+  updateBearings();
+
+  char tbuf[10];
+  sprintf(tbuf, "%02d:%02dZ", hours, minutes);
+  gfx->setTextSize(TIME_SZ);
+  gfx->setCursor(TIME_X, TIME_Y);
+  gfx->setTextColor(WHITE, BLACK);
+  gfx->print(hasTime ? tbuf : "--:--Z");
+
+  showFooterText(FW_VERSION, 0x7BEF);
+}
+
+void handleCalSerialCommand(const String &cmd) {
+  String arg = cmd.substring(3);
+  arg.trim();
+  if (arg.length() == 0 || arg.equalsIgnoreCase("status") || arg.equalsIgnoreCase("show")) {
+    Serial.println();
+    Serial.println(F("=== Antenna Calibration Status ==="));
+    Serial.printf("  Stored Offset : %+5.1f deg\r\n", calibrationOffset);
+    Serial.printf("  Target Bearing: %5.1f deg\r\n", bearing);
+    if (hasHeading) {
+      double rawHdg = calcCurrentBearing(sinavg, cosavg, 0.0f);
+      Serial.printf("  Raw GNSS Hdg  : %5.1f deg\r\n", rawHdg);
+      Serial.printf("  Calibrated Hdg: %5.1f deg\r\n", calcCurrentBearing(sinavg, cosavg, calibrationOffset));
+    } else {
+      Serial.println(F("  Raw GNSS Hdg  : ---.- (No heading fix)"));
+    }
+    Serial.println(F("=================================="));
+    Serial.println();
+  } else if (arg.equalsIgnoreCase("zero") || arg.equalsIgnoreCase("reset") || arg.equals("0")) {
+    saveCalibration(0.0f);
+    updateBearings();
+    Serial.println(F("[CAL] Offset reset to 0.0 deg (Cleared)."));
+  } else if (arg.equalsIgnoreCase("snap")) {
+    if (!hasHeading) {
+      Serial.println(F("[CAL ERROR] Cannot snap: No valid GNSS heading fix."));
+    } else {
+      double rawHdg = calcCurrentBearing(sinavg, cosavg, 0.0f);
+      float newOffset = normalizeOffset((float)(bearing - rawHdg));
+      saveCalibration(newOffset);
+      updateBearings();
+      Serial.printf("[CAL] Snapped! New offset: %+5.1f deg\r\n", newOffset);
+    }
+  } else if (arg.startsWith("set ") || arg.startsWith("SET ")) {
+    float val = arg.substring(4).toFloat();
+    val = normalizeOffset(val);
+    saveCalibration(val);
+    updateBearings();
+    Serial.printf("[CAL] Offset set to %+5.1f deg\r\n", val);
+  } else {
+    float val = arg.toFloat();
+    val = normalizeOffset(val);
+    saveCalibration(val);
+    updateBearings();
+    Serial.printf("[CAL] Offset set to %+5.1f deg\r\n", val);
+  }
+}
+
 void drawCurrentBearing() {
+  if (currentUiMode == UI_MODE_CALIBRATING) {
+    drawRawHeadingInModal();
+    return;
+  }
+
   uint16_t color = WHITE;
   if (currentBearingQuality == BEARING_FLOAT) {
-    color = YELLOW;
+    color = RICH_YELLOW;
   } else if (currentBearingQuality == BEARING_LOST) {
     color = RED;
   }
@@ -601,7 +940,7 @@ void drawCurrentBearing() {
     gfx->print("---.-");
   } else {
     char str[10];
-    sprintf(str, "%5.1f", calcCurrentBearing(sinavg, cosavg));
+    sprintf(str, "%5.1f", calcCurrentBearing(sinavg, cosavg, calibrationOffset));
     gfx->print(str);
   }
   gfx->setTextColor(WHITE, BLACK);
@@ -611,6 +950,10 @@ void updateBearings() {
   calcLatLon(remote, &remlatitude, &remlongitude);
   calculateWGS84(mylatitude, mylongitude, remlatitude, remlongitude, distance, bearing);
   calculateWGS84(remlatitude, remlongitude, mylatitude, mylongitude, distance, revbearing);
+
+  if (currentUiMode == UI_MODE_CALIBRATING) {
+    return;
+  }
 
   char buf[20];
   int rdist = (int)floor(distance / 1000.0);
@@ -624,6 +967,7 @@ void updateBearings() {
   gfx->setTextColor(WHITE, BLACK);
 
   drawCurrentBearing();
+  drawCalibrationPill();
 
   sprintf(&buf[0], "%5.1f", bearing);
   gfx->setTextSize(BEARSZ);
@@ -657,6 +1001,7 @@ void setup() {
   initBacklight();
   initLCD();
   initEncoder();
+  loadCalibration();
 
   calcLocator(mygrid, mylatitude, mylongitude);
   gfx->setTextSize(LOC_SZ);
@@ -706,7 +1051,8 @@ void printGpsStatusReport() {
     hasLocation, hasHeading, currentBearingQuality
   );
 
-  Serial.println(F("\n========================================"));
+  Serial.println();
+  Serial.println(F("========================================"));
   Serial.println(F("     GNSS Receiver Stream Diagnosis     "));
   Serial.println(F("========================================"));
 
@@ -740,7 +1086,8 @@ void printGpsStatusReport() {
     Serial.print(now - lastGpsByteMillis);
     Serial.println(F(" ms ago)"));
 
-    Serial.println(F("\nMessage Streams:"));
+    Serial.println();
+    Serial.println(F("Message Streams:"));
     Serial.print(F("  - $GNGLL (Position):   "));
     Serial.print(gllPacketCount);
     Serial.print(F(" pkts (last "));
@@ -826,6 +1173,8 @@ void runVisualSelfTest() {
   bool saved_isEditing = isEditing;
   BearingQuality saved_quality = currentBearingQuality;
   unsigned long saved_lastHeading = lastHeadingUpdate;
+  float saved_calibrationOffset = calibrationOffset;
+  UiMode saved_uiMode = currentUiMode;
   isEditing = false;
 
   // Test 1: Same Grid (ARRL 1.0 km minimum rule)
@@ -847,7 +1196,7 @@ void runVisualSelfTest() {
 
   // Test 2: Rover Transit Alert (< 16 km, highlighted RED on WHITE)
   Serial.println(F("[Test 2/6] Rover Transit Alert (< 16 km, highlighted RED on WHITE)"));
-  showFooterText("TEST 2: ROVER < 16K", YELLOW);
+  showFooterText("TEST 2: ROVER < 16K", RICH_YELLOW);
   strcpy(remote, "CM87wb");
   currentBearingQuality = BEARING_FIXED;
   rovdist = true;
@@ -897,7 +1246,7 @@ void runVisualSelfTest() {
   delay(1000);
 
   Serial.println(F("  -> Bearing Color: Bright Yellow (RTK Float / Degraded)"));
-  showFooterText("TEST 6: BEARING YELLOW", YELLOW);
+  showFooterText("TEST 6: BEARING YELLOW", RICH_YELLOW);
   currentBearingQuality = BEARING_FLOAT;
   drawCurrentBearing();
   delay(1000);
@@ -923,15 +1272,42 @@ void runVisualSelfTest() {
   if (liveVerdict == GPS_LINK_OK_FIXED) {
     showStatusCard("GPS: RTK FIXED (OK)", GREEN, BLACK);
   } else if (liveVerdict == GPS_LINK_HEADING_FLOAT) {
-    showStatusCard("GPS: RTK FLOAT (WARN)", YELLOW, BLACK);
+    showStatusCard("GPS: RTK FLOAT (WARN)", RICH_YELLOW, BLACK);
   } else if (liveVerdict == GPS_LINK_ACQUIRING || liveVerdict == GPS_LINK_POSITION_ONLY) {
-    showStatusCard("GPS: ACQUIRING (WAIT)", YELLOW, BLACK);
+    showStatusCard("GPS: ACQUIRING (WAIT)", RICH_YELLOW, BLACK);
   } else {
     showStatusCard("GPS: NO DATA / CABLE", RED, WHITE);
   }
   delay(2500);
   gfx->fillRect(40, 215, 400, 52, BLACK);
   gfx->setTextColor(WHITE, BLACK);
+
+  // Test 7: Antenna Calibration Status & Modal Demo
+  Serial.println(F("[Test 7/7] Antenna Calibration Pill & Modal Display Demo"));
+  Serial.println(F("  -> Testing Calibration Pill Display (Uncalibrated: OFF)"));
+  showFooterText("TEST 7: CAL PILL OFF", CYAN);
+  calibrationOffset = 0.0f;
+  drawCalibrationPill();
+  drawCurrentBearing();
+  delay(1500);
+
+  Serial.println(F("  -> Testing Calibration Pill Display (Calibrated: +4.2 deg)"));
+  showFooterText("TEST 7: CAL PILL +4.2", GREEN);
+  calibrationOffset = 4.2f;
+  drawCalibrationPill();
+  drawCurrentBearing();
+  delay(1500);
+
+  Serial.println(F("  -> Demonstrating Calibration Modal Dialog"));
+  showFooterText("TEST 7: CAL MODAL", RICH_YELLOW);
+  proposedCalibrationOffset = 4.2f;
+  currentUiMode = UI_MODE_CALIBRATING;
+  drawCalibrationModal();
+  delay(1200);
+  drawSnapButton(true);
+  delay(300);
+  drawSnapButton(false);
+  delay(1000);
 
   // Display PASS/FAIL Result Banner
   bool all_pass = true;
@@ -940,6 +1316,7 @@ void runVisualSelfTest() {
   calcLatLon("CM87wb", &lat_wb, &lon_wb);
   calculateWGS84(38.354, -119.458, lat_wb, lon_wb, rover_dist, rover_bear);
   if ((int)floor(rover_dist / 1000.0) >= 16) all_pass = false;
+  if (fabs(normalizeOffset(5.0f - 355.0f) - 10.0f) > 0.01f) all_pass = false;
 
   if (all_pass) {
     Serial.println(F("Result: PASS"));
@@ -970,12 +1347,65 @@ void runVisualSelfTest() {
   lastHeadingUpdate = saved_lastHeading;
   rovdist = saved_rovdist;
   isEditing = saved_isEditing;
-  printLocalGrid();
-  printrem();
-  updateBearings();
-  showFooterText(FW_VERSION, 0x7BEF);
+  calibrationOffset = saved_calibrationOffset;
+  currentUiMode = saved_uiMode;
+  redrawMainScreen();
 
   Serial.println(F("=== Visual Self-Test Complete (Live state restored) ===\n"));
+}
+
+void handleSerialCommandLine(const String &cmd) {
+  String line = cmd;
+  line.trim();
+  if (line.length() == 0) return;
+
+  if (line.equalsIgnoreCase("help") || line.equals("?")) {
+    Serial.println();
+    Serial.println(F("=== GNSS Compass Serial Commands ==="));
+    Serial.println(F("  status (or gps)       - Live GNSS receiver stream diagnostic"));
+    Serial.println(F("  test (or demo)        - Run visual display self-test demo"));
+    Serial.println(F("  cal [snap|zero|<val>] - View or configure antenna calibration"));
+    Serial.println(F("  help (or ?)           - Show this help menu"));
+    Serial.println(F("===================================="));
+    Serial.println();
+  } else if (line.equalsIgnoreCase("status") || line.equalsIgnoreCase("gps") || line.equalsIgnoreCase("diag") || line.equalsIgnoreCase("s") || line.equalsIgnoreCase("g")) {
+    printGpsStatusReport();
+  } else if (line.equalsIgnoreCase("test") || line.equalsIgnoreCase("demo") || line.equalsIgnoreCase("t")) {
+    runVisualSelfTest();
+  } else if (line.startsWith("cal") || line.startsWith("CAL")) {
+    handleCalSerialCommand(line);
+  } else {
+    Serial.print(F("Unknown command: '"));
+    Serial.print(line);
+    Serial.println(F("'. Type 'help' for available commands."));
+  }
+}
+
+void processSerialInput() {
+  static char lineBuf[128];
+  static size_t lineIdx = 0;
+
+  while (Serial.available()) {
+    char c = (char)Serial.read();
+    if (c == '\r' || c == '\n') {
+      if (lineIdx > 0) {
+        Serial.println(); // Echo newline to terminal
+        lineBuf[lineIdx] = '\0';
+        handleSerialCommandLine(String(lineBuf));
+        lineIdx = 0;
+      }
+    } else if (c == '\b' || c == 127) { // Backspace or DEL
+      if (lineIdx > 0) {
+        lineIdx--;
+        Serial.print(F("\b \b")); // Visually erase character from terminal screen
+      }
+    } else if (lineIdx < sizeof(lineBuf) - 1) {
+      if (c >= 32 && c <= 126) {
+        lineBuf[lineIdx++] = c;
+        Serial.write(c); // Echo character back to terminal
+      }
+    }
+  }
 }
 
 void loop() {
@@ -993,98 +1423,203 @@ void loop() {
       }
     }
 
-    if (Serial.available()) {
-      char c = Serial.peek();
-      if (c == 't' || c == 'T') {
-        while (Serial.available()) Serial.read();
-        runVisualSelfTest();
-      } else if (c == 's' || c == 'S' || c == 'g' || c == 'G' || c == 'd' || c == 'D') {
-        String cmd = Serial.readStringUntil('\n');
-        cmd.trim();
-        if (cmd.equalsIgnoreCase("status") || cmd.equalsIgnoreCase("gps") || cmd.equalsIgnoreCase("diag") || cmd.equalsIgnoreCase("s") || cmd.equalsIgnoreCase("g")) {
-          printGpsStatusReport();
-        } else if (cmd.equalsIgnoreCase("test") || cmd.equalsIgnoreCase("demo")) {
-          runVisualSelfTest();
-        }
-      } else if (c == 'h' || c == 'H' || c == '?') {
-        while (Serial.available()) Serial.read();
-        Serial.println(F("\n=== GNSS Compass Serial Commands ==="));
-        Serial.println(F("  status (or gps) - Live GNSS receiver stream diagnostic"));
-        Serial.println(F("  test            - Run visual display self-test demo"));
-        Serial.println(F("  help (or ?)     - Show this help menu"));
-        Serial.println(F("====================================\n"));
-      } else {
-        String cmd = Serial.readStringUntil('\n');
-        cmd.trim();
-        if (cmd.equalsIgnoreCase("test") || cmd.equalsIgnoreCase("demo")) {
-          runVisualSelfTest();
-        } else if (cmd.equalsIgnoreCase("status") || cmd.equalsIgnoreCase("gps") || cmd.equalsIgnoreCase("diag")) {
-          printGpsStatusReport();
-        } else if (cmd.equalsIgnoreCase("help") || cmd.equals("?")) {
-          Serial.println(F("\n=== GNSS Compass Serial Commands ==="));
-          Serial.println(F("  status (or gps) - Live GNSS receiver stream diagnostic"));
-          Serial.println(F("  test            - Run visual display self-test demo"));
-          Serial.println(F("  help (or ?)     - Show this help menu"));
-          Serial.println(F("====================================\n"));
-        }
-      }
-    }
+    // Non-blocking serial command processor (handles CR, LF, and CRLF)
+    processSerialInput();
 
     if (hasChanged) {
       hasChanged = false;
 
-      if (isEditing) {
+      if (currentUiMode == UI_MODE_CALIBRATING) {
+        calModalOpenedMillis = millis();
+        if (counter > 0) proposedCalibrationOffset += 0.1f;
+        else proposedCalibrationOffset -= 0.1f;
+        proposedCalibrationOffset = normalizeOffset(proposedCalibrationOffset);
+        counter = 0;
+        drawProposedOffsetRow();
+      } else if (isEditing) {
         lastEditActivity = millis();
         rovdist = false;
-        if (counter>0) INCG(remote[remotec]);
+        if (counter > 0) INCG(remote[remotec]);
         else DECG(remote[remotec]);
 
         printrem();
         updateBearings();
       }
-
     }
 
-    static bool wasTouched = false;
-    static unsigned long lastTouchTime = 0;
+    #define LONG_PRESS_MS 1500
+
+    static bool isTouching = false;
+    static unsigned long touchStartTime = 0;
+    static CST_TS_Point touchStartPoint;
+    static bool longPressTriggered = false;
+    static bool holdingSaveBtn = false;
+    static unsigned long lastTouchReleaseTime = 0;
+
     if (tsPanel.touched()) {
-      if (!wasTouched && (millis() - lastTouchTime >= 200)) {
-        CST_TS_Point p = tsPanel.getPoint(0);
-        if (p.x != 0 || p.y != 0) {
-          wasTouched = true;
-          lastTouchTime = millis();
+      CST_TS_Point p = tsPanel.getPoint(0);
+      if (p.x != 0 || p.y != 0) {
+        if (!isTouching) {
+          if (millis() - lastTouchReleaseTime >= 100) {
+            isTouching = true;
+            touchStartTime = millis();
+            touchStartPoint = p;
+            longPressTriggered = false;
+            holdingSaveBtn = false;
 
-          // Tap on local grid (Row 1): copy local grid to target for rover distance check
-          if (100 <= p.x && p.x <= 340 && 0 <= p.y && p.y <= 75) {
-            for (int ii = 0; ii < 6; ii++) {
-              remote[ii] = mygrid[ii];
+            if (currentUiMode == UI_MODE_CALIBRATING) {
+              calModalOpenedMillis = millis(); // Refresh modal timeout
+              // Save button: X 55..425, Y 284..332
+              if (55 <= p.x && p.x <= 425 && 284 <= p.y && p.y <= 332) {
+                holdingSaveBtn = true;
+              } else if (55 <= p.x && p.x <= 235 && 230 <= p.y && p.y <= 278) {
+                if (hasHeading) drawSnapButton(true);
+              } else if (245 <= p.x && p.x <= 425 && 230 <= p.y && p.y <= 278) {
+                drawResetButton(true);
+              } else if (130 <= p.x && p.x <= 350 && 340 <= p.y && p.y <= 385) {
+                drawCancelButton(true);
+              }
             }
-            remlatitude = mylatitude;
-            remlongitude = mylongitude;
-            rovdist = true;
-            printrem();
-            updateBearings();
+          }
+        } else {
+          // Touch is being held
+          unsigned long holdDuration = millis() - touchStartTime;
+
+          // Check if finger drifted too far
+          if (abs(p.x - touchStartPoint.x) > 35 || abs(p.y - touchStartPoint.y) > 35) {
+            if (holdingSaveBtn) {
+              holdingSaveBtn = false;
+              drawSaveButton(false, 0.0f);
+            }
+            if (currentUiMode == UI_MODE_CALIBRATING) {
+              drawSnapButton(false);
+              drawResetButton(false);
+              drawCancelButton(false);
+            }
           }
 
-          // Tap on target grid (Row 2): select character and enter edit mode
-          if (TOUCH_X_MIN <= p.x && p.x <= TOUCH_X_MAX && TOUCH_Y_MIN <= p.y && p.y <= TOUCH_Y_MAX) {
-            int touched_char = (p.x - REMSTARTX) / CHAR_W(REMSIZE);
-            if (touched_char < 0) touched_char = 0;
-            if (touched_char > 5) touched_char = 5;
-            remotec = touched_char;
-            isEditing = true;
-            lastEditActivity = millis();
-            printrem();
-          }
+          if (holdingSaveBtn && !longPressTriggered) {
+            calModalOpenedMillis = millis();
+            float prog = (float)holdDuration / (float)LONG_PRESS_MS;
+            drawSaveButton(true, prog);
 
-          // Tap on firmware version footer (Row 7): trigger visual display demo
-          if (100 <= p.x && p.x <= 380 && p.y >= 435) {
-            runVisualSelfTest();
+            if (holdDuration >= LONG_PRESS_MS) {
+              longPressTriggered = true;
+              holdingSaveBtn = false;
+              saveCalibration(proposedCalibrationOffset);
+              currentUiMode = UI_MODE_NORMAL;
+              redrawMainScreen();
+            }
           }
         }
       }
     } else {
-      wasTouched = false;
+      // Touch released
+      if (isTouching) {
+        unsigned long pressDuration = millis() - touchStartTime;
+        isTouching = false;
+        lastTouchReleaseTime = millis();
+
+        if (holdingSaveBtn) {
+          holdingSaveBtn = false;
+          drawSaveButton(false, 0.0f);
+        } else if (currentUiMode == UI_MODE_CALIBRATING && pressDuration >= LONG_PRESS_MS) {
+          drawSnapButton(false);
+          drawResetButton(false);
+          drawCancelButton(false);
+        }
+
+        // Handle short taps if long press did not trigger
+        if (!longPressTriggered && pressDuration < LONG_PRESS_MS) {
+          CST_TS_Point p = touchStartPoint;
+
+          if (currentUiMode == UI_MODE_CALIBRATING) {
+            calModalOpenedMillis = millis();
+
+            // Button 1: [ SNAP TARGET ] (X: 55..235, Y: 230..278) -> Tap updates display only!
+            if (55 <= p.x && p.x <= 235 && 230 <= p.y && p.y <= 278) {
+              drawSnapButton(true);
+              if (hasHeading) {
+                double rawHdg = calcCurrentBearing(sinavg, cosavg, 0.0f);
+                proposedCalibrationOffset = normalizeOffset((float)(bearing - rawHdg));
+                drawProposedOffsetRow();
+              }
+              delay(120);
+              drawSnapButton(false);
+            }
+            // Button 2: [ RESET (0.0) ] (X: 245..425, Y: 230..278) -> Tap resets display only!
+            else if (245 <= p.x && p.x <= 425 && 230 <= p.y && p.y <= 278) {
+              drawResetButton(true);
+              proposedCalibrationOffset = 0.0f;
+              drawProposedOffsetRow();
+              delay(120);
+              drawResetButton(false);
+            }
+            // Button 4: [ CANCEL ] (X: 130..350, Y: 340..385) -> Tap cancels immediately!
+            else if (130 <= p.x && p.x <= 350 && 340 <= p.y && p.y <= 385) {
+              drawCancelButton(true);
+              delay(120);
+              currentUiMode = UI_MODE_NORMAL;
+              redrawMainScreen();
+            } else {
+              drawSnapButton(false);
+              drawResetButton(false);
+              drawCancelButton(false);
+            }
+          } else {
+            // Normal Mode Short Taps
+
+            // Tap on CAL Pill (Row 3 center slot) -> Immediate tap opens modal!
+            if (CAL_TOUCH_X_MIN <= p.x && p.x <= CAL_TOUCH_X_MAX && CAL_TOUCH_Y_MIN <= p.y && p.y <= CAL_TOUCH_Y_MAX) {
+              if (hasHeading) {
+                double rawHdg = calcCurrentBearing(sinavg, cosavg, 0.0f);
+                proposedCalibrationOffset = normalizeOffset((float)(bearing - rawHdg));
+              } else {
+                proposedCalibrationOffset = calibrationOffset;
+              }
+              currentUiMode = UI_MODE_CALIBRATING;
+              calModalOpenedMillis = millis();
+              isEditing = false;
+              drawCalibrationModal();
+            }
+
+            // Tap on local grid (Row 1): copy local grid to target for rover distance check
+            else if (100 <= p.x && p.x <= 340 && 0 <= p.y && p.y <= 75) {
+              for (int ii = 0; ii < 6; ii++) {
+                remote[ii] = mygrid[ii];
+              }
+              remlatitude = mylatitude;
+              remlongitude = mylongitude;
+              rovdist = true;
+              printrem();
+              updateBearings();
+            }
+
+            // Tap on target grid (Row 2): select character and enter edit mode
+            else if (TOUCH_X_MIN <= p.x && p.x <= TOUCH_X_MAX && TOUCH_Y_MIN <= p.y && p.y <= TOUCH_Y_MAX) {
+              int touched_char = (p.x - REMSTARTX) / CHAR_W(REMSIZE);
+              if (touched_char < 0) touched_char = 0;
+              if (touched_char > 5) touched_char = 5;
+              remotec = touched_char;
+              isEditing = true;
+              lastEditActivity = millis();
+              printrem();
+            }
+
+            // Tap on firmware version footer (Row 7): trigger visual display demo
+            else if (100 <= p.x && p.x <= 380 && p.y >= 435) {
+              runVisualSelfTest();
+            }
+          }
+        }
+      }
+    }
+
+    if (currentUiMode == UI_MODE_CALIBRATING) {
+      if (millis() - calModalOpenedMillis >= CAL_MODAL_TIMEOUT_MS) {
+        currentUiMode = UI_MODE_NORMAL;
+        redrawMainScreen();
+      }
     }
 
     if (isEditing && EDIT_TIMEOUT_MS > 0) {
@@ -1156,12 +1691,14 @@ void loop() {
               hasTime = true;
               hours = ksxt_h;
               minutes = ksxt_m;
-              char tbuf[9];
-              sprintf(tbuf, "%02d:%02dZ", hours, minutes);
-              gfx->setTextSize(TIME_SZ);
-              gfx->setCursor(TIME_X, TIME_Y);
-              gfx->setTextColor(WHITE, BLACK);
-              gfx->print(tbuf);
+              if (currentUiMode != UI_MODE_CALIBRATING) {
+                char tbuf[9];
+                sprintf(tbuf, "%02d:%02dZ", hours, minutes);
+                gfx->setTextSize(TIME_SZ);
+                gfx->setCursor(TIME_X, TIME_Y);
+                gfx->setTextColor(WHITE, BLACK);
+                gfx->print(tbuf);
+              }
             }
           }
 
@@ -1173,10 +1710,12 @@ void loop() {
               mylongitude = ksxt_lon;
               calcLocator(mygrid, mylatitude, mylongitude);
 
-              gfx->setTextSize(LOC_SZ);
-              gfx->setCursor(LOC_X, LOC_Y);
-              gfx->setTextColor(WHITE, BLACK);
-              gfx->print(mygrid);
+              if (currentUiMode != UI_MODE_CALIBRATING) {
+                gfx->setTextSize(LOC_SZ);
+                gfx->setCursor(LOC_X, LOC_Y);
+                gfx->setTextColor(WHITE, BLACK);
+                gfx->print(mygrid);
+              }
 
               updateBearings();
             }
@@ -1196,20 +1735,24 @@ void loop() {
             hasLocation = true;
             calcLocator(mygrid, mylatitude, mylongitude);
 
-            gfx->setTextSize(LOC_SZ);
-            gfx->setCursor(LOC_X, LOC_Y);
-            gfx->setTextColor(WHITE, BLACK);
-            gfx->print(mygrid);
+            if (currentUiMode != UI_MODE_CALIBRATING) {
+              gfx->setTextSize(LOC_SZ);
+              gfx->setCursor(LOC_X, LOC_Y);
+              gfx->setTextColor(WHITE, BLACK);
+              gfx->print(mygrid);
+            }
 
             if (!hasTime || gll_h != hours || gll_m != minutes) {
               hasTime = true;
               hours = gll_h;
               minutes = gll_m;
-              sprintf(&buf[0], "%02d:%02dZ", hours, minutes);
-              gfx->setTextSize(TIME_SZ);
-              gfx->setCursor(TIME_X, TIME_Y);
-              gfx->setTextColor(WHITE, BLACK);
-              gfx->print(buf);
+              if (currentUiMode != UI_MODE_CALIBRATING) {
+                sprintf(&buf[0], "%02d:%02dZ", hours, minutes);
+                gfx->setTextSize(TIME_SZ);
+                gfx->setCursor(TIME_X, TIME_Y);
+                gfx->setTextColor(WHITE, BLACK);
+                gfx->print(buf);
+              }
             }
 
             updateBearings();
