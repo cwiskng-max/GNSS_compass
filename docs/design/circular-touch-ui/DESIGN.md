@@ -43,7 +43,7 @@ All visual rows are positioned along the vertical axis with horizontal widths co
 | **Row 2** | Target Maidenhead Grid | Size 8 | $Y = 95$ | $80 \le X \le 368$ | 6-char interactive target locator |
 | **Row 3** | Bearings & Cal Pill | Size 6 | $Y = 223$ | $20 \le X \le 460$ | Current heading, calibration pill, target bearing |
 | **Row 4** | UTC Time | Size 6 | $Y = 300$ | $132 \le X \le 348$ | UTC clock display |
-| **Row 5** | Reverse Bearing & Dist | Size 4 | $Y = 370$ | $84 \le X \le 396$ | Back-azimuth and distance (default ARRL, configurable) |
+| **Row 5** | Reverse Bearing & Dist | Size 4 | $Y = 370$ | $84 \le X \le 396$ | Back-azimuth and distance (default grid-to-grid, 0 km same grid, configurable) |
 | **Row 6** | Version Footer | Size 2 | $Y = 444$ | Centered | Firmware version & self-test tap trigger |
 
 ---

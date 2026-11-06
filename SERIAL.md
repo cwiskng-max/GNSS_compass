@@ -187,7 +187,7 @@ Configures the distance calculation mode rendered next to the reverse bearing on
 ```
 
 #### Select Grid to Grid Distance (`dist grid`, `dist arrl`)
-Sets the default mode: spherical Earth model between Maidenhead grid centers ($R = 6371.0\text{ km}$), clamped to a minimum of 1.0 km for contacts within the same subsquare (ARRL contest standard).
+Sets the default mode: spherical Earth model between Maidenhead grid centers ($R = 6371.2\text{ km}$), evaluating to 0 km when within the same subsquare.
 ```text
 > dist grid
 [DIST] Distance mode set to Grid to Grid (Default).

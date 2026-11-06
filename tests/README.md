@@ -25,11 +25,11 @@ The test suite runs automatically on every push and pull request in [`.github/wo
 ### Test Cases Covered
 1. **Trigonometric Helpers:** Validates `toRad()` and `toDeg()` conversions against $\pi$.
 2. **Grid-to-Coordinate Math (`calcLatLon`):** Verifies Maidenhead locator center coordinates (e.g. `JJ00AA` at origin $+0.0208^\circ\text{ lat}, +0.0417^\circ\text{ lon}$) and bounds checking.
-3. **ARRL 1 km Minimum Rule:** Confirms identical grids (`CM87wa` vs `CM87wa`) return exactly `1.0 km` per ARRL 10 GHz contest rules, while adjacent subsquares return $> 1.0\text{ km}$ ($\sim 4.63\text{ km}$).
+3. **Same Grid 0 km Rule:** Confirms identical grids (`CM87wa` vs `CM87wa`) return exactly `0.0 km`, while adjacent subsquares return $\sim 4.63\text{ km}$.
 4. **Distance Symmetry & Ground Truths:** Verifies $D(A, B) = D(B, A)$ and checks reference great-circle distances.
 5. **WGS84 Geodesic Math (`calculateWGS84`):** Verifies distance and cardinal bearings ($0^\circ$ North, $90^\circ$ East, $180^\circ$ South, $270^\circ$ West).
 6. **Round-Trip Locator Consistency (`calcLocator`):** Ensures coordinates derived from `calcLatLon` reconstruct the identical Maidenhead grid string when passed through `calcLocator`.
-7. **Distance Display Modes:** Verifies default grid-to-grid mode (ARRL contest motivation, 1 km floor, nearest-km rounding) and live lat/lon to grid mode (floor of meters / 1000).
+7. **Distance Display Modes:** Verifies default grid-to-grid mode (0 km same grid, nearest-km rounding) and live lat/lon to grid mode (floor of meters / 1000).
 8. **Reverse Bearing & Distance Formatting:** Formats `%5.1f %4i k  ` across all distance scales (1 km to > 10,000 km) and cardinal bearings, verifying buffer bounds and trailing spaces for clean redraws.
 9. **ARRL Buffer Bounds & Legacy Safety:** Formats distances across all ranges using `"ARRL %6.1f k  "`.
 10. **Rover Transit Threshold:** Asserts that distances $< 16,000\text{ m}$ activate the rover relocation alert, while $\ge 16,000\text{ m}$ clear it.
@@ -57,7 +57,7 @@ The test automatically cycles through 6 visual scenarios, displaying the current
 
 | Step | Footer Title | Screen State & Verification |
 | :--- | :--- | :--- |
-| **1** | `TEST 1: SAME GRID` | Local grid displays `CM87wa00` and target displays `CM87wa`. Verifies distance reads **`   1 k  `** next to reverse bearing (bearing remains White). |
+| **1** | `TEST 1: SAME GRID` | Local grid displays `CM87wa00` and target displays `CM87wa`. Verifies distance reads **`   0 k  `** next to reverse bearing (bearing remains White). |
 | **2** | `TEST 2: ROVER < 16K` | Target grid set to adjacent subsquare `CM87wb` ($\sim 4.6\text{ km}$) with rover transit active. Verifies Row 5 turns **RED text on WHITE background**. |
 | **3** | `TEST 3: DIST < 1000K` | Target grid set to `DN13ab` ($\sim 600\text{ km}$). Verifies 3-digit distance formatting. |
 | **4** | `TEST 4: DIST > 1000K` | Target grid set to `EL29ja` ($\sim 2,500\text{ km}$). Verifies 4-digit distance formatting without screen wrapping. |

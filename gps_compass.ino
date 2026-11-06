@@ -354,10 +354,10 @@ void calcLatLon(const char *grid, double *lat, double *lon) {
     *lat = f2 * 10.0 + s2 * 1.0 + ss2 * (2.5 / 60.0) - 90.0 + (1.25 / 60.0);
 }
 
-// Grid-to-grid distance calculation (spherical Earth R = 6371.2 km, 1 km minimum clamp per ARRL rule)
+// Grid-to-grid distance calculation (spherical Earth R = 6371.2 km, 0 km when same grid)
 double calculateGridDistance(const char *grid1, const char *grid2) {
     if (strncasecmp(grid1, grid2, 6) == 0) {
-        return 1.0;
+        return 0.0;
     }
     double lat1, lon1, lat2, lon2;
     calcLatLon(grid1, &lat1, &lon1);
@@ -377,7 +377,7 @@ double calculateGridDistance(const char *grid1, const char *grid2) {
     double c = 2.0 * atan2(sqrt(a), sqrt(1.0 - a));
     double d = R * c;
 
-    return (d < 1.0) ? 1.0 : d;
+    return (d < 0.0) ? 0.0 : d;
 }
 
 // Inline aliases for backward compatibility with documentation and tests
@@ -1231,8 +1231,8 @@ void runVisualSelfTest() {
   DistanceMode saved_distMode = distanceMode;
   isEditing = false;
 
-  // Test 1: Same Grid (ARRL 1.0 km minimum rule)
-  Serial.println(F("[Test 1/6] Same Grid (ARRL 1.0 km rule)"));
+  // Test 1: Same Grid (0 km)
+  Serial.println(F("[Test 1/6] Same Grid (0 km)"));
   showFooterText("TEST 1: SAME GRID", CYAN);
   strcpy(mygrid, "CM87wa00");
   strcpy(remote, "CM87wa");
@@ -1286,7 +1286,7 @@ void runVisualSelfTest() {
   updateBearings();
   delay(2000);
 
-  Serial.println(F("  -> Dropping back to 1.0 km (verifying no ghost characters)"));
+  Serial.println(F("  -> Dropping back to 0 km (verifying no ghost characters)"));
   strcpy(remote, "CM87wa");
   printrem();
   updateBearings();
@@ -1366,13 +1366,13 @@ void runVisualSelfTest() {
 
   // Display PASS/FAIL Result Banner
   bool all_pass = true;
-  if (fabs(calculateARRLDistance("CM87wa", "CM87wa") - 1.0) > 0.001) all_pass = false;
+  if (fabs(calculateARRLDistance("CM87wa", "CM87wa") - 0.0) > 0.001) all_pass = false;
   double lat_wb, lon_wb, rover_dist, rover_bear;
   calcLatLon("CM87wb", &lat_wb, &lon_wb);
   calculateWGS84(38.354, -119.458, lat_wb, lon_wb, rover_dist, rover_bear);
   if ((int)floor(rover_dist / 1000.0) >= 16) all_pass = false;
   if (fabs(normalizeOffset(5.0f - 355.0f) - 10.0f) > 0.01f) all_pass = false;
-  if (calculateDisplayDistance(DIST_MODE_GRID_TO_GRID, "CM87wa", "CM87wa", 0.0) != 1) all_pass = false;
+  if (calculateDisplayDistance(DIST_MODE_GRID_TO_GRID, "CM87wa", "CM87wa", 0.0) != 0) all_pass = false;
 
   if (all_pass) {
     Serial.println(F("Result: PASS"));

@@ -59,18 +59,18 @@ void test_calc_lat_lon() {
     PASS();
 }
 
-void test_arrl_1km_rule() {
-    TEST("ARRL 1 km minimum distance rule and case insensitivity");
-    // Same 6-character grid must return exactly 1.0 km
-    ASSERT_NEAR(calculateARRLDistance("CM87wa", "CM87wa"), 1.0, 1e-9);
-    ASSERT_NEAR(calculateARRLDistance("cm87wa", "CM87WA"), 1.0, 1e-9);
-    ASSERT_NEAR(calculateARRLDistance("FN31AA", "fn31aa"), 1.0, 1e-9);
-    ASSERT_NEAR(calculateARRLDistance("JJ00AA", "jj00aa"), 1.0, 1e-9);
-    ASSERT_NEAR(calculateARRLDistance("ZA00AA", "za00aa"), 1.0, 1e-9);
+void test_same_grid_distance() {
+    TEST("Same grid distance rule (0 km) and case insensitivity");
+    // Same 6-character grid must return exactly 0.0 km
+    ASSERT_NEAR(calculateARRLDistance("CM87wa", "CM87wa"), 0.0, 1e-9);
+    ASSERT_NEAR(calculateARRLDistance("cm87wa", "CM87WA"), 0.0, 1e-9);
+    ASSERT_NEAR(calculateARRLDistance("FN31AA", "fn31aa"), 0.0, 1e-9);
+    ASSERT_NEAR(calculateARRLDistance("JJ00AA", "jj00aa"), 0.0, 1e-9);
+    ASSERT_NEAR(calculateARRLDistance("ZA00AA", "za00aa"), 0.0, 1e-9);
 
-    // Adjacent subsquares (2.5' lat step ~ 4.63 km) must exceed 1.0 km
+    // Adjacent subsquares (2.5' lat step ~ 4.63 km)
     double adj = calculateARRLDistance("CM87AA", "CM87AB");
-    ASSERT_TRUE(adj > 1.0);
+    ASSERT_TRUE(adj > 0.0);
     ASSERT_NEAR(adj, 4.63, 0.1);
     PASS();
 }
@@ -175,9 +175,9 @@ void test_arrl_string_formatting_and_buffer_safety() {
 void test_distance_display_modes() {
     TEST("Distance display modes (Grid to grid default vs Lat/lon to grid)");
 
-    // Test 1: Same grid under grid-to-grid mode clamps to 1.0 km -> returns 1
+    // Test 1: Same grid under grid-to-grid mode returns 0 km
     int d_grid_same = calculateDisplayDistance(DIST_MODE_GRID_TO_GRID, "CM87wa", "CM87wa", 0.0);
-    ASSERT_TRUE(d_grid_same == 1);
+    ASSERT_TRUE(d_grid_same == 0);
 
     // Test 2: Adjacent grid CM87wa to CM87wb (~4.63 km)
     // Grid-to-grid mode rounds to 5 km (ARRL contest motivation)
@@ -206,7 +206,7 @@ void test_reverse_bearing_and_distance_formatting() {
     TEST("Reverse bearing and distance row string formatting and buffer safety");
     char buf[20];
     double test_bearings[] = {0.0, 45.2, 180.0, 270.5, 359.9};
-    int test_distances[] = {1, 15, 99, 999, 1000, 4520, 10008, 20015};
+    int test_distances[] = {0, 1, 15, 99, 999, 1000, 4520, 10008, 20015};
 
     for (double b : test_bearings) {
         for (int d : test_distances) {
@@ -224,9 +224,9 @@ void test_reverse_bearing_and_distance_formatting() {
         }
     }
 
-    // Specific formatting check for 1 km (ARRL same grid default)
-    std::snprintf(buf, sizeof(buf), "%5.1f %4i k  ", 45.2, 1);
-    ASSERT_STR_EQ(buf, " 45.2    1 k  ");
+    // Specific formatting check for 0 km (same grid default)
+    std::snprintf(buf, sizeof(buf), "%5.1f %4i k  ", 45.2, 0);
+    ASSERT_STR_EQ(buf, " 45.2    0 k  ");
 
     // Specific formatting check for 4-digit distance
     std::snprintf(buf, sizeof(buf), "%5.1f %4i k  ", 270.5, 1250);
@@ -517,7 +517,7 @@ int main() {
 
     test_trig_helpers();
     test_calc_lat_lon();
-    test_arrl_1km_rule();
+    test_same_grid_distance();
     test_arrl_symmetry_and_known_paths();
     test_wgs84_distance_and_bearing();
     test_locator_round_trip();
