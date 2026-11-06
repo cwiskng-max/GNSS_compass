@@ -29,14 +29,17 @@ The test suite runs automatically on every push and pull request in [`.github/wo
 4. **Distance Symmetry & Ground Truths:** Verifies $D(A, B) = D(B, A)$ and checks reference great-circle distances.
 5. **WGS84 Geodesic Math (`calculateWGS84`):** Verifies distance and cardinal bearings ($0^\circ$ North, $90^\circ$ East, $180^\circ$ South, $270^\circ$ West).
 6. **Round-Trip Locator Consistency (`calcLocator`):** Ensures coordinates derived from `calcLatLon` reconstruct the identical Maidenhead grid string when passed through `calcLocator`.
-7. **Buffer Bounds & Ghost Character Erasure:** Formats distances across all ranges ($1.0\text{ km}$ to $> 10,000\text{ km}$) using `"ARRL %6.1f k  "`. Verifies string lengths stay strictly within the 24-byte buffer and trailing spaces exist to erase ghost characters on screen redraws.
-8. **Rover Transit Threshold:** Asserts that distances $< 16,000\text{ m}$ activate the rover relocation alert, while $\ge 16,000\text{ m}$ clear it.
-9. **Field Extraction (`getNthField`):** Validates comma-delimited token parsing, empty fields, and bounds.
-10. **`$KSXT` Sentence Parsing:** Validates dual-antenna heading extraction: RTK Fixed (3/4), RTK Float (2/5), and Single-Point / Invalid rejection (0/1).
-11. **`$KSXT` Time & Location Extraction:** Validates UTC timestamp (14-digit full and 6-digit short) and geographic decimal coordinate parsing with solution status checking.
-12. **Legacy Sentence Parsing:** Tests fallback parsing of `$GNHDT` and `$GNTHS` and detects lost signal from empty fields.
-13. **Current Bearing Calculation:** Validates $270^\circ$ orthogonal baseline offset and circular wrap-around $[0, 360^\circ)$.
-14. **GPS Stream Evaluation:** Validates deterministic link verdicts (Disconnected, Corrupt, Acquiring, Position-Only, Float, Fixed).
+7. **Distance Display Modes:** Verifies default grid-to-grid mode (ARRL contest motivation, 1 km floor, nearest-km rounding) and live lat/lon to grid mode (floor of meters / 1000).
+8. **Reverse Bearing & Distance Formatting:** Formats `%5.1f %4i k  ` across all distance scales (1 km to > 10,000 km) and cardinal bearings, verifying buffer bounds and trailing spaces for clean redraws.
+9. **ARRL Buffer Bounds & Legacy Safety:** Formats distances across all ranges using `"ARRL %6.1f k  "`.
+10. **Rover Transit Threshold:** Asserts that distances $< 16,000\text{ m}$ activate the rover relocation alert, while $\ge 16,000\text{ m}$ clear it.
+11. **Field Extraction (`getNthField`):** Validates comma-delimited token parsing, empty fields, and bounds.
+12. **`$KSXT` Sentence Parsing:** Validates dual-antenna heading extraction: RTK Fixed (3/4), RTK Float (2/5), and Single-Point / Invalid rejection (0/1).
+13. **`$KSXT` Time & Location Extraction:** Validates UTC timestamp (14-digit full and 6-digit short) and geographic decimal coordinate parsing with solution status checking.
+14. **Legacy Sentence Parsing:** Tests fallback parsing of `$GNHDT` and `$GNTHS` and detects lost signal from empty fields.
+15. **Current Bearing Calculation:** Validates $270^\circ$ orthogonal baseline offset and circular wrap-around $[0, 360^\circ)$.
+16. **Antenna Calibration:** Validates offset normalization $[-180^\circ, +180^\circ]$ and bearing offset correction wrapping.
+17. **GPS Stream Evaluation:** Validates deterministic link verdicts (Disconnected, Corrupt, Acquiring, Position-Only, Float, Fixed).
 
 ---
 
@@ -54,7 +57,7 @@ The test automatically cycles through 6 visual scenarios, displaying the current
 
 | Step | Footer Title | Screen State & Verification |
 | :--- | :--- | :--- |
-| **1** | `TEST 1: SAME GRID` | Local grid displays `CM87wa00` and target displays `CM87wa`. Verifies ARRL distance reads **`ARRL    1.0 k  `** (bearing remains White). |
+| **1** | `TEST 1: SAME GRID` | Local grid displays `CM87wa00` and target displays `CM87wa`. Verifies distance reads **`   1 k  `** next to reverse bearing (bearing remains White). |
 | **2** | `TEST 2: ROVER < 16K` | Target grid set to adjacent subsquare `CM87wb` ($\sim 4.6\text{ km}$) with rover transit active. Verifies Row 5 turns **RED text on WHITE background**. |
 | **3** | `TEST 3: DIST < 1000K` | Target grid set to `DN13ab` ($\sim 600\text{ km}$). Verifies 3-digit distance formatting. |
 | **4** | `TEST 4: DIST > 1000K` | Target grid set to `EL29ja` ($\sim 2,500\text{ km}$). Verifies 4-digit distance formatting without screen wrapping. |

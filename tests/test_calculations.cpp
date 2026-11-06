@@ -35,7 +35,7 @@ void test_trig_helpers() {
 }
 
 void test_calc_lat_lon() {
-    TEST("calcLatLon center coordinates");
+    TEST("calcLatLon center coordinates and case-insensitivity");
     double lat = 0.0, lon = 0.0;
 
     // JJ00AA: Origin grid center (Equator and Prime Meridian)
@@ -43,18 +43,30 @@ void test_calc_lat_lon() {
     ASSERT_NEAR(lat, 1.25 / 60.0, 1e-6); // +0.020833 deg
     ASSERT_NEAR(lon, 2.5 / 60.0, 1e-6);  // +0.041667 deg
 
+    // Lowercase and mixed-case locators must evaluate identically to uppercase
+    double lat_lower = 0.0, lon_lower = 0.0;
+    calcLatLon("jj00aa", &lat_lower, &lon_lower);
+    ASSERT_NEAR(lat_lower, lat, 1e-9);
+    ASSERT_NEAR(lon_lower, lon, 1e-9);
+
+    double lat_mixed = 0.0, lon_mixed = 0.0;
+    calcLatLon("Jj00aA", &lat_mixed, &lon_mixed);
+    ASSERT_NEAR(lat_mixed, lat, 1e-9);
+    ASSERT_NEAR(lon_mixed, lon, 1e-9);
+
     // Coordinates should stay within valid geographic bounds
     ASSERT_TRUE(lat >= -90.0 && lat <= 90.0);
     PASS();
 }
 
 void test_arrl_1km_rule() {
-    TEST("ARRL 1 km minimum distance rule");
+    TEST("ARRL 1 km minimum distance rule and case insensitivity");
     // Same 6-character grid must return exactly 1.0 km
     ASSERT_NEAR(calculateARRLDistance("CM87wa", "CM87wa"), 1.0, 1e-9);
-    ASSERT_NEAR(calculateARRLDistance("FN31AA", "FN31AA"), 1.0, 1e-9);
-    ASSERT_NEAR(calculateARRLDistance("JJ00AA", "JJ00AA"), 1.0, 1e-9);
-    ASSERT_NEAR(calculateARRLDistance("ZA00AA", "ZA00AA"), 1.0, 1e-9);
+    ASSERT_NEAR(calculateARRLDistance("cm87wa", "CM87WA"), 1.0, 1e-9);
+    ASSERT_NEAR(calculateARRLDistance("FN31AA", "fn31aa"), 1.0, 1e-9);
+    ASSERT_NEAR(calculateARRLDistance("JJ00AA", "jj00aa"), 1.0, 1e-9);
+    ASSERT_NEAR(calculateARRLDistance("ZA00AA", "za00aa"), 1.0, 1e-9);
 
     // Adjacent subsquares (2.5' lat step ~ 4.63 km) must exceed 1.0 km
     double adj = calculateARRLDistance("CM87AA", "CM87AB");
@@ -70,8 +82,12 @@ void test_arrl_symmetry_and_known_paths() {
     double d2 = calculateARRLDistance("DM04ms", "CM87wa");
     ASSERT_NEAR(d1, d2, 1e-9);
 
-    // CM87wa to DM04ms center-to-center is 375.72 km
-    ASSERT_NEAR(d1, 375.72, 0.5);
+    // Case-insensitivity check on path calculation
+    double d_mixed = calculateARRLDistance("cm87WA", "dm04MS");
+    ASSERT_NEAR(d1, d_mixed, 1e-9);
+
+    // CM87wa to DM04ms center-to-center is 379.39 km (ARRL tool: 379.4 km)
+    ASSERT_NEAR(d1, 379.39, 0.1);
 
     // Boot default distance: JJ00AA to ZA00AA is > 10,000 km
     double boot_dist = calculateARRLDistance("JJ00AA", "ZA00AA");
@@ -153,6 +169,69 @@ void test_arrl_string_formatting_and_buffer_safety() {
     // Verify alignment for >= 1000 km
     std::snprintf(arrl_str, sizeof(arrl_str), "ARRL %6.1f k  ", 1000.0);
     ASSERT_STR_EQ(arrl_str, "ARRL 1000.0 k  ");
+    PASS();
+}
+
+void test_distance_display_modes() {
+    TEST("Distance display modes (Grid to grid default vs Lat/lon to grid)");
+
+    // Test 1: Same grid under grid-to-grid mode clamps to 1.0 km -> returns 1
+    int d_grid_same = calculateDisplayDistance(DIST_MODE_GRID_TO_GRID, "CM87wa", "CM87wa", 0.0);
+    ASSERT_TRUE(d_grid_same == 1);
+
+    // Test 2: Adjacent grid CM87wa to CM87wb (~4.63 km)
+    // Grid-to-grid mode rounds to 5 km (ARRL contest motivation)
+    int d_grid_adj = calculateDisplayDistance(DIST_MODE_GRID_TO_GRID, "CM87wa", "CM87wb", 4630.0);
+    ASSERT_TRUE(d_grid_adj == 5);
+
+    // Lat/lon to grid mode uses floor of meters / 1000.0 -> returns 4
+    int d_latlon_adj = calculateDisplayDistance(DIST_MODE_LATLON_TO_GRID, "CM87wa", "CM87wb", 4630.0);
+    ASSERT_TRUE(d_latlon_adj == 4);
+
+    // Test 3: Known path CM87wa to DM04ms (379.39 km, rounds to 379 km)
+    int d_grid_path = calculateDisplayDistance(DIST_MODE_GRID_TO_GRID, "CM87wa", "DM04ms", 375720.0);
+    ASSERT_TRUE(d_grid_path == 379);
+
+    int d_latlon_path = calculateDisplayDistance(DIST_MODE_LATLON_TO_GRID, "CM87wa", "DM04ms", 375720.0);
+    ASSERT_TRUE(d_latlon_path == 375);
+
+    // Test 4: Default mode verification (DIST_MODE_GRID_TO_GRID == 0)
+    ASSERT_TRUE(DIST_MODE_GRID_TO_GRID == 0);
+    ASSERT_TRUE(DIST_MODE_LATLON_TO_GRID == 1);
+
+    PASS();
+}
+
+void test_reverse_bearing_and_distance_formatting() {
+    TEST("Reverse bearing and distance row string formatting and buffer safety");
+    char buf[20];
+    double test_bearings[] = {0.0, 45.2, 180.0, 270.5, 359.9};
+    int test_distances[] = {1, 15, 99, 999, 1000, 4520, 10008, 20015};
+
+    for (double b : test_bearings) {
+        for (int d : test_distances) {
+            std::memset(buf, 0, sizeof(buf));
+            int written = std::snprintf(buf, sizeof(buf), "%5.1f %4i k  ", b, d);
+
+            // Buffer safety: must fit comfortably in 20-byte buffer
+            ASSERT_TRUE(written > 0 && written < (int)sizeof(buf));
+            ASSERT_TRUE(std::strlen(buf) < sizeof(buf));
+
+            // Must end with trailing spaces for clean erasure of stale screen characters
+            ASSERT_TRUE(buf[written - 1] == ' ');
+            ASSERT_TRUE(buf[written - 2] == ' ');
+            ASSERT_TRUE(buf[written - 3] == 'k');
+        }
+    }
+
+    // Specific formatting check for 1 km (ARRL same grid default)
+    std::snprintf(buf, sizeof(buf), "%5.1f %4i k  ", 45.2, 1);
+    ASSERT_STR_EQ(buf, " 45.2    1 k  ");
+
+    // Specific formatting check for 4-digit distance
+    std::snprintf(buf, sizeof(buf), "%5.1f %4i k  ", 270.5, 1250);
+    ASSERT_STR_EQ(buf, "270.5 1250 k  ");
+
     PASS();
 }
 
@@ -442,6 +521,8 @@ int main() {
     test_arrl_symmetry_and_known_paths();
     test_wgs84_distance_and_bearing();
     test_locator_round_trip();
+    test_distance_display_modes();
+    test_reverse_bearing_and_distance_formatting();
     test_arrl_string_formatting_and_buffer_safety();
     test_rover_transit_threshold();
     test_get_nth_field();

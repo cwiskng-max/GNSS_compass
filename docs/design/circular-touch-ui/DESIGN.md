@@ -22,14 +22,14 @@ All visual rows are positioned along the vertical axis with horizontal widths co
 ```text
                .---. (Y = 0)
             .-'     '-.
-          .'   Row 1   '.     Y=35:  Local Grid & UTC Time (LOC_SZ = 4)
+          .'   Row 1   '.     Y=35:  Local Grid (LOC_SZ = 4)
          /               \
         |      Row 2      |   Y=95:  Target Grid Editor (REMSIZE = 8)
         |                 |
         |      Row 3      |   Y=223: Heading | Cal Pill | Target (BEARSZ = 6)
         |                 |
-        |      Row 4      |   Y=352: Reverse Bearing & Dist (REVBEAR_SZ = 4)
-         \     Row 5     /    Y=408: ARRL Contest Distance (ARRL_SZ = 3)
+        |      Row 4      |   Y=300: UTC Time (TIME_SZ = 6)
+         \     Row 5     /    Y=370: Reverse Bearing & Dist (REVBEAR_SZ = 4)
           '.   Row 6   .'     Y=444: Firmware Version Footer (VER_SZ = 2)
             '-.     .-'
                '---' (Y = 480)
@@ -39,11 +39,11 @@ All visual rows are positioned along the vertical axis with horizontal widths co
 
 | Row | Content | Font Size | Y Position | Horizontal Span | Purpose |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Row 1** | Local Grid & UTC Time | Size 4 | $Y = 35$ | $144 \le X \le 336$ | Current GPS position (`mygrid`) and UTC clock |
+| **Row 1** | Local Grid | Size 4 | $Y = 35$ | $144 \le X \le 336$ | Current GPS position (`mygrid`) |
 | **Row 2** | Target Maidenhead Grid | Size 8 | $Y = 95$ | $80 \le X \le 368$ | 6-char interactive target locator |
 | **Row 3** | Bearings & Cal Pill | Size 6 | $Y = 223$ | $20 \le X \le 460$ | Current heading, calibration pill, target bearing |
-| **Row 4** | Reverse Bearing & Dist | Size 4 | $Y = 352$ | $90 \le X \le 390$ | Back-azimuth and line-of-sight distance |
-| **Row 5** | ARRL Contest Distance | Size 3 | $Y = 408$ | $123 \le X \le 357$ | ARRL 10 GHz scored distance (1 km clamp) |
+| **Row 4** | UTC Time | Size 6 | $Y = 300$ | $132 \le X \le 348$ | UTC clock display |
+| **Row 5** | Reverse Bearing & Dist | Size 4 | $Y = 370$ | $84 \le X \le 396$ | Back-azimuth and distance (default ARRL, configurable) |
 | **Row 6** | Version Footer | Size 2 | $Y = 444$ | Centered | Firmware version & self-test tap trigger |
 
 ---

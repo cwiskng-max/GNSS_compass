@@ -51,6 +51,7 @@ Displays a summary of available serial commands.
   status (or gps)       - Live GNSS receiver stream diagnostic
   test (or demo)        - Run visual display self-test demo
   cal [snap|zero|<val>] - View or configure antenna calibration
+  dist [arrl|current]   - View or configure distance display mode
   help (or ?)           - Show this help menu
 ====================================
 ```
@@ -168,6 +169,35 @@ Sets an exact manual offset in degrees. Angles are automatically normalized to $
 
 > cal -12.5
 [CAL] Offset set to -12.5 deg
+```
+
+---
+
+### 3.5 Distance Display Mode (`dist`)
+Configures the distance calculation mode rendered next to the reverse bearing on Row 5. Preferences are stored in non-volatile flash (NVS).
+
+#### View Current Distance Mode (`dist`, `dist status`, `dist show`)
+```text
+> dist
+
+=== Distance Display Mode ===
+  Current Mode  : Grid to Grid [Default] (ARRL contest motivation)
+  Available modes: 'dist grid' (grid to grid), 'dist latlon' (lat/lon to grid)
+=============================
+```
+
+#### Select Grid to Grid Distance (`dist grid`, `dist arrl`)
+Sets the default mode: spherical Earth model between Maidenhead grid centers ($R = 6371.0\text{ km}$), clamped to a minimum of 1.0 km for contacts within the same subsquare (ARRL contest standard).
+```text
+> dist grid
+[DIST] Distance mode set to Grid to Grid (Default).
+```
+
+#### Select Lat/Lon to Grid Distance (`dist latlon`, `dist current`)
+Calculates the great-circle geodesic distance from the current live GNSS position to the center of the target grid using the WGS-84 reference ellipsoid model.
+```text
+> dist latlon
+[DIST] Distance mode set to Lat/Lon to Grid.
 ```
 
 ---

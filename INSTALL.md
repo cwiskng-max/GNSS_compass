@@ -125,8 +125,7 @@ Once flashing completes, the display will restart automatically:
    * **Row 2:** Target Maidenhead grid (defaults to `ZA00AA` with the yellow editing caret `^`).
    * **Row 3:** Antenna heading (`---.-` until GPS true heading is received) and calculated target bearing.
    * **Row 4:** UTC time (`--:--Z` until GPS time is received).
-   * **Row 5:** Calculated reverse bearing and distance (`<bear> deg  <dist> k`) computed between the local and target grids.
-   * **Row 6:** Calculated ARRL contest distance (`ARRL <dist> k`).
-   * **Footer:** Firmware version string (e.g., `v0.2`).
+   * **Row 5:** Calculated reverse bearing and distance (`<bear>  <dist> k`), defaulting to grid-to-grid distance (ARRL contest rule, with live lat/lon to grid configurable).
+   * **Footer (Row 6):** Firmware version string (e.g., `v0.3-dev`).
 2. **On-Device Self-Test:** Tap directly on the firmware version string at the bottom center of the screen. The display will run through the 5-step visual self-test and display `SELF-TEST PASSED` in green. See [tests/README.md](tests/README.md) for details.
 3. **Connect Receiver:** Connect and configure the Unicore UM982 GNSS receiver following [RECEIVER.md](RECEIVER.md).

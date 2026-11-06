@@ -22,6 +22,11 @@ enum GpsLinkVerdict {
   GPS_LINK_HEADING_FLOAT = 4,  // Dual-antenna heading active in Float mode (Yellow)
   GPS_LINK_OK_FIXED = 5        // Dual-antenna heading active in Fixed mode (White)
 };
+
+enum DistanceMode {
+  DIST_MODE_GRID_TO_GRID = 0,    // Grid to grid [Default] (ARRL contest rule)
+  DIST_MODE_LATLON_TO_GRID = 1   // Live GPS lat/lon to target grid
+};
 // --- End Bearing Quality & Link Diagnostic Enums ---
 
 // I2C to PCF8574
@@ -83,25 +88,6 @@ enum GpsLinkVerdict {
 #define CAL_TOUCH_Y_MAX      280
 #define CAL_MODAL_TIMEOUT_MS 15000
 
-// Set to 1 to show ARRL contest distance (Row 6), 0 to hide
-#define ENABLE_ARRL_DIST     1
-
-#if ENABLE_ARRL_DIST
-// Row 4: UTC Time
-#define TIME_SZ              6
-#define TIME_X               132
-#define TIME_Y               290
-
-// Row 5: Reverse Bearing & Distance
-#define REVBEAR_SZ           4
-#define REVBEAR_X            90
-#define REVBEAR_Y            352
-
-// Row 6: ARRL Contest Distance
-#define ARRL_SZ              3
-#define ARRL_X               123
-#define ARRL_Y               408
-#else
 // Row 4: UTC Time
 #define TIME_SZ              6
 #define TIME_X               132
@@ -109,11 +95,10 @@ enum GpsLinkVerdict {
 
 // Row 5: Reverse Bearing & Distance
 #define REVBEAR_SZ           4
-#define REVBEAR_X            90
-#define REVBEAR_Y            372
-#endif
+#define REVBEAR_X            84
+#define REVBEAR_Y            370
 
-// Row 7: Firmware Version Footer
+// Row 6: Firmware Version Footer
 #define FW_VERSION           "v0.3-dev"
 #define VER_SZ               2
 #define VER_Y                444
@@ -356,22 +341,29 @@ double toDeg(double rad) {
     return rad * 180.0 / M_PI;
 }
 
-// Convert 6-character Maidenhead grid to center coordinates
+// Convert 6-character Maidenhead grid to center coordinates (case-insensitive)
 void calcLatLon(const char *grid, double *lat, double *lon) {
-    *lon = (grid[0] - 'A') * 20.0 + (grid[2] - '0') * 2.0 + (grid[4] - 'A') * (5.0 / 60.0) - 180.0 + (2.5 / 60.0);
-    *lat = (grid[1] - 'A') * 10.0 + (grid[3] - '0') * 1.0 + (grid[5] - 'A') * (2.5 / 60.0) - 90.0 + (1.25 / 60.0);
+    char f1 = toupper((unsigned char)grid[0]) - 'A';
+    char f2 = toupper((unsigned char)grid[1]) - 'A';
+    char s1 = grid[2] - '0';
+    char s2 = grid[3] - '0';
+    char ss1 = toupper((unsigned char)grid[4]) - 'A';
+    char ss2 = toupper((unsigned char)grid[5]) - 'A';
+
+    *lon = f1 * 20.0 + s1 * 2.0 + ss1 * (5.0 / 60.0) - 180.0 + (2.5 / 60.0);
+    *lat = f2 * 10.0 + s2 * 1.0 + ss2 * (2.5 / 60.0) - 90.0 + (1.25 / 60.0);
 }
 
-// ARRL contest distance calculation (spherical Earth R = 6371.0 km, 1 km minimum)
-double calculateARRLDistance(const char *grid1, const char *grid2) {
-    if (strncmp(grid1, grid2, 6) == 0) {
+// Grid-to-grid distance calculation (spherical Earth R = 6371.2 km, 1 km minimum clamp per ARRL rule)
+double calculateGridDistance(const char *grid1, const char *grid2) {
+    if (strncasecmp(grid1, grid2, 6) == 0) {
         return 1.0;
     }
     double lat1, lon1, lat2, lon2;
     calcLatLon(grid1, &lat1, &lon1);
     calcLatLon(grid2, &lat2, &lon2);
 
-    double R = 6371.0; // Mean Earth radius in km (ARRL contest standard)
+    double R = 6371.2; // Mean Earth radius in km (ARRL contest standard)
     double dLat = toRad(lat2 - lat1);
     double dLon = toRad(lon2 - lon1);
     double rLat1 = toRad(lat1);
@@ -386,6 +378,15 @@ double calculateARRLDistance(const char *grid1, const char *grid2) {
     double d = R * c;
 
     return (d < 1.0) ? 1.0 : d;
+}
+
+// Inline aliases for backward compatibility with documentation and tests
+inline double calculateARRLDistance(const char *grid1, const char *grid2) {
+    return calculateGridDistance(grid1, grid2);
+}
+
+inline double calculateGridCenterDistance(const char *grid1, const char *grid2) {
+    return calculateGridDistance(grid1, grid2);
 }
 
 // Calculate Distance (meters) and Bearing (degrees)
@@ -415,6 +416,16 @@ void calculateWGS84(double lat1, double lon1, double lat2, double lon2, double &
         bearing += 360.0;
     }
 }
+
+// --- Distance Display Modes ---
+int calculateDisplayDistance(DistanceMode mode, const char *local_grid, const char *target_grid, double wgs84_distance_m) {
+  if (mode == DIST_MODE_GRID_TO_GRID) {
+    return (int)round(calculateGridDistance(local_grid, target_grid));
+  } else {
+    return (int)floor(wgs84_distance_m / 1000.0);
+  }
+}
+// --- End Distance Display Modes ---
 
 
 
@@ -616,6 +627,7 @@ bool rovdist = false;
 float mylongitude = 0.0, mylatitude = 0.0;
 double remlongitude = 0.0, remlatitude = 0.0;
 double distance = 0.0, bearing = 0.0, revbearing = 0.0;
+DistanceMode distanceMode = DIST_MODE_GRID_TO_GRID;
 
 // GPS Stream Diagnostic Counters
 unsigned long totalGpsBytesReceived = 0;
@@ -627,12 +639,34 @@ unsigned long lastKsxtMillis = 0;
 unsigned int hdtPacketCount = 0;
 unsigned long lastHdtMillis = 0;
 
-void loadCalibration() {
+void loadPreferences() {
   Preferences prefs;
   prefs.begin("compass", true);
   calibrationOffset = prefs.getFloat("cal_offset", 0.0f);
+  int storedDistMode = prefs.getInt("dist_mode", (int)DIST_MODE_GRID_TO_GRID);
+  if (storedDistMode == DIST_MODE_LATLON_TO_GRID) {
+    distanceMode = DIST_MODE_LATLON_TO_GRID;
+  } else {
+    distanceMode = DIST_MODE_GRID_TO_GRID;
+  }
   prefs.end();
   Serial.printf("[NVS] Loaded antenna calibration offset: %+5.1f deg\r\n", calibrationOffset);
+  Serial.printf("[NVS] Loaded distance mode: %s\r\n",
+                (distanceMode == DIST_MODE_GRID_TO_GRID) ? "GRID_TO_GRID (default)" : "LATLON_TO_GRID");
+}
+
+void loadCalibration() {
+  loadPreferences();
+}
+
+void saveDistanceMode(DistanceMode mode) {
+  distanceMode = mode;
+  Preferences prefs;
+  prefs.begin("compass", false);
+  prefs.putInt("dist_mode", (int)distanceMode);
+  prefs.end();
+  Serial.printf("[NVS] Saved distance mode: %s\r\n",
+                (distanceMode == DIST_MODE_GRID_TO_GRID) ? "GRID_TO_GRID" : "LATLON_TO_GRID");
 }
 
 void saveCalibration(float offset) {
@@ -919,6 +953,34 @@ void handleCalSerialCommand(const String &cmd) {
   }
 }
 
+void handleDistSerialCommand(const String &cmd) {
+  String arg = cmd.substring(4);
+  arg.trim();
+  if (arg.length() == 0 || arg.equalsIgnoreCase("status") || arg.equalsIgnoreCase("show")) {
+    Serial.println();
+    Serial.println(F("=== Distance Display Mode ==="));
+    Serial.printf("  Current Mode  : %s\r\n",
+      (distanceMode == DIST_MODE_GRID_TO_GRID) ? "Grid to Grid [Default] (ARRL contest motivation)"
+                                               : "Lat/Lon to Grid (live GPS position to target)");
+    Serial.println(F("  Available modes: 'dist grid' (grid to grid), 'dist latlon' (lat/lon to grid)"));
+    Serial.println(F("============================="));
+    Serial.println();
+  } else if (arg.equalsIgnoreCase("grid") || arg.equalsIgnoreCase("grid-to-grid") || arg.equalsIgnoreCase("arrl")) {
+    saveDistanceMode(DIST_MODE_GRID_TO_GRID);
+    updateBearings();
+    Serial.println(F("[DIST] Distance mode set to Grid to Grid (Default)."));
+  } else if (arg.equalsIgnoreCase("latlon") || arg.equalsIgnoreCase("lat-lon") || arg.equalsIgnoreCase("lat_lon") ||
+             arg.equalsIgnoreCase("coord") || arg.equalsIgnoreCase("current") || arg.equalsIgnoreCase("wgs84")) {
+    saveDistanceMode(DIST_MODE_LATLON_TO_GRID);
+    updateBearings();
+    Serial.println(F("[DIST] Distance mode set to Lat/Lon to Grid."));
+  } else {
+    Serial.print(F("Unknown distance mode option: '"));
+    Serial.print(arg);
+    Serial.println(F("'. Options are 'dist grid' or 'dist latlon'."));
+  }
+}
+
 void drawCurrentBearing() {
   if (currentUiMode == UI_MODE_CALIBRATING) {
     drawRawHeadingInModal();
@@ -956,7 +1018,7 @@ void updateBearings() {
   }
 
   char buf[20];
-  int rdist = (int)floor(distance / 1000.0);
+  int rdist = calculateDisplayDistance(distanceMode, mygrid, remote, distance);
   sprintf(&buf[0], "%5.1f %4i k  ", revbearing, rdist);
   if ((rdist < 16) && rovdist) {
     gfx->setTextColor(RED, WHITE);
@@ -973,15 +1035,6 @@ void updateBearings() {
   gfx->setTextSize(BEARSZ);
   gfx->setCursor(TGTBEARX, BEARY);
   gfx->print(buf);
-
-#if ENABLE_ARRL_DIST
-  char arrl_str[24];
-  double arrl_dist = calculateARRLDistance(mygrid, remote);
-  sprintf(arrl_str, "ARRL %6.1f k  ", arrl_dist);
-  gfx->setTextSize(ARRL_SZ);
-  gfx->setCursor(ARRL_X, ARRL_Y);
-  gfx->print(arrl_str);
-#endif
 }
 
 void setup() {
@@ -1175,6 +1228,7 @@ void runVisualSelfTest() {
   unsigned long saved_lastHeading = lastHeadingUpdate;
   float saved_calibrationOffset = calibrationOffset;
   UiMode saved_uiMode = currentUiMode;
+  DistanceMode saved_distMode = distanceMode;
   isEditing = false;
 
   // Test 1: Same Grid (ARRL 1.0 km minimum rule)
@@ -1189,6 +1243,7 @@ void runVisualSelfTest() {
   sinavg = sin(toRad(180.0)) * BSZ;
   cosavg = cos(toRad(180.0)) * BSZ;
   rovdist = false;
+  distanceMode = DIST_MODE_GRID_TO_GRID;
   printLocalGrid();
   printrem();
   updateBearings();
@@ -1317,6 +1372,7 @@ void runVisualSelfTest() {
   calculateWGS84(38.354, -119.458, lat_wb, lon_wb, rover_dist, rover_bear);
   if ((int)floor(rover_dist / 1000.0) >= 16) all_pass = false;
   if (fabs(normalizeOffset(5.0f - 355.0f) - 10.0f) > 0.01f) all_pass = false;
+  if (calculateDisplayDistance(DIST_MODE_GRID_TO_GRID, "CM87wa", "CM87wa", 0.0) != 1) all_pass = false;
 
   if (all_pass) {
     Serial.println(F("Result: PASS"));
@@ -1349,6 +1405,7 @@ void runVisualSelfTest() {
   isEditing = saved_isEditing;
   calibrationOffset = saved_calibrationOffset;
   currentUiMode = saved_uiMode;
+  distanceMode = saved_distMode;
   redrawMainScreen();
 
   Serial.println(F("=== Visual Self-Test Complete (Live state restored) ===\n"));
@@ -1365,6 +1422,7 @@ void handleSerialCommandLine(const String &cmd) {
     Serial.println(F("  status (or gps)       - Live GNSS receiver stream diagnostic"));
     Serial.println(F("  test (or demo)        - Run visual display self-test demo"));
     Serial.println(F("  cal [snap|zero|<val>] - View or configure antenna calibration"));
+    Serial.println(F("  dist [grid|latlon]    - View or configure distance display mode"));
     Serial.println(F("  help (or ?)           - Show this help menu"));
     Serial.println(F("===================================="));
     Serial.println();
@@ -1374,6 +1432,8 @@ void handleSerialCommandLine(const String &cmd) {
     runVisualSelfTest();
   } else if (line.startsWith("cal") || line.startsWith("CAL")) {
     handleCalSerialCommand(line);
+  } else if (line.startsWith("dist") || line.startsWith("DIST")) {
+    handleDistSerialCommand(line);
   } else {
     Serial.print(F("Unknown command: '"));
     Serial.print(line);
@@ -1606,7 +1666,7 @@ void loop() {
               printrem();
             }
 
-            // Tap on firmware version footer (Row 7): trigger visual display demo
+            // Tap on firmware version footer (Row 6): trigger visual display demo
             else if (100 <= p.x && p.x <= 380 && p.y >= 435) {
               runVisualSelfTest();
             }
