@@ -32,7 +32,7 @@ Upon power-up or reboot, the ESP32 outputs initial startup identification and a 
 
 ```text
 GNSS Compass v1.0.0
-Commands: 'status' (GPS stream diagnosis), 'test' (visual demo)
+Commands: 'status' (GPS stream diagnosis), 'test' (visual demo), 'sim' (simulation)
 ```
 
 ---
@@ -51,6 +51,8 @@ Displays a summary of available serial commands.
   status (or gps)       - Live GNSS receiver stream diagnostic
   test (or demo)        - Run visual display self-test demo
   cal [snap|zero|<val>] - View or configure antenna calibration
+  sim [on|off|hdg|pos|grid|rover|status] - GPS simulation commands
+  $<NMEA/KSXT sentence> - Inject raw GNSS sentence directly
   help (or ?)           - Show this help menu
 ====================================
 ```
@@ -172,7 +174,126 @@ Sets an exact manual offset in degrees. Angles are automatically normalized to $
 
 ---
 
-## 4. Scripting & Automation Examples
+### 3.5 GPS Data Simulation & Rover Test (`sim` and `$<sentence>`)
+
+The simulation interface allows desktop verification of **Rover Mode**, transit displacement tracking (evaluating the **16 km legal rule** and grid boundary crossings), antenna needle motion, and RTK quality states without connecting the physical UM982 receiver or driving outside.
+
+#### Simulation State Control
+* `sim` or `sim status`: Displays simulation mode state, injected packet counts, simulated coordinates, heading, and rover alert status.
+* `sim on`: Enables simulation mode and **suppresses physical receiver input on `Serial2`**, preventing real GNSS data from interfering with tests.
+* `sim off`: Disables simulation mode and restores live communication with the UM982 receiver.
+
+```text
+> sim status
+
+=== GPS Simulation Mode Status ===
+  Simulation Active : YES (Hardware Serial2 suppressed)
+  Sim Packets Recv  : 142
+  Last Sim Packet   : 180 ms ago
+  Current Heading   : 145.2 deg (Quality: FIXED)
+  Current Position  :  38.35400, -119.45800 (Grid: CM87wa)
+  Rover Mode Active : YES (<16k alert tracking)
+  Rover Distance    :  14.8 km (Alert: ACTIVE (RED on WHITE))
+==================================
+```
+
+#### Simulated Values & Quick Commands
+* `sim hdg <deg> [fixed|float|lost]`: Updates simulated antenna heading and color quality.
+  * Example: `sim hdg 145.2 fixed` (Pure white needle)
+  * Example: `sim hdg 90.0 float` (Bright yellow needle)
+  * Example: `sim hdg 270.0 lost` (Bright red needle)
+* `sim pos <lat> <lon>`: Sets current geographic coordinates and calculates Maidenhead grid.
+  * Example: `sim pos 38.354 -119.458`
+* `sim grid <grid>`: Moves current position to the center of a Maidenhead grid.
+  * Example: `sim grid CM87wa`
+* `sim rover [origin_grid] <dist_km>`: Configures rover tracking from an origin grid and sets simulated vehicle distance.
+  * Example: `sim rover CM87wa 14.5` (Row 5 highlights **RED on WHITE**, alert active: $< 16\text{ km}$)
+  * Example: `sim rover CM87wa 16.5` (Alert clears, distance $\ge 16\text{ km}$)
+* `sim time <hh:mm>`: Sets the simulated satellite UTC clock.
+  * Example: `sim time 18:30`
+
+#### Direct Sentence Injection (`$<sentence>`)
+Any line sent across serial beginning with `$` is passed directly to the unified sentence parser, exactly as if received from the Unicore receiver:
+
+```text
+$KSXT,20261106202506.00,-122.12500000,37.02083333,2100.00,145.20,0.00,0.00,0.022,,1,3,28,28*1C
+```
+
+Injecting raw sentences automatically enables simulation mode (`simModeActive = true`).
+
+---
+
+## 4. Host Simulator Script (`tools/gps_sim.py`)
+
+A comprehensive scenario-based simulation script is available in `tools/gps_sim.py`. It communicates directly with the ESP32 over `/dev/ttyACM0` (or auto-detected port).
+
+### 4.1 Running Pre-Canned Scenarios
+
+```bash
+# 1. Rover transit journey (drives from CM87wa across 16 km boundary at 65 km/h)
+./tools/gps_sim.py rover --origin CM87wa --speed 65 --distance 25
+
+# 2. Mountain canyon switchback / backtrack scenario (handles distance decreases)
+./tools/gps_sim.py backtrack --origin CM87wa
+
+# 3. 360-degree antenna rotator sweep (validates needle fluidity and 0/360 wrap)
+./tools/gps_sim.py sweep --speed 6.0
+
+# 4. RTK quality degradation & watchdog timeout cycle
+./tools/gps_sim.py rtk
+
+# 5. Interactive terminal drive controller (WASD keyboard control)
+./tools/gps_sim.py drive --origin CM87wa
+
+# 6. Dry run (prints generated NMEA/$KSXT sentences to stdout without serial port)
+./tools/gps_sim.py rover --dry-run
+```
+
+### 4.2 Custom Parameter & Sentence Injection (`inject`)
+
+The `inject` subcommand provides one-shot or sustained injection of custom coordinates, headings, simulated rover distances, UTC timestamps, and raw sentences.
+
+| Argument | Description | Example |
+| :--- | :--- | :--- |
+| `--grid GRID` | Center on Maidenhead grid (4, 6, or 8 chars) | `--grid CM87wa` |
+| `--lat LAT`, `--lon LON` | Set exact decimal geographic coordinates | `--lat 38.3540 --lon -119.4580` |
+| `--hdg HDG` | Antenna heading in degrees (0–360) | `--hdg 145.2` |
+| `--quality, -q` | RTK quality: `fixed` (white), `float` (yellow), `lost` (red) | `-q fixed` |
+| `--duration, -d SEC` | Hold duration in seconds to continuously stream packet (prevents 1.5s staleness timeout) | `-d 10.0` |
+| `--time, -t TIME` | Set simulated UTC clock display (`HH:MM` or `HH:MM:SS`) | `-t 21:45` |
+| `--rover-origin GRID` | Origin grid for rover distance testing | `--rover-origin CM87wa` |
+| `--rover-dist KM` | Simulated rover displacement distance from origin in km | `--rover-dist 14.5` |
+| `--repeat, -r N` | Number of packets to send (default: 1) | `-r 5` |
+| `--rate HZ` | Streaming rate in Hz for `--duration` or `--repeat` (default: 5.0) | `--rate 5.0` |
+| `--altitude ALT` | Altitude in meters (default: 2100.0) | `--altitude 1850.0` |
+| `--sats SATS` | Number of tracked satellites (default: 28) | `--sats 32` |
+| `--raw RAW` | Direct injection of an arbitrary raw NMEA or `$KSXT` sentence | `--raw '$GNGLL,...'` |
+
+#### Injection Examples
+
+```bash
+# 1. Quick coordinate and heading injection (Pure white fixed needle)
+./tools/gps_sim.py inject --grid CM87wa --hdg 145.2 --quality fixed
+
+# 2. Hold heading and position on screen for 10 seconds (prevents 1.5s watchdog timeout)
+./tools/gps_sim.py inject --grid CM87wb --hdg 90.0 --quality fixed --duration 10
+
+# 3. Simulate rover displacement relative to an origin (evaluates 16 km alert threshold)
+./tools/gps_sim.py inject --rover-origin CM87wa --rover-dist 14.5 --hdg 45.0 --duration 15
+
+# 4. Set specific UTC time on the clock display (Row 6)
+./tools/gps_sim.py inject --grid CM87wa --time 23:45
+
+# 5. Test degraded RTK reception (Bright yellow float needle)
+./tools/gps_sim.py inject --grid CM87wa --hdg 210.0 --quality float --duration 8
+
+# 6. Inject an arbitrary raw NMEA or $KSXT sentence directly
+./tools/gps_sim.py inject --raw '$GNGLL,3821.24,N,11927.48,W,183000.00,A*23'
+```
+
+---
+
+## 5. Scripting & Automation Examples
 
 ### Bash / Shell Quick Query
 You can query the device directly from a Linux/macOS shell:

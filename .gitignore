@@ -13,3 +13,8 @@ build/tmp/
 tests/extracted_math.h
 tests/run_tests
 
+# Python cache artifacts
+__pycache__/
+*.py[cod]
+
+

@@ -43,6 +43,16 @@ void test_calc_lat_lon() {
     ASSERT_NEAR(lat, 1.25 / 60.0, 1e-6); // +0.020833 deg
     ASSERT_NEAR(lon, 2.5 / 60.0, 1e-6);  // +0.041667 deg
 
+    // 4-character grid: EN40 defaults to center of 2 deg x 1 deg square
+    calcLatLon("EN40", &lat, &lon);
+    ASSERT_NEAR(lat, 40.5, 1e-5);
+    ASSERT_NEAR(lon, -91.0, 1e-5);
+
+    // 8-character grid: EN40ab56 preserves extended precision
+    calcLatLon("EN40ab56", &lat, &lon);
+    ASSERT_NEAR(lat, 40.06875, 1e-5);
+    ASSERT_NEAR(lon, -91.954167, 1e-5);
+
     // Coordinates should stay within valid geographic bounds
     ASSERT_TRUE(lat >= -90.0 && lat <= 90.0);
     PASS();
@@ -70,8 +80,8 @@ void test_arrl_symmetry_and_known_paths() {
     double d2 = calculateARRLDistance("DM04ms", "CM87wa");
     ASSERT_NEAR(d1, d2, 1e-9);
 
-    // CM87wa to DM04ms center-to-center is 375.72 km
-    ASSERT_NEAR(d1, 375.72, 0.5);
+    // CM87wa to DM04ms center-to-center is ~379.37 km
+    ASSERT_NEAR(d1, 379.37, 0.5);
 
     // Boot default distance: JJ00AA to ZA00AA is > 10,000 km
     double boot_dist = calculateARRLDistance("JJ00AA", "ZA00AA");
@@ -117,6 +127,14 @@ void test_locator_round_trip() {
         calcLocator(result, (float)lat, (float)lon);
         ASSERT_TRUE(std::strncmp(result, expected, 6) == 0);
     }
+
+    // 8-character full precision round-trip
+    double lat8 = 0.0, lon8 = 0.0;
+    calcLatLon("EN40ab56", &lat8, &lon8);
+    char result8[9];
+    calcLocator(result8, (float)lat8, (float)lon8);
+    ASSERT_TRUE(std::strcmp(result8, "EN40AB56") == 0);
+
     PASS();
 }
 
