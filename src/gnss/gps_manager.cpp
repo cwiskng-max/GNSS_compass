@@ -40,7 +40,7 @@ void GpsManager::begin(unsigned long /* baud */) {}
 
 void GpsManager::checkStaleness(unsigned long nowMs) {
     if (hasHeading_ && bearingQuality_ != BEARING_LOST) {
-        if (nowMs >= lastHeadingUpdate_ && (nowMs - lastHeadingUpdate_) >= HEADING_TIMEOUT_MS) {
+        if ((nowMs - lastHeadingUpdate_) >= HEADING_TIMEOUT_MS) {
             bearingQuality_ = BEARING_LOST;
             if (onHeadingUpdated_) {
                 onHeadingUpdated_(getHeading(), BEARING_LOST);
@@ -108,20 +108,19 @@ void GpsManager::feedSentence(const char *sentence, unsigned long nowMs) {
     totalBytesReceived_ += len;
     lastByteMillis_ = nowMs;
 
-    char tempBuf[BUFFER_SIZE];
-    strncpy(tempBuf, sentence, BUFFER_SIZE - 1);
-    tempBuf[BUFFER_SIZE - 1] = '\0';
+    strncpy(feedBuffer_, sentence, BUFFER_SIZE - 1);
+    feedBuffer_[BUFFER_SIZE - 1] = '\0';
 
     // Strip trailing newlines if present
-    size_t tLen = strlen(tempBuf);
-    while (tLen > 0 && (tempBuf[tLen - 1] == '\r' || tempBuf[tLen - 1] == '\n')) {
-        tempBuf[--tLen] = '\0';
+    size_t tLen = strlen(feedBuffer_);
+    while (tLen > 0 && (feedBuffer_[tLen - 1] == '\r' || feedBuffer_[tLen - 1] == '\n')) {
+        feedBuffer_[--tLen] = '\0';
     }
 
     if (onRawSentence_) {
-        onRawSentence_(tempBuf);
+        onRawSentence_(feedBuffer_);
     }
-    processSentence(tempBuf, nowMs);
+    processSentence(feedBuffer_, nowMs);
 }
 
 void GpsManager::setLocation(const GeoPoint &point, unsigned long /* nowMs */) {
@@ -227,12 +226,12 @@ void GpsManager::processSentence(char *sentence, unsigned long nowMs) {
         double gllLat = 0.0, gllLon = 0.0;
 
         parseLegacyLatLon(&sentence[7], &gllLat, &gllLon, &ptr);
-        if (ptr) {
+        if (ptr && strlen(ptr) >= 4) {
             int gllH = aton(ptr[0]) * 10 + aton(ptr[1]);
             int gllM = aton(ptr[2]) * 10 + aton(ptr[3]);
 
             char *statusComma = strchr(ptr, ',');
-            if ((statusComma != nullptr && *(statusComma + 1) == 'A') || ptr[10] == 'A') {
+            if ((statusComma != nullptr && *(statusComma + 1) == 'A') || (strlen(ptr) >= 11 && ptr[10] == 'A')) {
                 setLocation(gllLat, gllLon, nowMs);
 
                 if (!hasTime_ || gllH != hours_ || gllM != minutes_) {

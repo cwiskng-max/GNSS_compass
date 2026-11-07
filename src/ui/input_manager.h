@@ -8,6 +8,7 @@
 #if defined(ARDUINO)
 #include <Arduino.h>
 #include <Wire.h>
+#include <PCF8574.h>
 #include <Adafruit_CST8XX.h>
 #endif
 
@@ -28,6 +29,7 @@ enum class UserEventType : uint8_t {
     None = 0,
     RotateClockwise,
     RotateCounterClockwise,
+    EncoderButtonPressed,
     TouchLocalGrid,
     TouchGridCharacter,
     TouchCalibrationPill,
@@ -64,6 +66,7 @@ public:
     // Event injection for host unit tests & simulation
     void injectTouch(bool touched, int16_t x, int16_t y, unsigned long nowMs);
     void injectEncoderStep(int delta);
+    void injectEncoderButton(bool pressed);
 
     // Coordinate hit-testing helpers
     static int getTargetGridCharFromTouch(int16_t x);
@@ -77,6 +80,8 @@ public:
 
 #if defined(ARDUINO)
     Adafruit_CST8XX &getTouchPanel() { return tsPanel_; }
+    void setPcf8574(PCF8574 *pcf) { pcf8574_ = pcf; }
+    PCF8574* getPcf8574() const { return pcf8574_; }
 #endif
 
 private:
@@ -88,6 +93,8 @@ private:
     static volatile bool s_hasChanged;
 
     Adafruit_CST8XX tsPanel_;
+    PCF8574 *pcf8574_ = nullptr;
+    bool encoderSwPressed_ = false;
 #endif
 
     UiMode uiMode_ = UiMode::Normal;

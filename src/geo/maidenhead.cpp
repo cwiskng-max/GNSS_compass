@@ -4,15 +4,16 @@
 
 bool gridToGeoPoint(const char *grid, double *lat, double *lon) {
     if (!grid || !lat || !lon) return false;
-    if (std::strlen(grid) < 4) return false;
+    size_t len = std::strlen(grid);
+    if (len < 4) return false;
 
     *lon = (toupper((unsigned char)grid[0]) - 'A') * 20.0 + (grid[2] - '0') * 2.0 - 180.0;
     *lat = (toupper((unsigned char)grid[1]) - 'A') * 10.0 + (grid[3] - '0') * 1.0 - 90.0;
 
-    if (grid[4] != '\0' && grid[5] != '\0') {
+    if (len >= 6) {
         *lon += (toupper((unsigned char)grid[4]) - 'A') * (5.0 / 60.0);
         *lat += (toupper((unsigned char)grid[5]) - 'A') * (2.5 / 60.0);
-        if (grid[6] >= '0' && grid[6] <= '9' && grid[7] >= '0' && grid[7] <= '9') {
+        if (len >= 8 && grid[6] >= '0' && grid[6] <= '9' && grid[7] >= '0' && grid[7] <= '9') {
             *lon += (grid[6] - '0') * (0.5 / 60.0) + (0.25 / 60.0);
             *lat += (grid[7] - '0') * (0.25 / 60.0) + (0.125 / 60.0);
         } else {

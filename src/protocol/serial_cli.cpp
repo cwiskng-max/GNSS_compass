@@ -205,7 +205,7 @@ void SerialCli::printGpsStatus(unsigned long nowMs) {
         println("Operation Mode: SIMULATION ACTIVE (Hardware Serial2 suppressed)");
         printFormat("Sim Injections: %u pkts (last %lu ms ago)\r\n",
                     simulator_.getPacketCount(),
-                    nowMs >= simulator_.getLastInjectionMillis() ? (nowMs - simulator_.getLastInjectionMillis()) : 0UL);
+                    (nowMs - simulator_.getLastInjectionMillis()));
     }
 
     if (v == GPS_LINK_DISCONNECTED) {
@@ -323,7 +323,7 @@ void SerialCli::printSimulationStatus(unsigned long nowMs) {
     printFormat("  Sim Packets Recv  : %u\r\n", simulator_.getPacketCount());
     if (simulator_.getPacketCount() > 0) {
         printFormat("  Last Sim Packet   : %lu ms ago\r\n",
-                    nowMs >= simulator_.getLastInjectionMillis() ? (nowMs - simulator_.getLastInjectionMillis()) : 0UL);
+                    (nowMs - simulator_.getLastInjectionMillis()));
     }
 
     const char *qStr = "LOST";

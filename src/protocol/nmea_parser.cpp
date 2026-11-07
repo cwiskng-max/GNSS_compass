@@ -16,25 +16,49 @@ const char* getNthField(const char* str, int n) {
 }
 
 void parseLegacyLatLon(char *buf, double *lat, double *lon, char **rptr) {
+    if (rptr) *rptr = nullptr;
     if (!buf || !lat || !lon) return;
 
-    char *ptr = &buf[0];
+    size_t len = strlen(buf);
+    if (len < 10) return;
+
+    char *ptr = buf;
     int neg = 0;
 
-    if (ptr[0] == '-') { neg = 1; ptr++; }
+    if (*ptr == '-') { neg = 1; ptr++; }
+    if (!isdigit((unsigned char)ptr[0]) || !isdigit((unsigned char)ptr[1])) return;
     *lat = (ptr[0] - '0') * 10.0 + (ptr[1] - '0');
-    *lat += strtod(&ptr[2], &ptr) / 60.0;
-    if (ptr[1] == 'S' || ptr[1] == 's') neg = 1;
+    char *endPtr = nullptr;
+    *lat += strtod(&ptr[2], &endPtr) / 60.0;
+    if (!endPtr || *endPtr != ',' || endPtr[1] == '\0' || endPtr[2] != ',') {
+        *lat = 0.0;
+        return;
+    }
+    if (endPtr[1] == 'S' || endPtr[1] == 's') neg = 1;
     if (neg) { neg = 0; *lat = -*lat; }
 
-    if (ptr[3] == '-') { neg = 1; ptr++; }
-    *lon = (ptr[3] - '0') * 100.0 + (ptr[4] - '0') * 10.0 + (ptr[5] - '0');
-    *lon += strtod(&ptr[6], &ptr) / 60.0;
-    if (ptr[1] == 'W' || ptr[1] == 'w') neg = 1;
+    ptr = &endPtr[3]; // start of longitude
+    if (*ptr == '-') { neg = 1; ptr++; }
+    if (!isdigit((unsigned char)ptr[0]) || !isdigit((unsigned char)ptr[1]) || !isdigit((unsigned char)ptr[2])) {
+        *lat = 0.0;
+        return;
+    }
+    *lon = (ptr[0] - '0') * 100.0 + (ptr[1] - '0') * 10.0 + (ptr[2] - '0');
+    *lon += strtod(&ptr[3], &endPtr) / 60.0;
+    if (!endPtr || *endPtr != ',' || endPtr[1] == '\0') {
+        *lat = 0.0;
+        *lon = 0.0;
+        return;
+    }
+    if (endPtr[1] == 'W' || endPtr[1] == 'w') neg = 1;
     if (neg) { neg = 0; *lon = -*lon; }
 
     if (rptr) {
-        *rptr = &ptr[3];
+        if (endPtr[2] == ',') {
+            *rptr = &endPtr[3];
+        } else {
+            *rptr = &endPtr[2];
+        }
     }
 }
 
@@ -196,7 +220,7 @@ GpsLinkVerdict evaluateGpsStream(
     bool hasHdg,
     BearingQuality quality)
 {
-    if (totalBytes == 0 || (now >= lastByteTime && (now - lastByteTime > 3000))) {
+    if (totalBytes == 0 || (now - lastByteTime > 3000)) {
         return GPS_LINK_DISCONNECTED;
     }
     if (gllCount == 0 && ksxtCount == 0 && hdtCount == 0) {

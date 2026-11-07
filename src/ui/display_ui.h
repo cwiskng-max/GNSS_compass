@@ -43,6 +43,7 @@ public:
     CalModal &getCalModal() { return calModal_; }
 
 #if defined(ARDUINO)
+    PCF8574 &getPcf8574() { return pcf8574_; }
     Arduino_GFX *getGfx() const { return gfx_; }
 #endif
 

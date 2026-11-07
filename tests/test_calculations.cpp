@@ -64,6 +64,13 @@ void test_grid_to_geopoint() {
     ASSERT_NEAR(lat, 40.06875, 1e-5);
     ASSERT_NEAR(lon, -91.954167, 1e-5);
 
+    // Partial/odd-length grids must parse safely without buffer overrun
+    GeoPoint ptSafe;
+    ASSERT_TRUE(gridToGeoPoint("EN40a", ptSafe));
+    ASSERT_NEAR(ptSafe.latitude, 40.5, 1e-5);
+    ASSERT_TRUE(gridToGeoPoint("EN40ab5", ptSafe));
+    ASSERT_NEAR(ptSafe.latitude, 40.0625, 1e-4);
+
     // Coordinates should stay within valid geographic bounds
     ASSERT_TRUE(lat >= -90.0 && lat <= 90.0);
     PASS();
@@ -783,6 +790,17 @@ void test_gps_manager() {
     ASSERT_TRUE(gm.getHours() == 19);
     ASSERT_TRUE(gm.getMinutes() == 30);
 
+    // Malformed/truncated GLL sentences must be rejected safely without out-of-bounds reads
+    gm.feedSentence("$GNGLL,38*12", 3200);
+    gm.feedSentence("$GNGLL,,,,,", 3300);
+    gm.feedSentence("$GNGLL", 3400);
+
+    // Watchdog staleness across 32-bit millis() rollover
+    gm.setHeading(90.0f, BEARING_FIXED, 0xFFFFFFF0UL);
+    ASSERT_TRUE(gm.getBearingQuality() == BEARING_FIXED);
+    gm.checkStaleness(1500UL); // 1500 - 0xFFFFFFF0 = 1516 ms >= 1500 ms -> BEARING_LOST
+    ASSERT_TRUE(gm.getBearingQuality() == BEARING_LOST);
+
     PASS();
 }
 
@@ -935,6 +953,10 @@ void test_input_manager_gestures() {
     im.injectEncoderStep(-1);
     ASSERT_TRUE(im.pollEvent(evt));
     ASSERT_TRUE(evt.type == UserEventType::RotateCounterClockwise);
+
+    im.injectEncoderButton(true);
+    ASSERT_TRUE(im.pollEvent(evt));
+    ASSERT_TRUE(evt.type == UserEventType::EncoderButtonPressed);
 
     // 2. Normal Mode Short Taps
     // Tap on Cal Pill

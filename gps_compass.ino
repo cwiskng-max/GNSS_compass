@@ -35,6 +35,8 @@ BearingFilter &bearingFilter = gpsManager.getBearingFilter();
 // UI & Editing State
 UiMode currentUiMode = UiMode::Normal;
 unsigned long calModalOpenedMillis = 0;
+ModalButtonId pendingModalButtonRelease = ModalButtonId::None;
+unsigned long pendingModalButtonReleaseMillis = 0;
 int cursorColumn = 0;
 bool isEditing = true;
 unsigned long lastEditActivity = 0;
@@ -108,6 +110,7 @@ void setup() {
   Serial.println(F("Commands: 'status' (GPS stream diagnosis), 'test' (visual demo), 'sim' (simulation)"));
 
   displayUi.begin();
+  inputManager.setPcf8574(&displayUi.getPcf8574());
   inputManager.begin();
   calibration.begin();
 
@@ -299,8 +302,8 @@ void handleUserEvent(const UserEvent &event) {
         calibration.snapProposed(bearing, bearingFilter.getRawHeading());
         displayUi.getCalModal().drawProposedOffsetRow(calibration.getProposedOffset());
       }
-      delay(120);
-      displayUi.getCalModal().drawSnapButton(false, hasHeading);
+      pendingModalButtonRelease = ModalButtonId::Snap;
+      pendingModalButtonReleaseMillis = millis() + 120;
       break;
 
     case UserEventType::ResetOffsetTriggered:
@@ -308,16 +311,14 @@ void handleUserEvent(const UserEvent &event) {
       displayUi.getCalModal().drawResetButton(true);
       calibration.resetProposed();
       displayUi.getCalModal().drawProposedOffsetRow(calibration.getProposedOffset());
-      delay(120);
-      displayUi.getCalModal().drawResetButton(false);
+      pendingModalButtonRelease = ModalButtonId::Reset;
+      pendingModalButtonReleaseMillis = millis() + 120;
       break;
 
     case UserEventType::CancelModalTriggered:
       displayUi.getCalModal().drawCancelButton(true);
-      delay(120);
-      currentUiMode = UiMode::Normal;
-      inputManager.setUiMode(UiMode::Normal);
-      redrawMainScreen();
+      pendingModalButtonRelease = ModalButtonId::Cancel;
+      pendingModalButtonReleaseMillis = millis() + 120;
       break;
 
     default:
@@ -341,6 +342,20 @@ void loop() {
   UserEvent event;
   while (inputManager.pollEvent(event)) {
     handleUserEvent(event);
+  }
+
+  // Non-blocking modal button unpress timer
+  if (pendingModalButtonRelease != ModalButtonId::None && millis() >= pendingModalButtonReleaseMillis) {
+    if (pendingModalButtonRelease == ModalButtonId::Snap) {
+      displayUi.getCalModal().drawSnapButton(false, hasHeading);
+    } else if (pendingModalButtonRelease == ModalButtonId::Reset) {
+      displayUi.getCalModal().drawResetButton(false);
+    } else if (pendingModalButtonRelease == ModalButtonId::Cancel) {
+      currentUiMode = UiMode::Normal;
+      inputManager.setUiMode(UiMode::Normal);
+      redrawMainScreen();
+    }
+    pendingModalButtonRelease = ModalButtonId::None;
   }
 
   // 4. Modal timeout check

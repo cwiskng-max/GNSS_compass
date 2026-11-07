@@ -10,7 +10,7 @@ volatile bool InputManager::s_hasChanged = false;
 void IRAM_ATTR InputManager::encoderIrq() {
     s_encState = digitalRead(ENCODER_CLK);
     if (s_encState != s_oldState) {
-        s_counter = (digitalRead(ENCODER_DT) == s_encState) ? +1 : -1;
+        s_counter += (digitalRead(ENCODER_DT) == s_encState) ? +1 : -1;
         s_oldState = s_encState;
         s_hasChanged = true;
     }
@@ -71,6 +71,14 @@ void InputManager::injectEncoderStep(int delta) {
     } else if (delta < 0) {
         UserEvent ev;
         ev.type = UserEventType::RotateCounterClockwise;
+        queueEvent(ev);
+    }
+}
+
+void InputManager::injectEncoderButton(bool pressed) {
+    if (pressed) {
+        UserEvent ev;
+        ev.type = UserEventType::EncoderButtonPressed;
         queueEvent(ev);
     }
 }
@@ -256,18 +264,38 @@ void InputManager::update(unsigned long nowMs) {
         nowMs = millis();
     }
 
+    int delta = 0;
+    noInterrupts();
     if (s_hasChanged) {
-        s_hasChanged = false;
-        int delta = s_counter;
+        delta = s_counter;
         s_counter = 0;
-        if (delta > 0) {
+        s_hasChanged = false;
+    }
+    interrupts();
+
+    while (delta > 0) {
+        UserEvent ev;
+        ev.type = UserEventType::RotateClockwise;
+        queueEvent(ev);
+        delta--;
+    }
+    while (delta < 0) {
+        UserEvent ev;
+        ev.type = UserEventType::RotateCounterClockwise;
+        queueEvent(ev);
+        delta++;
+    }
+
+    if (pcf8574_) {
+        // Encoder switch is active-low (P5 with INPUT_PULLUP)
+        uint8_t swVal = pcf8574_->digitalRead(P5);
+        if (swVal == LOW && !encoderSwPressed_) {
+            encoderSwPressed_ = true;
             UserEvent ev;
-            ev.type = UserEventType::RotateClockwise;
+            ev.type = UserEventType::EncoderButtonPressed;
             queueEvent(ev);
-        } else if (delta < 0) {
-            UserEvent ev;
-            ev.type = UserEventType::RotateCounterClockwise;
-            queueEvent(ev);
+        } else if (swVal == HIGH && encoderSwPressed_) {
+            encoderSwPressed_ = false;
         }
     }
 

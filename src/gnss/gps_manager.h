@@ -124,6 +124,7 @@ private:
     // Line assembly buffer
     static const size_t BUFFER_SIZE = 1024;
     char lineBuffer_[BUFFER_SIZE];
+    char feedBuffer_[BUFFER_SIZE];
     size_t lineIndex_;
 
     // Linked simulator
