@@ -45,3 +45,4 @@ class SelfTest {
 public:
     static void run(SelfTestContext &ctx);
 };
+

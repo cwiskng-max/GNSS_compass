@@ -114,7 +114,7 @@ cp -r gps_compass.ino src build/gps_compass/
 
 *(Optional) Set a custom version identifier displayed on the screen footer:*
 ```bash
-sed -i 's/#define FW_VERSION .*/#define FW_VERSION           "v0.2-custom"/' build/gps_compass/gps_compass.ino
+sed -i 's/#define FW_VERSION .*/#define FW_VERSION           "v0.2-custom"/' build/gps_compass/src/config.h
 ```
 
 Compile and export the binary artifacts:

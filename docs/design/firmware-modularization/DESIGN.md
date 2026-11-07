@@ -98,8 +98,9 @@ GNSS_compass/
 │   │   ├── gps_manager.h / .cpp     # Serial2 UART ingest, staleness watchdog, link state
 │   │   └── simulator.h / .cpp       # Simulation mode state, virtual rover injection
 │   │
-│   ├── system/                      # Persistence & Calibration
-│   │   └── calibration.h / .cpp     # Heading offset math & ESP32 Preferences (NVS)
+│   ├── system/                      # Persistence, Calibration & Self-Test
+│   │   ├── calibration.h / .cpp     # Heading offset math & ESP32 Preferences (NVS)
+│   │   └── self_test.h / .cpp       # 7-stage visual self-test sequence & invariant checks
 │   │
 │   └── ui/                          # Display & Input Subsystems
 │       ├── input_manager.h / .cpp   # Rotary encoder ISR & CST8XX touch gesture decoder
