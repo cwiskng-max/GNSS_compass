@@ -38,10 +38,15 @@ SerialCli::SerialCli(GpsManager &gpsManager, Calibration &calibration, GpsSimula
       calibration_(calibration),
       simulator_(simulator),
       navContextFn_(nullptr),
+      navContext_(nullptr),
       runTestCb_(nullptr),
+      runTestContext_(nullptr),
       stateChangedCb_(nullptr),
+      stateChangedContext_(nullptr),
       roverSimCb_(nullptr),
+      roverSimContext_(nullptr),
       outputFn_(nullptr),
+      outputContext_(nullptr),
       inputIndex_(0)
 {
     inputBuffer_[0] = '\0';
@@ -55,7 +60,7 @@ void SerialCli::begin() {
 void SerialCli::print(const char *str) {
     if (!str) return;
     if (outputFn_) {
-        outputFn_(str);
+        outputFn_(str, outputContext_);
     } else {
 #if defined(ARDUINO)
         Serial.print(str);
@@ -125,7 +130,7 @@ void SerialCli::executeCommand(const char *cmdLine, unsigned long nowMs) {
         simulator_.injectSentence(cmdLine, nullptr, nowMs);
         gpsManager_.feedSentence(cmdLine, nowMs);
         if (stateChangedCb_) {
-            stateChangedCb_();
+            stateChangedCb_(stateChangedContext_);
         }
         return;
     }
@@ -152,7 +157,7 @@ void SerialCli::executeCommand(const char *cmdLine, unsigned long nowMs) {
     if (equalsIgnoreCase(cmdLine, "test") || equalsIgnoreCase(cmdLine, "demo") ||
         equalsIgnoreCase(cmdLine, "t")) {
         if (runTestCb_) {
-            runTestCb_();
+            runTestCb_(runTestContext_);
         } else {
             println("[CLI] Test runner callback not registered.");
         }
@@ -358,7 +363,7 @@ void SerialCli::handleCalCommand(const char *arg) {
 
     if (equalsIgnoreCase(arg, "zero") || equalsIgnoreCase(arg, "reset") || strcmp(arg, "0") == 0) {
         calibration_.reset();
-        if (stateChangedCb_) stateChangedCb_();
+        if (stateChangedCb_) stateChangedCb_(stateChangedContext_);
         println("[CAL] Offset reset to 0.0 deg (Cleared).");
         return;
     }
@@ -369,7 +374,7 @@ void SerialCli::handleCalCommand(const char *arg) {
         } else {
             CliNavContext nav = getNavContext();
             calibration_.snap(nav.targetBearing, gpsManager_.getRawHeading());
-            if (stateChangedCb_) stateChangedCb_();
+            if (stateChangedCb_) stateChangedCb_(stateChangedContext_);
             printFormat("[CAL] Snapped! New offset: %+5.1f deg\r\n", calibration_.getOffset());
         }
         return;
@@ -383,7 +388,7 @@ void SerialCli::handleCalCommand(const char *arg) {
 
     float val = (float)atof(numStr);
     calibration_.setOffset(val);
-    if (stateChangedCb_) stateChangedCb_();
+    if (stateChangedCb_) stateChangedCb_(stateChangedContext_);
     printFormat("[CAL] Offset set to %+5.1f deg\r\n", calibration_.getOffset());
 }
 
@@ -423,7 +428,7 @@ void SerialCli::handleSimCommand(const char *arg, unsigned long nowMs) {
         }
 
         gpsManager_.setHeading(h, q, nowMs);
-        if (stateChangedCb_) stateChangedCb_();
+        if (stateChangedCb_) stateChangedCb_(stateChangedContext_);
 
         const char *qStr = (q == BEARING_FIXED) ? "FIXED" : ((q == BEARING_FLOAT) ? "FLOAT" : "LOST");
         printFormat("[SIM] Heading set to %5.1f deg (Quality: %s)\r\n", h, qStr);
@@ -438,7 +443,7 @@ void SerialCli::handleSimCommand(const char *arg, unsigned long nowMs) {
         if (endPtr && *endPtr != '\0') {
             double lon = strtod(endPtr, nullptr);
             gpsManager_.setLocation(lat, lon, nowMs);
-            if (stateChangedCb_) stateChangedCb_();
+            if (stateChangedCb_) stateChangedCb_(stateChangedContext_);
 
             char gbuf[10];
             geoPointToGrid(gpsManager_.getLocation(), gbuf, 8);
@@ -457,7 +462,7 @@ void SerialCli::handleSimCommand(const char *arg, unsigned long nowMs) {
             GeoPoint pt;
             if (gridToGeoPoint(g, pt)) {
                 gpsManager_.setLocation(pt, nowMs);
-                if (stateChangedCb_) stateChangedCb_();
+                if (stateChangedCb_) stateChangedCb_(stateChangedContext_);
 
                 char gbuf[10];
                 geoPointToGrid(gpsManager_.getLocation(), gbuf, 8);
@@ -487,7 +492,7 @@ void SerialCli::handleSimCommand(const char *arg, unsigned long nowMs) {
             } else if (*p != '\0') {
                 distKm = atof(p);
             }
-            roverSimCb_(ogBuf, distKm);
+            roverSimCb_(ogBuf, distKm, roverSimContext_);
             return;
         }
 
@@ -496,7 +501,7 @@ void SerialCli::handleSimCommand(const char *arg, unsigned long nowMs) {
         double distKm = atof(p);
         GeoPoint simulated = GpsSimulator::calculateRoverDisplacement(origin, distKm, 45.0);
         gpsManager_.setLocation(simulated, nowMs);
-        if (stateChangedCb_) stateChangedCb_();
+        if (stateChangedCb_) stateChangedCb_(stateChangedContext_);
         printFormat("[SIM ROVER] Distance: %5.1f km\r\n", distKm);
         return;
     }
@@ -510,7 +515,7 @@ void SerialCli::handleSimCommand(const char *arg, unsigned long nowMs) {
             int m = atoi(colon + 1);
             if (h >= 0 && h < 24 && m >= 0 && m < 60) {
                 gpsManager_.setTime(h, m);
-                if (stateChangedCb_) stateChangedCb_();
+                if (stateChangedCb_) stateChangedCb_(stateChangedContext_);
                 printFormat("[SIM] UTC time set to %02d:%02dZ\r\n", h, m);
                 return;
             }

@@ -14,10 +14,10 @@
 #endif
 
 // Listener callbacks for GNSS updates
-typedef void (*GpsHeadingCallback)(float headingDeg, BearingQuality quality);
-typedef void (*GpsLocationCallback)(const GeoPoint &pos);
-typedef void (*GpsTimeCallback)(int hours, int minutes);
-typedef void (*GpsSentenceCallback)(const char *sentence);
+typedef void (*GpsHeadingCallback)(float headingDeg, BearingQuality quality, void *context);
+typedef void (*GpsLocationCallback)(const GeoPoint &pos, void *context);
+typedef void (*GpsTimeCallback)(int hours, int minutes, void *context);
+typedef void (*GpsSentenceCallback)(const char *sentence, void *context);
 
 /**
  * @brief Manages the GNSS receiver UART hardware link, streaming sentence assembly,
@@ -89,10 +89,22 @@ public:
     GpsLinkVerdict evaluateStreamHealth(unsigned long nowMs = 0) const;
 
     // Callbacks
-    void setOnHeadingUpdated(GpsHeadingCallback cb) { onHeadingUpdated_ = cb; }
-    void setOnLocationUpdated(GpsLocationCallback cb) { onLocationUpdated_ = cb; }
-    void setOnTimeUpdated(GpsTimeCallback cb) { onTimeUpdated_ = cb; }
-    void setOnRawSentence(GpsSentenceCallback cb) { onRawSentence_ = cb; }
+    void setOnHeadingUpdated(GpsHeadingCallback cb, void *context = nullptr) {
+        onHeadingUpdated_ = cb;
+        headingContext_ = context;
+    }
+    void setOnLocationUpdated(GpsLocationCallback cb, void *context = nullptr) {
+        onLocationUpdated_ = cb;
+        locationContext_ = context;
+    }
+    void setOnTimeUpdated(GpsTimeCallback cb, void *context = nullptr) {
+        onTimeUpdated_ = cb;
+        timeContext_ = context;
+    }
+    void setOnRawSentence(GpsSentenceCallback cb, void *context = nullptr) {
+        onRawSentence_ = cb;
+        sentenceContext_ = context;
+    }
 
 #if defined(ARDUINO)
     HardwareSerial& getSerial() { return serialPort_; }
@@ -130,11 +142,15 @@ private:
     // Linked simulator
     GpsSimulator *simulator_;
 
-    // Callbacks
+    // Callbacks & Contexts
     GpsHeadingCallback onHeadingUpdated_;
+    void *headingContext_;
     GpsLocationCallback onLocationUpdated_;
+    void *locationContext_;
     GpsTimeCallback onTimeUpdated_;
+    void *timeContext_;
     GpsSentenceCallback onRawSentence_;
+    void *sentenceContext_;
 
 #if defined(ARDUINO)
     HardwareSerial serialPort_;

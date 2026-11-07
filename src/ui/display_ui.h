@@ -8,19 +8,39 @@
 #include "cal_modal.h"
 
 #if defined(ARDUINO)
-#include <Wire.h>
 #include <Arduino_GFX_Library.h>
-#include <PCF8574.h>
 #endif
+
+/**
+ * @brief View model bundle representing the full display state of the main operational screen.
+ */
+struct MainScreenState {
+    const char *myGrid = nullptr;
+    const char *targetGrid = nullptr;
+    uint8_t cursorColumn = 0;
+    bool isEditing = false;
+    double targetBearing = 0.0;
+    double revBearing = 0.0;
+    double distanceMeters = 0.0;
+    bool isRoverAlertActive = false;
+    double currentHeading = 0.0;
+    BearingQuality bearingQuality = BearingQuality::None;
+    bool hasHeading = false;
+    float calOffset = 0.0f;
+    bool isCalibrated = false;
+    int hours = 0;
+    int minutes = 0;
+    bool hasTime = false;
+};
 
 class DisplayUi {
 public:
     DisplayUi();
 
     void begin();
-    void initHardware();
     void initBacklight();
     void initLcd();
+    void clearScreen(uint16_t color = 0x0000 /* BLACK */);
 
     // Screen Renderers
     void renderMyGrid(const char *grid);
@@ -34,16 +54,11 @@ public:
     void showFooterText(const char *msg, uint16_t color = 0x7BEF);
     void showStatusCard(const char *msg, uint16_t bgColor, uint16_t fgColor);
 
-    void redrawMainScreen(const char *myGrid, const char *targetGrid, uint8_t cursorCol, bool isEditing,
-                          double targetBearing, double revBearing, double distanceMeters, bool isRoverAlertActive,
-                          double heading, BearingQuality quality, bool hasHeading,
-                          float calOffset, bool isCalibrated,
-                          int hours, int minutes, bool hasTime);
+    void redrawMainScreen(const MainScreenState &state);
 
     CalModal &getCalModal() { return calModal_; }
 
 #if defined(ARDUINO)
-    PCF8574 &getPcf8574() { return pcf8574_; }
     Arduino_GFX *getGfx() const { return gfx_; }
 #endif
 
@@ -59,7 +74,6 @@ private:
     CalModal calModal_;
 
 #if defined(ARDUINO)
-    PCF8574 pcf8574_;
     Arduino_ESP32RGBPanel *bus_ = nullptr;
     Arduino_ST7701_RGBPanel *gfx_ = nullptr;
 #endif

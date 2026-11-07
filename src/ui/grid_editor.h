@@ -16,18 +16,15 @@ public:
     // Direct grid value access
     void setGrid(const char *grid);
     const char* getGrid() const { return targetGrid_; }
-    char* getGridBuffer() { return targetGrid_; }
     char getCharAt(int col) const;
 
     // Cursor position (0 to 5)
     int getCursorColumn() const { return cursorColumn_; }
     void setCursorColumn(int col);
-    int& cursorColumnRef() { return cursorColumn_; }
 
     // Edit mode state
     bool isEditing() const { return isEditing_; }
     void setEditing(bool editing) { isEditing_ = editing; }
-    bool& isEditingRef() { return isEditing_; }
 
     // Activity timestamp tracking
     unsigned long getLastActivity() const { return lastActivity_; }

@@ -60,41 +60,7 @@ void DisplayUi::formatSelfTestFailure(const int *failedTests, int count, char *o
 }
 
 #if defined(ARDUINO)
-DisplayUi::DisplayUi() : pcf8574_(PCF8574_ADDR) {}
-
-void DisplayUi::initHardware() {
-    Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
-
-    pcf8574_.pinMode(P0, OUTPUT);        // tp RST
-    pcf8574_.pinMode(P2, OUTPUT);        // tp INT
-    pcf8574_.pinMode(P3, OUTPUT);        // lcd power
-    pcf8574_.pinMode(P4, OUTPUT);        // lcd reset
-    pcf8574_.pinMode(P5, INPUT_PULLUP);  // encoder SW
-
-    if (!pcf8574_.begin()) {
-        Serial.println(F("Can't init pcf8574"));
-    }
-
-    // LCD reset sequence
-    pcf8574_.digitalWrite(P3, HIGH);
-    delay(100);
-    pcf8574_.digitalWrite(P4, HIGH);
-    delay(100);
-    pcf8574_.digitalWrite(P4, LOW);
-    delay(120);
-    pcf8574_.digitalWrite(P4, HIGH);
-    delay(120);
-
-    // Touchpad reset sequence
-    pcf8574_.digitalWrite(P0, HIGH);
-    delay(100);
-    pcf8574_.digitalWrite(P0, LOW);
-    delay(120);
-    pcf8574_.digitalWrite(P0, HIGH);
-    delay(120);
-    pcf8574_.digitalWrite(P2, HIGH);
-    delay(120);
-}
+DisplayUi::DisplayUi() {}
 
 void DisplayUi::initBacklight() {
     pinMode(BKL_PIN, OUTPUT);
@@ -131,8 +97,6 @@ void DisplayUi::initLcd() {
 }
 
 void DisplayUi::begin() {
-    initHardware();
-    initBacklight();
     initLcd();
 }
 
@@ -296,29 +260,30 @@ void DisplayUi::showStatusCard(const char *msg, uint16_t bgColor, uint16_t fgCol
     gfx_->setTextColor(WHITE, BLACK);
 }
 
-void DisplayUi::redrawMainScreen(const char *myGrid, const char *targetGrid, uint8_t cursorCol, bool isEditing,
-                                 double targetBearing, double revBearing, double distanceMeters, bool isRoverAlertActive,
-                                 double heading, BearingQuality quality, bool hasHeading,
-                                 float calOffset, bool isCalibrated,
-                                 int hours, int minutes, bool hasTime) {
+void DisplayUi::clearScreen(uint16_t color) {
     if (!gfx_) return;
-    gfx_->fillScreen(BLACK);
-    renderMyGrid(myGrid);
-    renderTargetGrid(targetGrid, cursorCol, isEditing);
-    renderCurrentBearing(heading, quality, hasHeading);
-    renderCalibrationPill(calOffset, isCalibrated);
-    renderTargetBearing(targetBearing);
-    renderReverseBearingAndDistance(revBearing, distanceMeters, isRoverAlertActive);
-    renderArrlDistance(myGrid, targetGrid);
-    renderUtcTime(hours, minutes, hasTime);
+    gfx_->fillScreen(color);
+}
+
+void DisplayUi::redrawMainScreen(const MainScreenState &s) {
+    if (!gfx_) return;
+    clearScreen(BLACK);
+    renderMyGrid(s.myGrid);
+    renderTargetGrid(s.targetGrid, s.cursorColumn, s.isEditing);
+    renderCurrentBearing(s.currentHeading, s.bearingQuality, s.hasHeading);
+    renderCalibrationPill(s.calOffset, s.isCalibrated);
+    renderTargetBearing(s.targetBearing);
+    renderReverseBearingAndDistance(s.revBearing, s.distanceMeters, s.isRoverAlertActive);
+    renderArrlDistance(s.myGrid, s.targetGrid);
+    renderUtcTime(s.hours, s.minutes, s.hasTime);
     showFooterText(FW_VERSION, DIM_GRAY_TEXT);
 }
 #else
 DisplayUi::DisplayUi() = default;
 void DisplayUi::begin() {}
-void DisplayUi::initHardware() {}
 void DisplayUi::initBacklight() {}
 void DisplayUi::initLcd() {}
+void DisplayUi::clearScreen(uint16_t) {}
 void DisplayUi::renderMyGrid(const char *) {}
 void DisplayUi::renderTargetGrid(const char *, uint8_t, bool) {}
 void DisplayUi::renderCurrentBearing(double, BearingQuality, bool) {}
@@ -329,6 +294,6 @@ void DisplayUi::renderArrlDistance(const char *, const char *) {}
 void DisplayUi::renderUtcTime(int, int, bool) {}
 void DisplayUi::showFooterText(const char *, uint16_t) {}
 void DisplayUi::showStatusCard(const char *, uint16_t, uint16_t) {}
-void DisplayUi::redrawMainScreen(const char *, const char *, uint8_t, bool, double, double, double, bool, double, BearingQuality, bool, float, bool, int, int, bool) {}
+void DisplayUi::redrawMainScreen(const MainScreenState &) {}
 #endif
 

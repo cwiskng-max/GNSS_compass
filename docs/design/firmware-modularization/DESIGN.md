@@ -107,7 +107,7 @@ GNSS_compass/
 │   └── ui/                          # Display & Input Subsystems
 │       ├── grid_editor.h / .cpp     # Target grid Maidenhead buffer, cursor, and timeout
 │       ├── input_manager.h / .cpp   # Rotary encoder ISR & CST8XX touch gesture decoder
-│       ├── display_ui.h / .cpp      # ST7701 panel driver, PCF8574 reset, main screen
+│       ├── display_ui.h / .cpp      # ST7701 RGB panel driver, screen renderers, and main dashboard
 │       └── cal_modal.h / .cpp       # Calibration modal dialog & button progress rendering
 └── tests/
     ├── test_calculations.cpp        # Host unit test suite (28 automated tests)

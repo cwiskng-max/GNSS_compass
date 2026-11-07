@@ -816,9 +816,10 @@ void test_serial_cli() {
 
     static std::string cliOutput;
     cliOutput.clear();
-    cli.setOutputHandler([](const char *str) {
-        cliOutput += str;
-    });
+    cli.setOutputHandler([](const char *str, void *ctx) {
+        auto *out = static_cast<std::string*>(ctx);
+        if (out) *out += str;
+    }, &cliOutput);
 
     // Test help command
     cli.executeCommand("help");

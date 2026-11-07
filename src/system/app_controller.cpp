@@ -6,8 +6,6 @@
 #include <Arduino.h>
 #endif
 
-static AppController *s_appInstance = nullptr;
-
 AppController::AppController(Board &board,
                              DisplayUi &displayUi,
                              InputManager &inputManager,
@@ -39,7 +37,6 @@ AppController::AppController(Board &board,
       pendingModalButtonReleaseMillis_(0)
 {
     std::strcpy(myGrid_, "JJ00AA00");
-    s_appInstance = this;
 }
 
 void AppController::setTargetGrid(const char *grid) {
@@ -96,32 +93,32 @@ void AppController::updateBearings() {
 
 void AppController::redrawMainScreen() {
     BearingFilter &bf = gpsManager_.getBearingFilter();
-    displayUi_.redrawMainScreen(myGrid_, gridEditor_.getGrid(), gridEditor_.getCursorColumn(), gridEditor_.isEditing(),
-                               bearing_, revbearing_, distance_, isRoverAlertActive_,
-                               bf.getCalibratedHeading(calibration_.getOffset()),
-                               currentBearingQuality_, hasHeading_,
-                               calibration_.getOffset(), calibration_.isCalibrated(),
-                               hours_, minutes_, hasTime_);
+    MainScreenState s;
+    s.myGrid = myGrid_;
+    s.targetGrid = gridEditor_.getGrid();
+    s.cursorColumn = gridEditor_.getCursorColumn();
+    s.isEditing = gridEditor_.isEditing();
+    s.targetBearing = bearing_;
+    s.revBearing = revbearing_;
+    s.distanceMeters = distance_;
+    s.isRoverAlertActive = isRoverAlertActive_;
+    s.currentHeading = bf.getCalibratedHeading(calibration_.getOffset());
+    s.bearingQuality = currentBearingQuality_;
+    s.hasHeading = hasHeading_;
+    s.calOffset = calibration_.getOffset();
+    s.isCalibrated = calibration_.isCalibrated();
+    s.hours = hours_;
+    s.minutes = minutes_;
+    s.hasTime = hasTime_;
+
+    displayUi_.redrawMainScreen(s);
 }
 
 void AppController::runVisualSelfTest() {
-    SelfTestContext ctx{
-        displayUi_, gpsManager_, calibration_, serialCli_, inputManager_,
-        gridEditor_.getGridBuffer(), myGrid_, currentPosition_, targetPosition_,
-        distance_, bearing_, revbearing_, hasHeading_, currentBearingQuality_,
-        lastHeadingUpdate_, isRoverAlertActive_,
-        gridEditor_.isEditingRef(), gridEditor_.cursorColumnRef(),
-        currentUiMode_, hours_, minutes_, hasTime_,
-        []() { if (s_appInstance) s_appInstance->redrawMainScreen(); },
-        []() { if (s_appInstance) s_appInstance->updateBearings(); },
-        []() { if (s_appInstance) s_appInstance->drawCurrentBearing(); }
-    };
-    SelfTest::run(ctx);
+    SelfTest::run(*this);
 }
 
 void AppController::begin() {
-    s_appInstance = this;
-
     board_.init();
     displayUi_.begin();
 
@@ -138,97 +135,104 @@ void AppController::begin() {
     gpsManager_.begin(GPS_BAUD);
 #endif
 
-    // Wire GPS Manager event callbacks
-    gpsManager_.setOnHeadingUpdated([](float /* heading */, BearingQuality quality) {
-        if (!s_appInstance) return;
-        s_appInstance->hasHeading_ = s_appInstance->gpsManager_.hasHeading();
-        s_appInstance->currentBearingQuality_ = quality;
-        s_appInstance->lastHeadingUpdate_ = s_appInstance->gpsManager_.getLastHeadingUpdate();
-        s_appInstance->drawCurrentBearing();
-    });
+    // Wire GPS Manager event callbacks (passing this as context)
+    gpsManager_.setOnHeadingUpdated([](float /* heading */, BearingQuality quality, void *ctx) {
+        auto *self = static_cast<AppController*>(ctx);
+        if (!self) return;
+        self->hasHeading_ = self->gpsManager_.hasHeading();
+        self->currentBearingQuality_ = quality;
+        self->lastHeadingUpdate_ = self->gpsManager_.getLastHeadingUpdate();
+        self->drawCurrentBearing();
+    }, this);
 
-    gpsManager_.setOnLocationUpdated([](const GeoPoint &pos) {
-        if (!s_appInstance) return;
-        s_appInstance->setCurrentPosition(pos);
-    });
+    gpsManager_.setOnLocationUpdated([](const GeoPoint &pos, void *ctx) {
+        auto *self = static_cast<AppController*>(ctx);
+        if (!self) return;
+        self->setCurrentPosition(pos);
+    }, this);
 
-    gpsManager_.setOnTimeUpdated([](int h, int m) {
-        if (!s_appInstance) return;
-        s_appInstance->hasTime_ = true;
-        s_appInstance->hours_ = h;
-        s_appInstance->minutes_ = m;
-        if (s_appInstance->currentUiMode_ != UiMode::Calibrating) {
-            s_appInstance->displayUi_.renderUtcTime(h, m, true);
+    gpsManager_.setOnTimeUpdated([](int h, int m, void *ctx) {
+        auto *self = static_cast<AppController*>(ctx);
+        if (!self) return;
+        self->hasTime_ = true;
+        self->hours_ = h;
+        self->minutes_ = m;
+        if (self->currentUiMode_ != UiMode::Calibrating) {
+            self->displayUi_.renderUtcTime(h, m, true);
         }
-    });
+    }, this);
 
-    // Wire Serial CLI callbacks
+    // Wire Serial CLI callbacks (passing this as context)
     serialCli_.begin();
-    serialCli_.setNavigationContextProvider([]() -> CliNavContext {
-        CliNavContext ctx;
-        if (s_appInstance) {
-            ctx.targetBearing = s_appInstance->bearing_;
-            ctx.isRoverAlertActive = s_appInstance->isRoverAlertActive_;
-            ctx.roverDistanceMeters = s_appInstance->distance_;
+    serialCli_.setNavigationContextProvider([](void *ctx) -> CliNavContext {
+        CliNavContext nctx;
+        auto *self = static_cast<AppController*>(ctx);
+        if (self) {
+            nctx.targetBearing = self->bearing_;
+            nctx.isRoverAlertActive = self->isRoverAlertActive_;
+            nctx.roverDistanceMeters = self->distance_;
         }
-        return ctx;
-    });
+        return nctx;
+    }, this);
 
-    serialCli_.setRunTestCallback([]() {
-        if (s_appInstance) s_appInstance->runVisualSelfTest();
-    });
+    serialCli_.setRunTestCallback([](void *ctx) {
+        auto *self = static_cast<AppController*>(ctx);
+        if (self) self->runVisualSelfTest();
+    }, this);
 
-    serialCli_.setStateChangedCallback([]() {
-        if (!s_appInstance) return;
-        s_appInstance->hasHeading_ = s_appInstance->gpsManager_.hasHeading();
-        s_appInstance->currentBearingQuality_ = s_appInstance->gpsManager_.getBearingQuality();
-        s_appInstance->lastHeadingUpdate_ = s_appInstance->gpsManager_.getLastHeadingUpdate();
-        if (s_appInstance->gpsManager_.hasLocation()) {
-            s_appInstance->hasLocation_ = true;
-            s_appInstance->currentPosition_ = s_appInstance->gpsManager_.getLocation();
-            geoPointToGrid(s_appInstance->currentPosition_, s_appInstance->myGrid_);
-            if (s_appInstance->currentUiMode_ != UiMode::Calibrating) {
-                s_appInstance->displayUi_.renderMyGrid(s_appInstance->myGrid_);
+    serialCli_.setStateChangedCallback([](void *ctx) {
+        auto *self = static_cast<AppController*>(ctx);
+        if (!self) return;
+        self->hasHeading_ = self->gpsManager_.hasHeading();
+        self->currentBearingQuality_ = self->gpsManager_.getBearingQuality();
+        self->lastHeadingUpdate_ = self->gpsManager_.getLastHeadingUpdate();
+        if (self->gpsManager_.hasLocation()) {
+            self->hasLocation_ = true;
+            self->currentPosition_ = self->gpsManager_.getLocation();
+            geoPointToGrid(self->currentPosition_, self->myGrid_);
+            if (self->currentUiMode_ != UiMode::Calibrating) {
+                self->displayUi_.renderMyGrid(self->myGrid_);
             }
         }
-        if (s_appInstance->gpsManager_.hasTime()) {
-            s_appInstance->hasTime_ = true;
-            s_appInstance->hours_ = s_appInstance->gpsManager_.getHours();
-            s_appInstance->minutes_ = s_appInstance->gpsManager_.getMinutes();
-            if (s_appInstance->currentUiMode_ != UiMode::Calibrating) {
-                s_appInstance->displayUi_.renderUtcTime(s_appInstance->hours_, s_appInstance->minutes_, true);
+        if (self->gpsManager_.hasTime()) {
+            self->hasTime_ = true;
+            self->hours_ = self->gpsManager_.getHours();
+            self->minutes_ = self->gpsManager_.getMinutes();
+            if (self->currentUiMode_ != UiMode::Calibrating) {
+                self->displayUi_.renderUtcTime(self->hours_, self->minutes_, true);
             }
         }
-        s_appInstance->updateBearings();
-        s_appInstance->drawCurrentBearing();
-    });
+        self->updateBearings();
+        self->drawCurrentBearing();
+    }, this);
 
-    serialCli_.setRoverSimCallback([](const char *orig_grid, double dist_km) {
-        if (!s_appInstance) return;
-        GeoPoint originPoint = s_appInstance->currentPosition_;
+    serialCli_.setRoverSimCallback([](const char *orig_grid, double dist_km, void *ctx) {
+        auto *self = static_cast<AppController*>(ctx);
+        if (!self) return;
+        GeoPoint originPoint = self->currentPosition_;
         if (orig_grid && strlen(orig_grid) >= 4) {
             gridToGeoPoint(orig_grid, originPoint);
-            s_appInstance->gridEditor_.setGrid(orig_grid);
+            self->gridEditor_.setGrid(orig_grid);
         }
-        s_appInstance->targetPosition_ = originPoint;
-        s_appInstance->isRoverAlertActive_ = true;
+        self->targetPosition_ = originPoint;
+        self->isRoverAlertActive_ = true;
 
         GeoPoint simulatedPoint = GpsSimulator::calculateRoverDisplacement(originPoint, dist_km, 45.0);
-        s_appInstance->gpsManager_.setLocation(simulatedPoint);
-        s_appInstance->displayUi_.renderTargetGrid(s_appInstance->gridEditor_.getGrid(),
-                                                  s_appInstance->gridEditor_.getCursorColumn(),
-                                                  s_appInstance->gridEditor_.isEditing());
-        s_appInstance->updateBearings();
+        self->gpsManager_.setLocation(simulatedPoint);
+        self->displayUi_.renderTargetGrid(self->gridEditor_.getGrid(),
+                                          self->gridEditor_.getCursorColumn(),
+                                          self->gridEditor_.isEditing());
+        self->updateBearings();
 
 #if defined(ARDUINO)
-        int rdist = (int)std::floor(s_appInstance->distance_ / 1000.0);
+        int rdist = (int)std::floor(self->distance_ / 1000.0);
         Serial.printf("[SIM ROVER] Origin: %s (%.5f, %.5f) | Current: %s (%.5f, %.5f)\r\n",
-                      s_appInstance->gridEditor_.getGrid(), s_appInstance->targetPosition_.latitude, s_appInstance->targetPosition_.longitude,
-                      s_appInstance->myGrid_, s_appInstance->currentPosition_.latitude, s_appInstance->currentPosition_.longitude);
+                      self->gridEditor_.getGrid(), self->targetPosition_.latitude, self->targetPosition_.longitude,
+                      self->myGrid_, self->currentPosition_.latitude, self->currentPosition_.longitude);
         Serial.printf("[SIM ROVER] Distance: %5.1f km (%d km) | Alert: %s\r\n",
-                      s_appInstance->distance_ / 1000.0, rdist, (rdist < 16) ? "ACTIVE (RED on WHITE)" : "CLEAR (>= 16 km)");
+                      self->distance_ / 1000.0, rdist, (rdist < 16) ? "ACTIVE (RED on WHITE)" : "CLEAR (>= 16 km)");
 #endif
-    });
+    }, this);
 
     geoPointToGrid(currentPosition_, myGrid_);
     displayUi_.renderMyGrid(myGrid_);
@@ -294,8 +298,7 @@ void AppController::handleUserEvent(const UserEvent &event, unsigned long nowMs)
             break;
 
         case UserEventType::TouchLocalGrid:
-            for (int i = 0; i < 6; i++) gridEditor_.getGridBuffer()[i] = myGrid_[i];
-            gridEditor_.getGridBuffer()[6] = '\0';
+            gridEditor_.setGrid(myGrid_);
             targetPosition_ = currentPosition_;
             isRoverAlertActive_ = true;
             displayUi_.renderTargetGrid(gridEditor_.getGrid(), gridEditor_.getCursorColumn(), gridEditor_.isEditing());

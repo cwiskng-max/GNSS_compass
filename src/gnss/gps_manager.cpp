@@ -20,9 +20,13 @@ GpsManager::GpsManager()
       lineIndex_(0),
       simulator_(nullptr),
       onHeadingUpdated_(nullptr),
+      headingContext_(nullptr),
       onLocationUpdated_(nullptr),
+      locationContext_(nullptr),
       onTimeUpdated_(nullptr),
-      onRawSentence_(nullptr)
+      timeContext_(nullptr),
+      onRawSentence_(nullptr),
+      sentenceContext_(nullptr)
 #if defined(ARDUINO)
       , serialPort_(2)
 #endif
@@ -43,7 +47,7 @@ void GpsManager::checkStaleness(unsigned long nowMs) {
         if ((nowMs - lastHeadingUpdate_) >= HEADING_TIMEOUT_MS) {
             bearingQuality_ = BEARING_LOST;
             if (onHeadingUpdated_) {
-                onHeadingUpdated_(getHeading(), BEARING_LOST);
+                onHeadingUpdated_(getHeading(), BEARING_LOST, headingContext_);
             }
         }
     }
@@ -82,7 +86,7 @@ void GpsManager::feedByte(uint8_t byte, unsigned long nowMs) {
         if (lineIndex_ > 0) {
             lineBuffer_[lineIndex_] = '\0';
             if (onRawSentence_) {
-                onRawSentence_(lineBuffer_);
+                onRawSentence_(lineBuffer_, sentenceContext_);
             }
             processSentence(lineBuffer_, nowMs);
             lineIndex_ = 0;
@@ -118,7 +122,7 @@ void GpsManager::feedSentence(const char *sentence, unsigned long nowMs) {
     }
 
     if (onRawSentence_) {
-        onRawSentence_(feedBuffer_);
+        onRawSentence_(feedBuffer_, sentenceContext_);
     }
     processSentence(feedBuffer_, nowMs);
 }
@@ -126,7 +130,7 @@ void GpsManager::feedSentence(const char *sentence, unsigned long nowMs) {
 void GpsManager::setLocation(const GeoPoint &point, unsigned long /* nowMs */) {
     location_ = point;
     if (onLocationUpdated_) {
-        onLocationUpdated_(location_);
+        onLocationUpdated_(location_, locationContext_);
     }
 }
 
@@ -139,7 +143,7 @@ void GpsManager::setTime(int hours, int minutes) {
     hours_ = hours;
     minutes_ = minutes;
     if (onTimeUpdated_) {
-        onTimeUpdated_(hours_, minutes_);
+        onTimeUpdated_(hours_, minutes_, timeContext_);
     }
 }
 
@@ -149,7 +153,7 @@ void GpsManager::setHeading(float headingDeg, BearingQuality quality, unsigned l
     bearingQuality_ = quality;
     bearingFilter_.seed(headingDeg);
     if (onHeadingUpdated_) {
-        onHeadingUpdated_(headingDeg, quality);
+        onHeadingUpdated_(headingDeg, quality, headingContext_);
     }
 }
 
@@ -182,7 +186,7 @@ void GpsManager::processSentence(char *sentence, unsigned long nowMs) {
         bearingFilter_.push(newHeading);
 
         if (onHeadingUpdated_) {
-            onHeadingUpdated_(newHeading, newQuality);
+            onHeadingUpdated_(newHeading, newQuality, headingContext_);
         }
     } else if (strncmp(sentence, "$KSXT", 5) == 0 ||
                strncmp(sentence, "$GNTHS", 6) == 0 || strncmp(sentence, "$GPTHS", 6) == 0 ||
@@ -197,7 +201,7 @@ void GpsManager::processSentence(char *sentence, unsigned long nowMs) {
         if (hasHeading_ && bearingQuality_ != BEARING_LOST) {
             bearingQuality_ = BEARING_LOST;
             if (onHeadingUpdated_) {
-                onHeadingUpdated_(getHeading(), BEARING_LOST);
+                onHeadingUpdated_(getHeading(), BEARING_LOST, headingContext_);
             }
         }
     }

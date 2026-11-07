@@ -53,6 +53,7 @@ public:
     void setCurrentPosition(const GeoPoint &pos);
 
     const GeoPoint& getTargetPosition() const { return targetPosition_; }
+    void setTargetPosition(const GeoPoint &pos) { targetPosition_ = pos; }
     double getDistance() const { return distance_; }
     double getBearing() const { return bearing_; }
     double getReverseBearing() const { return revbearing_; }
@@ -60,6 +61,11 @@ public:
     bool hasHeading() const { return hasHeading_; }
     BearingQuality getBearingQuality() const { return currentBearingQuality_; }
     unsigned long getLastHeadingUpdate() const { return lastHeadingUpdate_; }
+    void setHeadingState(bool hasHeading, BearingQuality quality, unsigned long lastUpdate = 0) {
+        hasHeading_ = hasHeading;
+        currentBearingQuality_ = quality;
+        if (lastUpdate > 0) lastHeadingUpdate_ = lastUpdate;
+    }
 
     bool isRoverAlertActive() const { return isRoverAlertActive_; }
     void setRoverAlertActive(bool active) { isRoverAlertActive_ = active; }
