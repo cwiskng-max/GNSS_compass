@@ -14,6 +14,9 @@
 #include "../src/ui/input_manager.h"
 #include "../src/ui/cal_modal.h"
 #include "../src/ui/display_ui.h"
+#include "../src/ui/grid_editor.h"
+#include "../src/system/board.h"
+#include "../src/system/app_controller.h"
 
 int tests_run = 0;
 int tests_passed = 0;
@@ -1131,6 +1134,101 @@ void test_self_test_failure_formatting() {
     PASS();
 }
 
+void test_grid_editor() {
+    TEST("GridEditor character rolling, cursor, and inactivity timeout");
+    GridEditor ge;
+    ASSERT_STR_EQ(ge.getGrid(), "ZA00AA");
+    ASSERT_TRUE(ge.isEditing());
+    ASSERT_TRUE(ge.getCursorColumn() == 0);
+
+    // Roll character up ('Z' -> 'A')
+    ge.rollChar(+1, 1000);
+    ASSERT_STR_EQ(ge.getGrid(), "AA00AA");
+
+    // Roll character down ('A' -> 'Z')
+    ge.rollChar(-1, 1100);
+    ASSERT_STR_EQ(ge.getGrid(), "ZA00AA");
+
+    // Select character column 2 ('0')
+    ge.selectCharacter(2, 1200);
+    ASSERT_TRUE(ge.getCursorColumn() == 2);
+    ge.rollChar(+1, 1300); // '0' -> '1'
+    ASSERT_STR_EQ(ge.getGrid(), "ZA10AA");
+
+    // Clamping cursor column
+    ge.setCursorColumn(10);
+    ASSERT_TRUE(ge.getCursorColumn() == 5);
+    ge.setCursorColumn(-5);
+    ASSERT_TRUE(ge.getCursorColumn() == 0);
+
+    // Inactivity timeout: 5000 ms
+    ASSERT_TRUE(!ge.checkTimeout(1300 + 4999));
+    ASSERT_TRUE(ge.isEditing());
+    ASSERT_TRUE(ge.checkTimeout(1300 + 5001));
+    ASSERT_TRUE(!ge.isEditing());
+
+    PASS();
+}
+
+void test_app_controller() {
+    TEST("AppController state coordination, geodesy sync, and event handling");
+    Board board;
+    DisplayUi displayUi;
+    InputManager inputManager;
+    GpsManager gpsManager;
+    Calibration calibration;
+    GpsSimulator gpsSimulator;
+    SerialCli serialCli(gpsManager, calibration, gpsSimulator);
+
+    AppController app(board, displayUi, inputManager, gpsManager, calibration, gpsSimulator, serialCli);
+    app.begin();
+
+    // Initial state
+    ASSERT_STR_EQ(app.getMyGrid(), "JJ00AA00");
+    ASSERT_STR_EQ(app.getTargetGrid(), "ZA00AA");
+    ASSERT_TRUE(app.getUiMode() == UiMode::Normal);
+
+    // GPS Location update through GPS Manager
+    gpsManager.setLocation(38.35412, -119.45821, 1000);
+    ASSERT_TRUE(app.getCurrentPosition().latitude == 38.35412);
+    ASSERT_STR_EQ(app.getMyGrid(), "DM08GI54");
+    ASSERT_TRUE(app.getDistance() > 10000000.0); // JJ/ZA distance is > 10,000 km
+
+    // Event: Turn knob clockwise in edit mode (col 0: 'Z' -> 'A')
+    UserEvent evRot;
+    evRot.type = UserEventType::RotateClockwise;
+    app.handleUserEvent(evRot, 2000);
+    ASSERT_STR_EQ(app.getTargetGrid(), "AA00AA");
+
+    // Event: Tap Calibration Pill -> Transitions to Calibrating mode
+    UserEvent evPill;
+    evPill.type = UserEventType::TouchCalibrationPill;
+    app.handleUserEvent(evPill, 2100);
+    ASSERT_TRUE(app.getUiMode() == UiMode::Calibrating);
+
+    // Event: Turn knob clockwise in calibrating mode -> Nudges proposed offset +0.1 deg
+    float initProposed = calibration.getProposedOffset();
+    app.handleUserEvent(evRot, 2200);
+    ASSERT_NEAR(calibration.getProposedOffset(), initProposed + 0.1f, 1e-4);
+
+    // Event: Commit Save Button -> Persists offset and returns to Normal mode
+    UserEvent evSave;
+    evSave.type = UserEventType::SaveButtonCommitted;
+    app.handleUserEvent(evSave, 2300);
+    ASSERT_TRUE(app.getUiMode() == UiMode::Normal);
+    ASSERT_NEAR(calibration.getOffset(), initProposed + 0.1f, 1e-4);
+
+    // Event: Tap Local Grid -> Copies local station grid and sets Rover Alert active
+    UserEvent evLoc;
+    evLoc.type = UserEventType::TouchLocalGrid;
+    app.handleUserEvent(evLoc, 2400);
+    ASSERT_STR_EQ(app.getTargetGrid(), "DM08GI");
+    ASSERT_TRUE(app.isRoverAlertActive());
+    ASSERT_TRUE(app.getDistance() < 16000.0); // Inside 16 km rover proximity alert threshold
+
+    PASS();
+}
+
 int main() {
     std::cout << "========================================" << std::endl;
     std::cout << "  GNSS Compass Unit Test Suite" << std::endl;
@@ -1162,6 +1260,8 @@ int main() {
     test_input_manager_gestures();
     test_ui_formatters_and_modal_geometry();
     test_self_test_failure_formatting();
+    test_grid_editor();
+    test_app_controller();
 
     std::cout << "========================================" << std::endl;
     std::cout << "  All " << tests_passed << " / " << tests_run << " tests PASSED successfully!" << std::endl;

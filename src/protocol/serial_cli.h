@@ -14,6 +14,16 @@ typedef void (*CliStateChangedCallback)();
 typedef void (*CliRoverSimCallback)(const char *originGrid, double distKm);
 
 /**
+ * @brief Navigation domain context query for live CLI reports and calibration snap.
+ */
+struct CliNavContext {
+    double targetBearing = 0.0;
+    bool isRoverAlertActive = false;
+    double roverDistanceMeters = 0.0;
+};
+typedef CliNavContext (*CliNavContextProviderFn)();
+
+/**
  * @brief Host USB Serial CLI Parser for GNSS diagnosis, antenna calibration,
  *        simulation injection, and visual self-test triggering.
  */
@@ -36,18 +46,21 @@ public:
     void setRoverSimCallback(CliRoverSimCallback cb) { roverSimCb_ = cb; }
     void setOutputHandler(CliCommandOutputFn fn) { outputFn_ = fn; }
 
-    // External operational context
-    void setTargetBearing(double bearingDeg) { targetBearing_ = bearingDeg; }
-    double getTargetBearing() const { return targetBearing_; }
+    // Navigation domain context provider (queries live values on-demand)
+    void setNavigationContextProvider(CliNavContextProviderFn fn) { navContextFn_ = fn; }
+    CliNavContext getNavContext() const {
+        return navContextFn_ ? navContextFn_() : fallbackNavContext_;
+    }
 
-    void setTargetGrid(const char *grid);
-    const char* getTargetGrid() const { return targetGrid_; }
+    // Direct context overrides (useful for standalone unit tests)
+    void setTargetBearing(double bearingDeg) { fallbackNavContext_.targetBearing = bearingDeg; }
+    double getTargetBearing() const { return getNavContext().targetBearing; }
 
-    void setRoverAlertActive(bool active) { isRoverAlertActive_ = active; }
-    bool isRoverAlertActive() const { return isRoverAlertActive_; }
+    void setRoverAlertActive(bool active) { fallbackNavContext_.isRoverAlertActive = active; }
+    bool isRoverAlertActive() const { return getNavContext().isRoverAlertActive; }
 
-    void setRoverDistance(double distMeters) { roverDistanceMeters_ = distMeters; }
-    double getRoverDistance() const { return roverDistanceMeters_; }
+    void setRoverDistance(double distMeters) { fallbackNavContext_.roverDistanceMeters = distMeters; }
+    double getRoverDistance() const { return getNavContext().roverDistanceMeters; }
 
     // Formatted diagnostic reports
     void printHelp();
@@ -67,10 +80,8 @@ private:
     Calibration &calibration_;
     GpsSimulator &simulator_;
 
-    double targetBearing_;
-    char targetGrid_[10];
-    bool isRoverAlertActive_;
-    double roverDistanceMeters_;
+    CliNavContextProviderFn navContextFn_;
+    CliNavContext fallbackNavContext_;
 
     CliRunTestCallback runTestCb_;
     CliStateChangedCallback stateChangedCb_;

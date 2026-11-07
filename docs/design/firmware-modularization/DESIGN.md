@@ -1,6 +1,6 @@
 # Firmware Architecture & Modularization Specification
 
-**Status:** Proposed  
+**Status:** Implemented  
 **Author:** Antigravity / Engineering Team  
 **Reviewer:** Gary / Core Firmware Team  
 **Target Release:** v0.4-refactor  
@@ -81,7 +81,7 @@ All subsystem implementations move into `src/`. Headers expose clean interfaces,
 
 ```text
 GNSS_compass/
-├── gps_compass.ino                  # Thin application orchestrator (~150 lines)
+├── gps_compass.ino                  # Thin application orchestrator (~36 lines)
 ├── src/
 │   ├── types.h                      # Common primitives: GeoPoint, BearingQuality, GpsLinkVerdict
 │   ├── config.h                     # Pinouts, layout dimensions, UI colors, timeouts
@@ -98,16 +98,19 @@ GNSS_compass/
 │   │   ├── gps_manager.h / .cpp     # Serial2 UART ingest, staleness watchdog, link state
 │   │   └── simulator.h / .cpp       # Simulation mode state, virtual rover injection
 │   │
-│   ├── system/                      # Persistence, Calibration & Self-Test
+│   ├── system/                      # Persistence, Calibration, Board & Coordinator
+│   │   ├── board.h / .cpp           # Hardware I2C bus, PCF8574 expander, and display reset lines
 │   │   ├── calibration.h / .cpp     # Heading offset math & ESP32 Preferences (NVS)
-│   │   └── self_test.h / .cpp       # 7-stage visual self-test sequence & invariant checks
+│   │   ├── self_test.h / .cpp       # 7-stage visual self-test sequence & invariant checks
+│   │   └── app_controller.h / .cpp  # Top-level state coordinator, event wiring, and geodesy sync
 │   │
 │   └── ui/                          # Display & Input Subsystems
+│       ├── grid_editor.h / .cpp     # Target grid Maidenhead buffer, cursor, and timeout
 │       ├── input_manager.h / .cpp   # Rotary encoder ISR & CST8XX touch gesture decoder
 │       ├── display_ui.h / .cpp      # ST7701 panel driver, PCF8574 reset, main screen
 │       └── cal_modal.h / .cpp       # Calibration modal dialog & button progress rendering
 └── tests/
-    ├── test_calculations.cpp        # Host unit test suite (directly includes src/geo & src/protocol)
+    ├── test_calculations.cpp        # Host unit test suite (28 automated tests)
     └── run_tests.sh                 # Clean native g++ compilation script
 ```
 
@@ -224,47 +227,39 @@ enum class UserEvent {
 
 ## 6. Simplified Orchestrator & Loop Model
 
-The top-level `gps_compass.ino` is reduced to an initialization routine and a cooperative non-blocking loop without nested infinite `while (1)` blocks:
+The top-level `gps_compass.ino` is reduced to a concise 36-line bootstrapper that configures USB serial and delegates execution to `AppController`:
 
 ```cpp
 #include "src/config.h"
-#include "src/types.h"
+#include "src/system/board.h"
+#include "src/ui/display_ui.h"
+#include "src/ui/input_manager.h"
 #include "src/gnss/gps_manager.h"
 #include "src/system/calibration.h"
+#include "src/gnss/simulator.h"
 #include "src/protocol/serial_cli.h"
-#include "src/ui/input_manager.h"
-#include "src/ui/display_ui.h"
+#include "src/system/app_controller.h"
 
+Board         board;
+DisplayUi     displayUi;
+InputManager  inputManager;
 GpsManager    gpsManager;
 Calibration   calibration;
-SerialCli     serialCli;
-InputManager  inputManager;
-DisplayUi     displayUi;
+GpsSimulator  gpsSimulator;
+SerialCli     serialCli(gpsManager, calibration, gpsSimulator);
+AppController app(board, displayUi, inputManager, gpsManager, calibration, gpsSimulator, serialCli);
 
 void setup() {
-    Serial.begin(115200);
-    configHardwarePins();
-    
-    displayUi.init();
-    calibration.begin();
-    gpsManager.begin(GPS_BAUD);
-    inputManager.begin();
-    
-    displayUi.drawDashboard();
+  Serial.begin(115200);
+  Serial.print(F("GNSS Compass Firmware "));
+  Serial.println(FW_VERSION);
+  Serial.println(F("Commands: 'status' (GPS stream diagnosis), 'test' (visual demo), 'sim' (simulation)"));
+
+  app.begin();
 }
 
 void loop() {
-    // 1. Ingest GPS UART bytes & check staleness timeouts
-    gpsManager.update();
-
-    // 2. Process USB host commands (SIM, CAL, GPS, TEST)
-    serialCli.update();
-
-    // 3. Handle physical input (rotary knob & touchscreen)
-    inputManager.update();
-
-    // 4. Update display if state changed or 1Hz time elapsed
-    displayUi.update();
+  app.update();
 }
 ```
 

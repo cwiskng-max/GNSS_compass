@@ -49,6 +49,8 @@ The test suite runs automatically on every push and pull request in [`.github/wo
 24. **UI Formatters & Modal Presentation (`src/ui/cal_modal.*`, `src/ui/display_ui.*`):** Validates string formatters across all operational ranges (target bearing, raw GNSS heading, current/proposed offset, UTC timestamp, reverse bearing/distance, ARRL contest distance, heading string, calibration pill).
 25. **Self-Test Failure Formatter (`src/ui/display_ui.*`):** Validates formatting of single-test and multi-test on-screen failure codes (e.g. `FAILED: TEST #3`, `FAILED: #1, #2, #7`), buffer truncation bounds safety, and pass message mapping.
 26. **Automated Mathematical Invariant Coverage:** Validates all geodetic projections, NMEA decoders, FreeRTOS queue bounds, and vector heading operations.
+27. **Grid Editor State (`src/ui/grid_editor.*`):** Tests target grid character rolling (INCG/DECG), cursor selection bounds clamping, and 5-second inactivity edit mode timeout.
+28. **App Controller Coordination (`src/system/app_controller.*`):** Validates whole-application state synchronization, GPS position ingest to Maidenhead grid projection, user interaction events (encoder rotation, calibration modal lifecycle, local station grid sync, and rover alert activation).
 
 ---
 

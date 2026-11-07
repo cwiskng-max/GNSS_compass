@@ -37,28 +37,19 @@ SerialCli::SerialCli(GpsManager &gpsManager, Calibration &calibration, GpsSimula
     : gpsManager_(gpsManager),
       calibration_(calibration),
       simulator_(simulator),
-      targetBearing_(0.0),
-      isRoverAlertActive_(false),
-      roverDistanceMeters_(0.0),
+      navContextFn_(nullptr),
       runTestCb_(nullptr),
       stateChangedCb_(nullptr),
       roverSimCb_(nullptr),
       outputFn_(nullptr),
       inputIndex_(0)
 {
-    strcpy(targetGrid_, "ZA00AA");
     inputBuffer_[0] = '\0';
 }
 
 void SerialCli::begin() {
     inputIndex_ = 0;
     inputBuffer_[0] = '\0';
-}
-
-void SerialCli::setTargetGrid(const char *grid) {
-    if (!grid) return;
-    strncpy(targetGrid_, grid, sizeof(targetGrid_) - 1);
-    targetGrid_[sizeof(targetGrid_) - 1] = '\0';
 }
 
 void SerialCli::print(const char *str) {
@@ -297,10 +288,11 @@ void SerialCli::printGpsStatus(unsigned long nowMs) {
 }
 
 void SerialCli::printCalibrationStatus() {
+    CliNavContext nav = getNavContext();
     println();
     println("=== Antenna Calibration Status ===");
     printFormat("  Stored Offset : %+5.1f deg\r\n", calibration_.getOffset());
-    printFormat("  Target Bearing: %5.1f deg\r\n", targetBearing_);
+    printFormat("  Target Bearing: %5.1f deg\r\n", nav.targetBearing);
     if (gpsManager_.hasHeading()) {
         double rawHdg = gpsManager_.getRawHeading();
         printFormat("  Raw GNSS Hdg  : %5.1f deg\r\n", rawHdg);
@@ -345,12 +337,13 @@ void SerialCli::printSimulationStatus(unsigned long nowMs) {
         println("  Current Position  : ---.-----, ---.----- (No fix)");
     }
 
+    CliNavContext nav = getNavContext();
     printFormat("  Rover Mode Active : %s\r\n",
-                isRoverAlertActive_ ? "YES (<16k alert tracking)" : "NO (Stationary target tracking)");
-    if (isRoverAlertActive_) {
-        int distKm = (int)std::floor(roverDistanceMeters_ / 1000.0);
+                nav.isRoverAlertActive ? "YES (<16k alert tracking)" : "NO (Stationary target tracking)");
+    if (nav.isRoverAlertActive) {
+        int distKm = (int)std::floor(nav.roverDistanceMeters / 1000.0);
         printFormat("  Rover Distance    : %5.1f km (Alert: %s)\r\n",
-                    roverDistanceMeters_ / 1000.0,
+                    nav.roverDistanceMeters / 1000.0,
                     (distKm < 16) ? "ACTIVE (RED on WHITE)" : "CLEAR");
     }
     println("==================================");
@@ -374,7 +367,8 @@ void SerialCli::handleCalCommand(const char *arg) {
         if (!gpsManager_.hasHeading()) {
             println("[CAL ERROR] Cannot snap: No valid GNSS heading fix.");
         } else {
-            calibration_.snap(targetBearing_, gpsManager_.getRawHeading());
+            CliNavContext nav = getNavContext();
+            calibration_.snap(nav.targetBearing, gpsManager_.getRawHeading());
             if (stateChangedCb_) stateChangedCb_();
             printFormat("[CAL] Snapped! New offset: %+5.1f deg\r\n", calibration_.getOffset());
         }
