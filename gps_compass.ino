@@ -1,24 +1,20 @@
 #include <Wire.h>
-#include <Arduino_GFX_Library.h>
-#include <PCF8574.h>
-#include <Adafruit_CST8XX.h>
 #include <Preferences.h>
 #include <math.h>
-#include <ctype.h>
 
 #include "src/config.h"
 #include "src/types.h"
 #include "src/geo/geo_math.h"
 #include "src/geo/maidenhead.h"
-#include "src/protocol/nmea_parser.h"
 #include "src/protocol/serial_cli.h"
 #include "src/system/calibration.h"
+#include "src/system/self_test.h"
 #include "src/gnss/simulator.h"
 #include "src/gnss/gps_manager.h"
 #include "src/ui/input_manager.h"
-#include "src/ui/cal_modal.h"
 #include "src/ui/display_ui.h"
 
+// Active Station & Target State
 char remote[7] = "ZA00AA";
 char mygrid[9] = "JJ00AA00";
 bool hasLocation = false;
@@ -36,19 +32,14 @@ DisplayUi displayUi;
 
 BearingFilter &bearingFilter = gpsManager.getBearingFilter();
 
-// UI State Variables
-enum UiModeLegacy {
-  UI_MODE_NORMAL = 0,
-  UI_MODE_CALIBRATING = 1
-};
-UiModeLegacy currentUiMode = UI_MODE_NORMAL;
+// UI & Editing State
+UiMode currentUiMode = UiMode::Normal;
 unsigned long calModalOpenedMillis = 0;
-
 int remotec = 0;
 bool isEditing = true;
 unsigned long lastEditActivity = 0;
 
-// Bearing Quality & State Machine
+// Heading & Geodesic Calculation State
 bool hasHeading = false;
 BearingQuality currentBearingQuality = BEARING_NONE;
 unsigned long lastHeadingUpdate = 0;
@@ -65,7 +56,7 @@ void runVisualSelfTest();
 void handleUserEvent(const UserEvent &event);
 
 void drawCurrentBearing() {
-  if (currentUiMode == UI_MODE_CALIBRATING) {
+  if (currentUiMode == UiMode::Calibrating) {
     displayUi.getCalModal().drawRawHeading(bearingFilter.getRawHeading(), hasHeading);
     return;
   }
@@ -78,7 +69,7 @@ void updateBearings() {
   calculateWgs84(mylatitude, mylongitude, remlatitude, remlongitude, distance, bearing);
   calculateWgs84(remlatitude, remlongitude, mylatitude, mylongitude, distance, revbearing);
 
-  if (currentUiMode == UI_MODE_CALIBRATING) {
+  if (currentUiMode == UiMode::Calibrating) {
     return;
   }
 
@@ -96,6 +87,18 @@ void redrawMainScreen() {
                              currentBearingQuality, hasHeading,
                              calibration.getOffset(), calibration.isCalibrated(),
                              hours, minutes, hasTime);
+}
+
+void runVisualSelfTest() {
+  SelfTestContext ctx{
+    displayUi, gpsManager, calibration, serialCli, inputManager,
+    remote, mygrid, mylatitude, mylongitude, remlatitude, remlongitude,
+    distance, bearing, revbearing, hasHeading, currentBearingQuality,
+    lastHeadingUpdate, rovdist, isEditing, remotec, currentUiMode,
+    hours, minutes, hasTime,
+    redrawMainScreen, updateBearings, drawCurrentBearing
+  };
+  SelfTest::run(ctx);
 }
 
 void setup() {
@@ -125,7 +128,7 @@ void setup() {
     mylongitude = pos.longitude;
     geoPointToGrid(mylatitude, mylongitude, mygrid);
 
-    if (currentUiMode != UI_MODE_CALIBRATING) {
+    if (currentUiMode != UiMode::Calibrating) {
       displayUi.renderMyGrid(mygrid);
     }
     updateBearings();
@@ -135,7 +138,7 @@ void setup() {
     hasTime = true;
     hours = h;
     minutes = m;
-    if (currentUiMode != UI_MODE_CALIBRATING) {
+    if (currentUiMode != UiMode::Calibrating) {
       displayUi.renderUtcTime(hours, minutes, hasTime);
     }
   });
@@ -151,7 +154,7 @@ void setup() {
       mylatitude = gpsManager.getLocation().latitude;
       mylongitude = gpsManager.getLocation().longitude;
       geoPointToGrid(mylatitude, mylongitude, mygrid);
-      if (currentUiMode != UI_MODE_CALIBRATING) {
+      if (currentUiMode != UiMode::Calibrating) {
         displayUi.renderMyGrid(mygrid);
       }
     }
@@ -159,7 +162,7 @@ void setup() {
       hasTime = true;
       hours = gpsManager.getHours();
       minutes = gpsManager.getMinutes();
-      if (currentUiMode != UI_MODE_CALIBRATING) {
+      if (currentUiMode != UiMode::Calibrating) {
         displayUi.renderUtcTime(hours, minutes, hasTime);
       }
     }
@@ -205,7 +208,7 @@ void setup() {
 void handleUserEvent(const UserEvent &event) {
   switch (event.type) {
     case UserEventType::RotateClockwise:
-      if (currentUiMode == UI_MODE_CALIBRATING) {
+      if (currentUiMode == UiMode::Calibrating) {
         calModalOpenedMillis = millis();
         calibration.adjustProposedOffset(0.1f);
         displayUi.getCalModal().drawProposedOffsetRow(calibration.getProposedOffset());
@@ -219,7 +222,7 @@ void handleUserEvent(const UserEvent &event) {
       break;
 
     case UserEventType::RotateCounterClockwise:
-      if (currentUiMode == UI_MODE_CALIBRATING) {
+      if (currentUiMode == UiMode::Calibrating) {
         calModalOpenedMillis = millis();
         calibration.adjustProposedOffset(-0.1f);
         displayUi.getCalModal().drawProposedOffsetRow(calibration.getProposedOffset());
@@ -238,7 +241,7 @@ void handleUserEvent(const UserEvent &event) {
       } else {
         calibration.syncProposedFromActive();
       }
-      currentUiMode = UI_MODE_CALIBRATING;
+      currentUiMode = UiMode::Calibrating;
       inputManager.setUiMode(UiMode::Calibrating);
       calModalOpenedMillis = millis();
       isEditing = false;
@@ -289,7 +292,7 @@ void handleUserEvent(const UserEvent &event) {
 
     case UserEventType::SaveButtonCommitted:
       calibration.commitProposed();
-      currentUiMode = UI_MODE_NORMAL;
+      currentUiMode = UiMode::Normal;
       inputManager.setUiMode(UiMode::Normal);
       redrawMainScreen();
       break;
@@ -317,7 +320,7 @@ void handleUserEvent(const UserEvent &event) {
     case UserEventType::CancelModalTriggered:
       displayUi.getCalModal().drawCancelButton(true);
       delay(120);
-      currentUiMode = UI_MODE_NORMAL;
+      currentUiMode = UiMode::Normal;
       inputManager.setUiMode(UiMode::Normal);
       redrawMainScreen();
       break;
@@ -327,275 +330,38 @@ void handleUserEvent(const UserEvent &event) {
   }
 }
 
-void runVisualSelfTest() {
-  Serial.println(F("\n=== Starting Visual Display Self-Test Demo ==="));
-
-  // Save current live state
-  char saved_remote[7];
-  char saved_mygrid[9];
-  memcpy(saved_remote, remote, sizeof(saved_remote));
-  memcpy(saved_mygrid, mygrid, sizeof(saved_mygrid));
-  double saved_mylat = mylatitude, saved_mylon = mylongitude;
-  bool saved_hasHeading = hasHeading;
-  bool saved_rovdist = rovdist;
-  bool saved_isEditing = isEditing;
-  BearingQuality saved_quality = currentBearingQuality;
-  unsigned long saved_lastHeading = lastHeadingUpdate;
-  float savedOffset = calibration.getOffset();
-  UiModeLegacy saved_uiMode = currentUiMode;
-  isEditing = false;
-
-  // Test 1: Same Grid (ARRL 1.0 km minimum rule)
-  Serial.println(F("[Test 1/6] Same Grid (ARRL 1.0 km rule)"));
-  displayUi.showFooterText("TEST 1: SAME GRID", CYAN);
-  strcpy(mygrid, "CM87wa00");
-  strcpy(remote, "CM87wa");
-  gridToGeoPoint("CM87wa", &mylatitude, &mylongitude);
-  hasHeading = true;
-  currentBearingQuality = BEARING_FIXED;
-  bearingFilter.seed(180.0f);
-  rovdist = false;
-  displayUi.renderMyGrid(mygrid);
-  displayUi.renderTargetGrid(remote, remotec, isEditing);
-  updateBearings();
-  delay(3000);
-
-  // Test 2: Rover Transit Alert (< 16 km, highlighted RED on WHITE)
-  Serial.println(F("[Test 2/6] Rover Transit Alert (< 16 km, highlighted RED on WHITE)"));
-  displayUi.showFooterText("TEST 2: ROVER < 16K", RICH_YELLOW);
-  strcpy(remote, "CM87wb");
-  currentBearingQuality = BEARING_FIXED;
-  rovdist = true;
-  displayUi.renderTargetGrid(remote, remotec, isEditing);
-  updateBearings();
-  delay(3000);
-
-  // Test 3: Distance Under 1,000 km (~600 km)
-  Serial.println(F("[Test 3/6] Under 1,000 km formatting (~600 km)"));
-  displayUi.showFooterText("TEST 3: DIST < 1000K", CYAN);
-  strcpy(remote, "DN13ab");
-  currentBearingQuality = BEARING_FIXED;
-  rovdist = false;
-  displayUi.renderTargetGrid(remote, remotec, isEditing);
-  updateBearings();
-  delay(3000);
-
-  // Test 4: Distance Over 1,000 km (~2,500 km)
-  Serial.println(F("[Test 4/6] Over 1,000 km formatting (~2,500 km)"));
-  displayUi.showFooterText("TEST 4: DIST > 1000K", CYAN);
-  strcpy(remote, "EL29ja");
-  currentBearingQuality = BEARING_FIXED;
-  displayUi.renderTargetGrid(remote, remotec, isEditing);
-  updateBearings();
-  delay(3000);
-
-  // Test 5: Extreme Distance (> 10,000 km) and Recovery to 1.0 km
-  Serial.println(F("[Test 5/6] Extreme distance (> 10,000 km)"));
-  displayUi.showFooterText("TEST 5: GHOST RECOVERY", CYAN);
-  strcpy(remote, "ZA00AA");
-  displayUi.renderTargetGrid(remote, remotec, isEditing);
-  updateBearings();
-  delay(2000);
-
-  Serial.println(F("  -> Dropping back to 1.0 km (verifying no ghost characters)"));
-  strcpy(remote, "CM87wa");
-  displayUi.renderTargetGrid(remote, remotec, isEditing);
-  updateBearings();
-  delay(2000);
-
-  // Test 6: Bearing Color States & Live GPS Receiver Link Diagnostic
-  Serial.println(F("[Test 6/6] Bearing Color States & Live GPS Stream Diagnostic"));
-  Serial.println(F("  -> Bearing Color: Pure White (RTK Fixed)"));
-  displayUi.showFooterText("TEST 6: BEARING WHITE", WHITE);
-  currentBearingQuality = BEARING_FIXED;
-  drawCurrentBearing();
-  delay(1000);
-
-  Serial.println(F("  -> Bearing Color: Bright Yellow (RTK Float / Degraded)"));
-  displayUi.showFooterText("TEST 6: BEARING YELLOW", RICH_YELLOW);
-  currentBearingQuality = BEARING_FLOAT;
-  drawCurrentBearing();
-  delay(1000);
-
-  Serial.println(F("  -> Bearing Color: Bright Red (Lost / Stale)"));
-  displayUi.showFooterText("TEST 6: BEARING RED", RED);
-  currentBearingQuality = BEARING_LOST;
-  drawCurrentBearing();
-  delay(1000);
-
-  // Restore bearing to fixed before showing live GPS stream ruling
-  currentBearingQuality = BEARING_FIXED;
-  drawCurrentBearing();
-  displayUi.showFooterText("TEST 6: GPS STREAM", CYAN);
-  serialCli.printGpsStatus();
-
-  GpsLinkVerdict liveVerdict = gpsManager.evaluateStreamHealth(millis());
-
-  if (liveVerdict == GPS_LINK_OK_FIXED) {
-    displayUi.showStatusCard("GPS: RTK FIXED (OK)", GREEN, BLACK);
-  } else if (liveVerdict == GPS_LINK_HEADING_FLOAT) {
-    displayUi.showStatusCard("GPS: RTK FLOAT (WARN)", RICH_YELLOW, BLACK);
-  } else if (liveVerdict == GPS_LINK_ACQUIRING || liveVerdict == GPS_LINK_POSITION_ONLY) {
-    displayUi.showStatusCard("GPS: ACQUIRING (WAIT)", RICH_YELLOW, BLACK);
-  } else {
-    displayUi.showStatusCard("GPS: NO DATA / CABLE", RED, WHITE);
-  }
-  delay(2500);
-#if defined(ARDUINO)
-  displayUi.getGfx()->fillRect(40, 215, 400, 52, BLACK);
-#endif
-
-  // Test 7: Antenna Calibration Status & Modal Demo
-  Serial.println(F("[Test 7/7] Antenna Calibration Pill & Modal Display Demo"));
-  Serial.println(F("  -> Testing Calibration Pill Display (Uncalibrated: OFF)"));
-  displayUi.showFooterText("TEST 7: CAL PILL OFF", CYAN);
-  calibration.setOffset(0.0f);
-  displayUi.renderCalibrationPill(calibration.getOffset(), calibration.isCalibrated());
-  drawCurrentBearing();
-  delay(1500);
-
-  Serial.println(F("  -> Testing Calibration Pill Display (Calibrated: +4.2 deg)"));
-  displayUi.showFooterText("TEST 7: CAL PILL +4.2", GREEN);
-  calibration.setOffset(4.2f);
-  displayUi.renderCalibrationPill(calibration.getOffset(), calibration.isCalibrated());
-  drawCurrentBearing();
-  delay(1500);
-
-  Serial.println(F("  -> Demonstrating Calibration Modal Dialog"));
-  displayUi.showFooterText("TEST 7: CAL MODAL", RICH_YELLOW);
-  calibration.stageProposedOffset(4.2f);
-  currentUiMode = UI_MODE_CALIBRATING;
-  inputManager.setUiMode(UiMode::Calibrating);
-  displayUi.getCalModal().drawModal(bearing, bearingFilter.getRawHeading(), hasHeading,
-                                    calibration.getOffset(), calibration.getProposedOffset());
-  delay(1200);
-  displayUi.getCalModal().drawSnapButton(true, hasHeading);
-  delay(300);
-  displayUi.getCalModal().drawSnapButton(false, hasHeading);
-  delay(1000);
-
-  // Display PASS/FAIL Result Banner
-  int failedTests[8];
-  int failedCount = 0;
-
-  // Test 1: ARRL 1.0 km minimum rule
-  if (fabs(calculateArrlContestDistance("CM87wa", "CM87wa") - 1.0) > 0.001) {
-    Serial.println(F("FAIL: Test 1 (ARRL 1 km rule)"));
-    failedTests[failedCount++] = 1;
-  }
-
-  // Test 2: Rover transit alert threshold (< 16 km)
-  double lat_wa, lon_wa, lat_wb, lon_wb, rover_dist, rover_bear;
-  gridToGeoPoint("CM87wa", &lat_wa, &lon_wa);
-  gridToGeoPoint("CM87wb", &lat_wb, &lon_wb);
-  calculateWgs84(lat_wa, lon_wa, lat_wb, lon_wb, rover_dist, rover_bear);
-  if ((int)floor(rover_dist / 1000.0) >= 16) {
-    Serial.println(F("FAIL: Test 2 (Rover transit <16 km threshold)"));
-    failedTests[failedCount++] = 2;
-  }
-
-  // Test 3: Mid-range distance formatting (< 1,000 km)
-  double lat_dn, lon_dn, d_dn, b_dn;
-  gridToGeoPoint("DN13ab", &lat_dn, &lon_dn);
-  calculateWgs84(lat_wa, lon_wa, lat_dn, lon_dn, d_dn, b_dn);
-  int km_dn = (int)floor(d_dn / 1000.0);
-  if (km_dn < 100 || km_dn >= 1000) {
-    Serial.println(F("FAIL: Test 3 (Mid-range distance <1000 km formatting)"));
-    failedTests[failedCount++] = 3;
-  }
-
-  // Test 4: Long-range distance formatting (> 1,000 km)
-  double lat_el, lon_el, d_el, b_el;
-  gridToGeoPoint("EL29ja", &lat_el, &lon_el);
-  calculateWgs84(lat_wa, lon_wa, lat_el, lon_el, d_el, b_el);
-  int km_el = (int)floor(d_el / 1000.0);
-  if (km_el < 1000 || km_el >= 10000) {
-    Serial.println(F("FAIL: Test 4 (Long-range distance >1000 km formatting)"));
-    failedTests[failedCount++] = 4;
-  }
-
-  // Test 5: Extreme distance (> 10,000 km)
-  if (calculateArrlContestDistance("CM87wa", "ZA00AA") < 10000.0) {
-    Serial.println(F("FAIL: Test 5 (Extreme distance recovery)"));
-    failedTests[failedCount++] = 5;
-  }
-
-  // Test 7: Heading offset wrap & normalization
-  if (fabs(normalizeOffset(5.0f - 355.0f) - 10.0f) > 0.01f ||
-      fabs(normalizeOffset(355.0f - 5.0f) - (-10.0f)) > 0.01f) {
-    Serial.println(F("FAIL: Test 7 (Antenna offset normalization)"));
-    failedTests[failedCount++] = 7;
-  }
-
-  if (failedCount == 0) {
-    Serial.println(F("Result: PASS"));
-    displayUi.showStatusCard("SELF-TEST PASSED", GREEN, BLACK);
-    delay(2500);
-  } else {
-    char failMsg[32];
-    DisplayUi::formatSelfTestFailure(failedTests, failedCount, failMsg, sizeof(failMsg));
-    Serial.print(F("Result: FAIL -> "));
-    Serial.println(failMsg);
-    displayUi.showStatusCard(failMsg, RED, WHITE);
-    delay(4000);
-  }
-  delay(2500);
-#if defined(ARDUINO)
-  displayUi.getGfx()->fillRect(40, 215, 400, 52, BLACK);
-#endif
-
-  // Restore live state and firmware version footer
-  memcpy(remote, saved_remote, sizeof(remote));
-  memcpy(mygrid, saved_mygrid, sizeof(mygrid));
-  mylatitude = saved_mylat;
-  mylongitude = saved_mylon;
-  hasHeading = saved_hasHeading;
-  currentBearingQuality = saved_quality;
-  lastHeadingUpdate = saved_lastHeading;
-  rovdist = saved_rovdist;
-  isEditing = saved_isEditing;
-  calibration.setOffset(savedOffset);
-  currentUiMode = saved_uiMode;
-  inputManager.setUiMode(saved_uiMode == UI_MODE_CALIBRATING ? UiMode::Calibrating : UiMode::Normal);
-  redrawMainScreen();
-
-  Serial.println(F("=== Visual Self-Test Complete (Live state restored) ===\n"));
-}
-
 void loop() {
-  while (1) {
-    // 1. Ingest GPS UART bytes & check staleness timeouts
-    gpsManager.update();
+  // 1. Ingest GPS UART bytes & check staleness timeouts
+  gpsManager.update();
 
-    // 2. Process USB host commands (SIM, CAL, GPS, TEST)
-    serialCli.setTargetBearing(bearing);
-    serialCli.setTargetGrid(remote);
-    serialCli.setRoverAlertActive(rovdist);
-    serialCli.setRoverDistance(distance);
-    serialCli.update();
+  // 2. Process USB host commands (SIM, CAL, GPS, TEST)
+  serialCli.setTargetBearing(bearing);
+  serialCli.setTargetGrid(remote);
+  serialCli.setRoverAlertActive(rovdist);
+  serialCli.setRoverDistance(distance);
+  serialCli.update();
 
-    // 3. Process Input events (rotary encoder and touch gestures)
-    inputManager.update();
-    UserEvent event;
-    while (inputManager.pollEvent(event)) {
-      handleUserEvent(event);
+  // 3. Process Input events (rotary encoder and touch gestures)
+  inputManager.update();
+  UserEvent event;
+  while (inputManager.pollEvent(event)) {
+    handleUserEvent(event);
+  }
+
+  // 4. Modal timeout check
+  if (currentUiMode == UiMode::Calibrating) {
+    if (millis() - calModalOpenedMillis >= CAL_MODAL_TIMEOUT_MS) {
+      currentUiMode = UiMode::Normal;
+      inputManager.setUiMode(UiMode::Normal);
+      redrawMainScreen();
     }
+  }
 
-    // Modal timeout check
-    if (currentUiMode == UI_MODE_CALIBRATING) {
-      if (millis() - calModalOpenedMillis >= CAL_MODAL_TIMEOUT_MS) {
-        currentUiMode = UI_MODE_NORMAL;
-        inputManager.setUiMode(UiMode::Normal);
-        redrawMainScreen();
-      }
-    }
-
-    // Edit timeout check
-    if (isEditing && EDIT_TIMEOUT_MS > 0) {
-      if (millis() - lastEditActivity >= EDIT_TIMEOUT_MS) {
-        isEditing = false;
-        displayUi.renderTargetGrid(remote, remotec, isEditing);
-      }
+  // 5. Edit timeout check
+  if (isEditing && EDIT_TIMEOUT_MS > 0) {
+    if (millis() - lastEditActivity >= EDIT_TIMEOUT_MS) {
+      isEditing = false;
+      displayUi.renderTargetGrid(remote, remotec, isEditing);
     }
   }
 }

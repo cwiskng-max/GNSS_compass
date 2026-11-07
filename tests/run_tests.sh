@@ -12,6 +12,7 @@ g++ -O2 -Wall -Wextra -I"$REPO_DIR" \
     "$REPO_DIR/src/protocol/nmea_parser.cpp" \
     "$REPO_DIR/src/protocol/serial_cli.cpp" \
     "$REPO_DIR/src/system/calibration.cpp" \
+    "$REPO_DIR/src/system/self_test.cpp" \
     "$REPO_DIR/src/gnss/simulator.cpp" \
     "$REPO_DIR/src/gnss/gps_manager.cpp" \
     "$REPO_DIR/src/ui/input_manager.cpp" \
