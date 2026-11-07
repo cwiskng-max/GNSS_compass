@@ -41,7 +41,7 @@ AppController::AppController(Board &board,
 
 void AppController::setTargetGrid(const char *grid) {
     gridEditor_.setGrid(grid);
-    updateBearings();
+    updateNavigation();
 }
 
 void AppController::setMyGrid(const char *grid) {
@@ -57,7 +57,7 @@ void AppController::setCurrentPosition(const GeoPoint &pos) {
     if (currentUiMode_ != UiMode::Calibrating) {
         displayUi_.renderMyGrid(myGrid_);
     }
-    updateBearings();
+    updateNavigation();
 }
 
 void AppController::setUiMode(UiMode mode) {
@@ -75,13 +75,15 @@ void AppController::drawCurrentBearing() {
                                   currentBearingQuality_, hasHeading_);
 }
 
-void AppController::updateBearings() {
+void AppController::recalculateGeodesy() {
     if (!isRoverAlertActive_) {
         gridToGeoPoint(gridEditor_.getGrid(), targetPosition_);
     }
     calculateWgs84(currentPosition_, targetPosition_, distance_, bearing_);
     revbearing_ = calculateReverseBearing(currentPosition_, targetPosition_);
+}
 
+void AppController::renderNavigationRows() {
     if (currentUiMode_ == UiMode::Calibrating) {
         return;
     }
@@ -91,6 +93,11 @@ void AppController::updateBearings() {
     displayUi_.renderCalibrationPill(calibration_.getOffset(), calibration_.isCalibrated());
     displayUi_.renderTargetBearing(bearing_);
     displayUi_.renderArrlDistance(myGrid_, gridEditor_.getGrid());
+}
+
+void AppController::updateNavigation() {
+    recalculateGeodesy();
+    renderNavigationRows();
 }
 
 void AppController::redrawMainScreen() {
@@ -204,8 +211,7 @@ void AppController::begin() {
                 self->displayUi_.renderUtcTime(self->hours_, self->minutes_, true);
             }
         }
-        self->updateBearings();
-        self->drawCurrentBearing();
+        self->updateNavigation();
     }, this);
 
     serialCli_.setRoverSimCallback([](const char *orig_grid, double dist_km, void *ctx) {
@@ -226,7 +232,7 @@ void AppController::begin() {
         self->displayUi_.renderTargetGrid(self->gridEditor_.getGrid(),
                                           self->gridEditor_.getCursorColumn(),
                                           self->gridEditor_.isEditing());
-        self->updateBearings();
+        self->updateNavigation();
 
 #if defined(ARDUINO)
         int rdist = (int)std::floor(self->distance_ / 1000.0);
@@ -243,7 +249,7 @@ void AppController::begin() {
 
     gridEditor_.recordActivity(0);
     displayUi_.renderTargetGrid(gridEditor_.getGrid(), gridEditor_.getCursorColumn(), gridEditor_.isEditing());
-    updateBearings();
+    updateNavigation();
 
     displayUi_.renderUtcTime(0, 0, false);
     displayUi_.showFooterText(FW_VERSION, DIM_GRAY_TEXT);
@@ -264,7 +270,7 @@ void AppController::handleUserEvent(const UserEvent &event, unsigned long nowMs)
                 isRoverAlertActive_ = false;
                 gridEditor_.rollChar(+1, nowMs);
                 displayUi_.renderTargetGrid(gridEditor_.getGrid(), gridEditor_.getCursorColumn(), gridEditor_.isEditing());
-                updateBearings();
+                updateNavigation();
             }
             break;
 
@@ -277,7 +283,7 @@ void AppController::handleUserEvent(const UserEvent &event, unsigned long nowMs)
                 isRoverAlertActive_ = false;
                 gridEditor_.rollChar(-1, nowMs);
                 displayUi_.renderTargetGrid(gridEditor_.getGrid(), gridEditor_.getCursorColumn(), gridEditor_.isEditing());
-                updateBearings();
+                updateNavigation();
             }
             break;
 
@@ -306,14 +312,14 @@ void AppController::handleUserEvent(const UserEvent &event, unsigned long nowMs)
             targetPosition_ = currentPosition_;
             isRoverAlertActive_ = true;
             displayUi_.renderTargetGrid(gridEditor_.getGrid(), gridEditor_.getCursorColumn(), gridEditor_.isEditing());
-            updateBearings();
+            updateNavigation();
             break;
 
         case UserEventType::TouchGridCharacter:
             isRoverAlertActive_ = false;
             gridEditor_.selectCharacter(event.gridIndex, nowMs);
             displayUi_.renderTargetGrid(gridEditor_.getGrid(), gridEditor_.getCursorColumn(), gridEditor_.isEditing());
-            updateBearings();
+            updateNavigation();
             break;
 
         case UserEventType::TouchVersionFooter:

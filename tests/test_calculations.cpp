@@ -1270,6 +1270,16 @@ void test_app_controller() {
     app.update(50UL);              // 56 + 50 = 106 ms elapsed (< 120 ms)
     app.update(100UL);             // 56 + 100 = 156 ms elapsed (>= 120 ms -> released)
 
+    // Decoupled geodesy calculation and navigation rendering
+    double prevDist = app.getDistance();
+    app.getGridEditor().setGrid("EL29ja");
+    // Model state distance remains unchanged until recalculateGeodesy() is called
+    ASSERT_NEAR(app.getDistance(), prevDist, 1e-4);
+    app.recalculateGeodesy();
+    ASSERT_TRUE(app.getDistance() > 2000000.0);
+    app.renderNavigationRows();
+    app.updateNavigation();
+
     PASS();
 }
 

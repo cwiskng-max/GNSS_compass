@@ -47,7 +47,7 @@ void SelfTest::run(AppController &app) {
     app.setRoverAlertActive(false);
     app.getDisplayUi().renderMyGrid(app.getMyGrid());
     app.getDisplayUi().renderTargetGrid(app.getTargetGrid(), app.getGridEditor().getCursorColumn(), app.getGridEditor().isEditing());
-    app.updateBearings();
+    app.updateNavigation();
     delay(3000);
 
     // Test 2: Rover Transit Alert (< 16 km, highlighted RED on WHITE)
@@ -57,7 +57,7 @@ void SelfTest::run(AppController &app) {
     app.setHeadingState(true, BEARING_FIXED);
     app.setRoverAlertActive(true);
     app.getDisplayUi().renderTargetGrid(app.getTargetGrid(), app.getGridEditor().getCursorColumn(), app.getGridEditor().isEditing());
-    app.updateBearings();
+    app.updateNavigation();
     delay(3000);
 
     // Test 3: Distance Under 1,000 km (~600 km)
@@ -67,7 +67,7 @@ void SelfTest::run(AppController &app) {
     app.setHeadingState(true, BEARING_FIXED);
     app.setRoverAlertActive(false);
     app.getDisplayUi().renderTargetGrid(app.getTargetGrid(), app.getGridEditor().getCursorColumn(), app.getGridEditor().isEditing());
-    app.updateBearings();
+    app.updateNavigation();
     delay(3000);
 
     // Test 4: Distance Over 1,000 km (~2,500 km)
@@ -76,7 +76,7 @@ void SelfTest::run(AppController &app) {
     app.setTargetGrid("EL29ja");
     app.setHeadingState(true, BEARING_FIXED);
     app.getDisplayUi().renderTargetGrid(app.getTargetGrid(), app.getGridEditor().getCursorColumn(), app.getGridEditor().isEditing());
-    app.updateBearings();
+    app.updateNavigation();
     delay(3000);
 
     // Test 5: Extreme Distance (> 10,000 km) and Recovery to 1.0 km
@@ -84,13 +84,13 @@ void SelfTest::run(AppController &app) {
     app.getDisplayUi().showFooterText("TEST 5: GHOST RECOVERY", CYAN);
     app.setTargetGrid("ZA00AA");
     app.getDisplayUi().renderTargetGrid(app.getTargetGrid(), app.getGridEditor().getCursorColumn(), app.getGridEditor().isEditing());
-    app.updateBearings();
+    app.updateNavigation();
     delay(2000);
 
     Serial.println(F("  -> Dropping back to 1.0 km (verifying no ghost characters)"));
     app.setTargetGrid("CM87wa");
     app.getDisplayUi().renderTargetGrid(app.getTargetGrid(), app.getGridEditor().getCursorColumn(), app.getGridEditor().isEditing());
-    app.updateBearings();
+    app.updateNavigation();
     delay(2000);
 
     // Test 6: Bearing Color States & Live GPS Receiver Link Diagnostic
@@ -245,7 +245,7 @@ void SelfTest::run(AppController &app) {
     app.getGridEditor().setEditing(saved_isEditing);
     app.getCalibration().setOffset(savedOffset, false);
     app.setUiMode(saved_uiMode);
-    app.updateBearings();
+    app.updateNavigation();
     app.redrawMainScreen();
 
     Serial.println(F("=== Visual Self-Test Complete (Live state restored) ===\n"));

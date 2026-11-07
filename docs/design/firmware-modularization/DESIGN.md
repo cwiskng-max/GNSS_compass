@@ -199,7 +199,7 @@ enum class UserEvent {
 
 ### 5.1 Naming Rules
 * **Types, Structs, Enums:** `PascalCase` (e.g., `GeoPoint`, `BearingQuality`, `GpsManager`)
-* **Functions & Methods:** `camelCase` (e.g., `calculateWgs84`, `updateBearings`, `geoPointToGrid`)
+* **Functions & Methods:** `camelCase` (e.g., `calculateWgs84`, `updateNavigation`, `geoPointToGrid`)
 * **Variables & Members:** `camelCase` (e.g., `currentPosition`, `targetGrid`, `isRoverAlertActive`)
 * **Constants & Macros:** `UPPER_SNAKE_CASE` (e.g., `HEADING_TIMEOUT_MS`, `RICH_YELLOW`)
 

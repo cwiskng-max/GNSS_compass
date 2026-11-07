@@ -34,8 +34,10 @@ public:
     void update(unsigned long nowMs = 0);
     void handleUserEvent(const UserEvent &event, unsigned long nowMs = 0);
 
-    // Presentation updates
-    void updateBearings();
+    // Navigation & presentation updates
+    void recalculateGeodesy();
+    void renderNavigationRows();
+    void updateNavigation();
     void drawCurrentBearing();
     void redrawMainScreen();
     void runVisualSelfTest();
