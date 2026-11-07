@@ -1026,6 +1026,44 @@ void test_ui_formatters_and_modal_geometry() {
     PASS();
 }
 
+void test_self_test_failure_formatting() {
+    TEST("DisplayUi self-test failure message formatting and buffer safety");
+
+    char buf[32];
+
+    // Zero failures -> Pass message
+    DisplayUi::formatSelfTestFailure(nullptr, 0, buf, sizeof(buf));
+    ASSERT_STR_EQ(buf, "SELF-TEST PASSED");
+
+    // Single failure -> "FAILED: TEST #3"
+    int singleFail[] = {3};
+    DisplayUi::formatSelfTestFailure(singleFail, 1, buf, sizeof(buf));
+    ASSERT_STR_EQ(buf, "FAILED: TEST #3");
+
+    // Two failures -> "FAILED: #1, #2"
+    int twoFails[] = {1, 2};
+    DisplayUi::formatSelfTestFailure(twoFails, 2, buf, sizeof(buf));
+    ASSERT_STR_EQ(buf, "FAILED: #1, #2");
+
+    // Three failures -> "FAILED: #1, #2, #7"
+    int threeFails[] = {1, 2, 7};
+    DisplayUi::formatSelfTestFailure(threeFails, 3, buf, sizeof(buf));
+    ASSERT_STR_EQ(buf, "FAILED: #1, #2, #7");
+
+    // Four failures -> "FAILED: #1, #2, #3, #4"
+    int fourFails[] = {1, 2, 3, 4};
+    DisplayUi::formatSelfTestFailure(fourFails, 4, buf, sizeof(buf));
+    ASSERT_STR_EQ(buf, "FAILED: #1, #2, #3, #4");
+    ASSERT_TRUE(std::strlen(buf) < sizeof(buf));
+
+    // Buffer bounds safety with small buffer (16 bytes)
+    char smallBuf[16];
+    DisplayUi::formatSelfTestFailure(fourFails, 4, smallBuf, sizeof(smallBuf));
+    ASSERT_TRUE(std::strlen(smallBuf) < sizeof(smallBuf));
+
+    PASS();
+}
+
 int main() {
     std::cout << "========================================" << std::endl;
     std::cout << "  GNSS Compass Unit Test Suite" << std::endl;
@@ -1056,6 +1094,7 @@ int main() {
     test_input_manager_hit_testing();
     test_input_manager_gestures();
     test_ui_formatters_and_modal_geometry();
+    test_self_test_failure_formatting();
 
     std::cout << "========================================" << std::endl;
     std::cout << "  All " << tests_passed << " / " << tests_run << " tests PASSED successfully!" << std::endl;

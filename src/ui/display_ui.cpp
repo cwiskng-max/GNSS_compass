@@ -41,6 +41,24 @@ void DisplayUi::formatCalibrationPillText(float offset, bool isCalibrated, char 
     }
 }
 
+void DisplayUi::formatSelfTestFailure(const int *failedTests, int count, char *outBuf, size_t bufSize) {
+    if (!outBuf || bufSize == 0) return;
+    if (!failedTests || count <= 0) {
+        snprintf(outBuf, bufSize, "SELF-TEST PASSED");
+        return;
+    }
+    if (count == 1) {
+        snprintf(outBuf, bufSize, "FAILED: TEST #%d", failedTests[0]);
+    } else {
+        snprintf(outBuf, bufSize, "FAILED: #%d", failedTests[0]);
+        for (int i = 1; i < count && strlen(outBuf) < bufSize - 5; i++) {
+            char numBuf[8];
+            snprintf(numBuf, sizeof(numBuf), ", #%d", failedTests[i]);
+            strncat(outBuf, numBuf, bufSize - strlen(outBuf) - 1);
+        }
+    }
+}
+
 #if defined(ARDUINO)
 DisplayUi::DisplayUi() : pcf8574_(PCF8574_ADDR) {}
 

@@ -475,30 +475,69 @@ void runVisualSelfTest() {
   delay(1000);
 
   // Display PASS/FAIL Result Banner
-  bool all_pass = true;
+  int failedTests[8];
+  int failedCount = 0;
+
+  // Test 1: ARRL 1.0 km minimum rule
   if (fabs(calculateArrlContestDistance("CM87wa", "CM87wa") - 1.0) > 0.001) {
-    Serial.println(F("FAIL: ARRL distance rule failed"));
-    all_pass = false;
+    Serial.println(F("FAIL: Test 1 (ARRL 1 km rule)"));
+    failedTests[failedCount++] = 1;
   }
+
+  // Test 2: Rover transit alert threshold (< 16 km)
   double lat_wa, lon_wa, lat_wb, lon_wb, rover_dist, rover_bear;
   gridToGeoPoint("CM87wa", &lat_wa, &lon_wa);
   gridToGeoPoint("CM87wb", &lat_wb, &lon_wb);
   calculateWgs84(lat_wa, lon_wa, lat_wb, lon_wb, rover_dist, rover_bear);
   if ((int)floor(rover_dist / 1000.0) >= 16) {
-    Serial.println(F("FAIL: Rover transit threshold failed"));
-    all_pass = false;
-  }
-  if (fabs(normalizeOffset(5.0f - 355.0f) - 10.0f) > 0.01f) {
-    Serial.println(F("FAIL: Heading offset normalization failed"));
-    all_pass = false;
+    Serial.println(F("FAIL: Test 2 (Rover transit <16 km threshold)"));
+    failedTests[failedCount++] = 2;
   }
 
-  if (all_pass) {
+  // Test 3: Mid-range distance formatting (< 1,000 km)
+  double lat_dn, lon_dn, d_dn, b_dn;
+  gridToGeoPoint("DN13ab", &lat_dn, &lon_dn);
+  calculateWgs84(lat_wa, lon_wa, lat_dn, lon_dn, d_dn, b_dn);
+  int km_dn = (int)floor(d_dn / 1000.0);
+  if (km_dn < 100 || km_dn >= 1000) {
+    Serial.println(F("FAIL: Test 3 (Mid-range distance <1000 km formatting)"));
+    failedTests[failedCount++] = 3;
+  }
+
+  // Test 4: Long-range distance formatting (> 1,000 km)
+  double lat_el, lon_el, d_el, b_el;
+  gridToGeoPoint("EL29ja", &lat_el, &lon_el);
+  calculateWgs84(lat_wa, lon_wa, lat_el, lon_el, d_el, b_el);
+  int km_el = (int)floor(d_el / 1000.0);
+  if (km_el < 1000 || km_el >= 10000) {
+    Serial.println(F("FAIL: Test 4 (Long-range distance >1000 km formatting)"));
+    failedTests[failedCount++] = 4;
+  }
+
+  // Test 5: Extreme distance (> 10,000 km)
+  if (calculateArrlContestDistance("CM87wa", "ZA00AA") < 10000.0) {
+    Serial.println(F("FAIL: Test 5 (Extreme distance recovery)"));
+    failedTests[failedCount++] = 5;
+  }
+
+  // Test 7: Heading offset wrap & normalization
+  if (fabs(normalizeOffset(5.0f - 355.0f) - 10.0f) > 0.01f ||
+      fabs(normalizeOffset(355.0f - 5.0f) - (-10.0f)) > 0.01f) {
+    Serial.println(F("FAIL: Test 7 (Antenna offset normalization)"));
+    failedTests[failedCount++] = 7;
+  }
+
+  if (failedCount == 0) {
     Serial.println(F("Result: PASS"));
     displayUi.showStatusCard("SELF-TEST PASSED", GREEN, BLACK);
+    delay(2500);
   } else {
-    Serial.println(F("Result: FAIL"));
-    displayUi.showStatusCard("SELF-TEST FAILED", RED, WHITE);
+    char failMsg[32];
+    DisplayUi::formatSelfTestFailure(failedTests, failedCount, failMsg, sizeof(failMsg));
+    Serial.print(F("Result: FAIL -> "));
+    Serial.println(failMsg);
+    displayUi.showStatusCard(failMsg, RED, WHITE);
+    delay(4000);
   }
   delay(2500);
 #if defined(ARDUINO)

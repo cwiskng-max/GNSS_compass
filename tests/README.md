@@ -47,6 +47,7 @@ The test suite runs automatically on every push and pull request in [`.github/wo
 22. **Input Touch & Hit-Testing (`src/ui/input_manager.*`):** Verifies bounding box geometry hit tests for local grid, target grid, target grid character columns (with clamping), calibration pill, footer, and calibration modal buttons (Snap, Reset, Save, Cancel).
 23. **Input Gesture State Machine (`src/ui/input_manager.*`):** Validates rotary encoder events, normal mode short taps, calibration modal button taps, 1.5s long-press hold on Save with progress calculation, commit events, drift cancellation (>35px), and touch debounce intervals.
 24. **UI Formatters & Modal Presentation (`src/ui/cal_modal.*`, `src/ui/display_ui.*`):** Validates string formatters across all operational ranges (target bearing, raw GNSS heading, current/proposed offset, UTC timestamp, reverse bearing/distance, ARRL contest distance, heading string, calibration pill).
+25. **Self-Test Failure Formatter (`src/ui/display_ui.*`):** Validates formatting of single-test and multi-test on-screen failure codes (e.g. `FAILED: TEST #3`, `FAILED: #1, #2, #7`), buffer truncation bounds safety, and pass message mapping.
 
 ---
 
@@ -72,6 +73,6 @@ The test automatically cycles through 6 visual scenarios, displaying the current
 | **6** | `TEST 6: BEARING / GPS` | Rapidly tests bearing quality colors (1s White $\to$ 1s Yellow $\to$ 1s Red), then evaluates live `Serial2` data stream from UM982 receiver. Displays centered popup card: **`GPS: RTK FIXED (OK)`** (Green), **`GPS: RTK FLOAT (WARN)`** (Yellow), **`GPS: ACQUIRING`** (Yellow), or **`GPS: NO DATA / CABLE`** (Red). Prints full diagnostic report to serial console. |
 
 ### Pass/Fail Confirmation & Clean Restoration
-* **Programmatic Assertions:** The firmware computes programmatic verification checks for the ARRL 1 km rule and rover threshold.
-* **On-Screen Banner:** A centered green **`SELF-TEST PASSED`** banner pops up across the screen for 2.5 seconds upon completion.
+* **Programmatic Assertions:** The firmware validates calculations across all stages (ARRL 1 km minimum rule, Rover <16 km alert threshold, mid/long/extreme distance boundaries, and antenna calibration offset normalization).
+* **On-Screen Banner:** A centered green **`SELF-TEST PASSED`** banner pops up for 2.5 seconds upon success. If any test fails, an on-screen red card lists the failing test numbers (e.g. **`FAILED: TEST #2`** or **`FAILED: #1, #2`**) for 4.0 seconds, while detailed failure diagnostics are emitted over USB serial.
 * **State Restoration:** Erases the banner and cleanly restores your live GPS coordinates, local grid, target grid, heading, and the centered grey version footer (`v0.3-dev`).

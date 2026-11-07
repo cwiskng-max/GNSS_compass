@@ -52,6 +52,7 @@ public:
     static void formatArrlDistance(double arrlDistKm, char *outBuf, size_t bufSize);
     static void formatBearingString(double heading, bool hasHeading, char *outBuf, size_t bufSize);
     static void formatCalibrationPillText(float offset, bool isCalibrated, char *outBuf, size_t bufSize);
+    static void formatSelfTestFailure(const int *failedTests, int count, char *outBuf, size_t bufSize);
 
 private:
     CalModal calModal_;
