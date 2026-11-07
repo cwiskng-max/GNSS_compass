@@ -10,7 +10,7 @@ The automated test suite verifies all mathematical calculations, coordinate proj
 
 ### Files
 * **`tests/test_calculations.cpp`**: Standalone C++ test suite containing assertion checks.
-* **`tests/run_tests.sh`**: Test runner script that extracts the pure mathematical functions directly from `gps_compass.ino`, compiles with `g++`, executes the suite, and cleans up artifacts.
+* **`tests/run_tests.sh`**: Test runner script that compiles the standalone `src/geo/` and `src/protocol/` modules with `tests/test_calculations.cpp` using `g++`, executes the suite, and validates all mathematical invariants.
 
 ### How to Run Locally
 From the repository root, run:
@@ -24,11 +24,11 @@ The test suite runs automatically on every push and pull request in [`.github/wo
 
 ### Test Cases Covered
 1. **Trigonometric Helpers:** Validates `toRad()` and `toDeg()` conversions against $\pi$.
-2. **Grid-to-Coordinate Math (`calcLatLon`):** Verifies Maidenhead locator center coordinates (e.g. `JJ00AA` at origin $+0.0208^\circ\text{ lat}, +0.0417^\circ\text{ lon}$) and bounds checking.
+2. **Grid-to-Coordinate Math (`gridToGeoPoint`):** Verifies Maidenhead locator center coordinates (e.g. `JJ00AA` at origin $+0.0208^\circ\text{ lat}, +0.0417^\circ\text{ lon}$) and bounds checking.
 3. **ARRL 1 km Minimum Rule:** Confirms identical grids (`CM87wa` vs `CM87wa`) return exactly `1.0 km` per ARRL 10 GHz contest rules, while adjacent subsquares return $> 1.0\text{ km}$ ($\sim 4.63\text{ km}$).
 4. **Distance Symmetry & Ground Truths:** Verifies $D(A, B) = D(B, A)$ and checks reference great-circle distances.
-5. **WGS84 Geodesic Math (`calculateWGS84`):** Verifies distance and cardinal bearings ($0^\circ$ North, $90^\circ$ East, $180^\circ$ South, $270^\circ$ West).
-6. **Round-Trip Locator Consistency (`calcLocator`):** Ensures coordinates derived from `calcLatLon` reconstruct the identical Maidenhead grid string when passed through `calcLocator`.
+5. **WGS84 Geodesic Math (`calculateWgs84`):** Verifies distance and cardinal bearings ($0^\circ$ North, $90^\circ$ East, $180^\circ$ South, $270^\circ$ West).
+6. **Round-Trip Grid Consistency (`geoPointToGrid`):** Ensures coordinates derived from `gridToGeoPoint` reconstruct the identical Maidenhead grid string when passed through `geoPointToGrid`.
 7. **Buffer Bounds & Ghost Character Erasure:** Formats distances across all ranges ($1.0\text{ km}$ to $> 10,000\text{ km}$) using `"ARRL %6.1f k  "`. Verifies string lengths stay strictly within the 24-byte buffer and trailing spaces exist to erase ghost characters on screen redraws.
 8. **Rover Transit Threshold:** Asserts that distances $< 16,000\text{ m}$ activate the rover relocation alert, while $\ge 16,000\text{ m}$ clear it.
 9. **Field Extraction (`getNthField`):** Validates comma-delimited token parsing, empty fields, and bounds.
@@ -36,7 +36,9 @@ The test suite runs automatically on every push and pull request in [`.github/wo
 11. **`$KSXT` Time & Location Extraction:** Validates UTC timestamp (14-digit full and 6-digit short) and geographic decimal coordinate parsing with solution status checking.
 12. **Legacy Sentence Parsing:** Tests fallback parsing of `$GNHDT` and `$GNTHS` and detects lost signal from empty fields.
 13. **Current Bearing Calculation:** Validates $270^\circ$ orthogonal baseline offset and circular wrap-around $[0, 360^\circ)$.
-14. **GPS Stream Evaluation:** Validates deterministic link verdicts (Disconnected, Corrupt, Acquiring, Position-Only, Float, Fixed).
+14. **Antenna Calibration:** Tests offset angle normalization within $[-180^\circ, +180^\circ]$, circular bearing offset addition, and modal calibration math.
+15. **GPS Stream Evaluation:** Validates deterministic link verdicts (Disconnected, Corrupt, Acquiring, Position-Only, Float, Fixed).
+16. **GeoPoint Domain & Rover Precision:** Validates `GeoPoint` lat/lon unquantized source of truth, `gridToGeoPoint` / `geoPointToGrid` conversions, reverse bearing calculations, and Rover 16 km threshold evaluation.
 
 ---
 

@@ -43,7 +43,7 @@ jobs:
       - name: Compile Firmware
         run: |
           mkdir -p build/gps_compass
-          cp gps_compass.ino build/gps_compass/
+          cp -r gps_compass.ino src build/gps_compass/
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
             HEAD_SHA="${{ github.event.pull_request.head.sha }}"
             FW_VER="v0.2-${HEAD_SHA::7}"

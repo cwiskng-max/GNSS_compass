@@ -6,23 +6,10 @@
 #include <math.h>
 #include <ctype.h>
 
-// --- Bearing Quality & Link Diagnostic Enums ---
-enum BearingQuality {
-  BEARING_NONE = 0,    // Fresh start, never acquired -> WHITE (---.-)
-  BEARING_FIXED = 1,   // High precision (RTK Fixed) -> WHITE
-  BEARING_FLOAT = 2,   // Reduced quality (RTK Float) -> RICH_YELLOW
-  BEARING_LOST = 3     // Signal lost / stale timeout -> RED
-};
-
-enum GpsLinkVerdict {
-  GPS_LINK_DISCONNECTED = 0,   // No bytes received (>3s) or total bytes == 0
-  GPS_LINK_NOISY_CORRUPT = 1,  // Raw bytes received, but no valid NMEA/KSXT sentences
-  GPS_LINK_ACQUIRING = 2,      // Valid sentences streaming, waiting for satellites
-  GPS_LINK_POSITION_ONLY = 3,  // Position valid, waiting for dual-antenna heading
-  GPS_LINK_HEADING_FLOAT = 4,  // Dual-antenna heading active in Float mode (Yellow)
-  GPS_LINK_OK_FIXED = 5        // Dual-antenna heading active in Fixed mode (White)
-};
-// --- End Bearing Quality & Link Diagnostic Enums ---
+#include "src/types.h"
+#include "src/geo/geo_math.h"
+#include "src/geo/maidenhead.h"
+#include "src/protocol/nmea_parser.h"
 
 // I2C to PCF8574
 #define I2C_SDA_PIN 38
@@ -199,62 +186,7 @@ void initEncoder() {
   attachInterrupt(digitalPinToInterrupt(ENCODER_CLK), encoder_irq, CHANGE);
 }
 
-void parselatlon(char *buf,float *lat,float *lon, char **rptr) {
 
-char *ptr;
-int neg=0;
-
-  ptr = &buf[0];
-  if (ptr[0]=='-'){neg=1;ptr++;}
-  *lat = aton(ptr[0])*10.0+aton(ptr[1]);
-  *lat += strtof(&ptr[2],&ptr)/60.0;
-  if (neg) {neg=0;*lat = -*lat;}
-
-  if (ptr[3]=='-'){neg=1;ptr++;}
-  *lon = aton(ptr[3])*100.0+aton(ptr[4])*10.0+aton(ptr[5]);
-  *lon += strtof(&ptr[6],&ptr)/60.0;
-  if (neg) {neg=0;*lon = -*lon;}
-
-  *rptr = &ptr[3];
-
-}
-
-void calcLocator(char *dst, float lat, float lon) {
-  int o1, o2, o3, o4;
-  int a1, a2, a3, a4;
-  double remainder;
-
-  // longitude
-  remainder = lon + 180.0;
-  o1 = (int)(remainder / 20.0);
-  remainder = remainder - (double)o1 * 20.0;
-  o2 = (int)(remainder / 2.0);
-  remainder = remainder - 2.0 * (double)o2;
-  o3 = (int)(12.0 * remainder);
-  remainder = 12.0 * remainder - (double)o3;
-  o4 = (int)(10.0 * remainder);
-
-  // latitude
-  remainder = lat + 90.0;
-  a1 = (int)(remainder / 10.0);
-  remainder = remainder - (double)a1 * 10.0;
-  a2 = (int)(remainder);
-  remainder = remainder - (double)a2;
-  a3 = (int)(24.0 * remainder);
-  remainder = 24.0 * remainder - (double)a3;
-  a4 = (int)(10.0 * remainder);
-
-  dst[0] = (char)o1 + 'A';
-  dst[1] = (char)a1 + 'A';
-  dst[2] = (char)o2 + '0';
-  dst[3] = (char)a2 + '0';
-  dst[4] = (char)o3 + 'A';
-  dst[5] = (char)a3 + 'A';
-  dst[6] = (char)o4 + '0';
-  dst[7] = (char)a4 + '0';
-  dst[8] = (char)0;
-
-}
 
 void initBacklight() {
   pinMode(BKL_PIN, OUTPUT);
@@ -346,289 +278,21 @@ void printrem() {
 
 
 
-// Convert degrees to radians
-double toRad(double degree) {
-    return degree * M_PI / 180.0;
-}
 
-// Convert radians to degrees
-double toDeg(double rad) {
-    return rad * 180.0 / M_PI;
-}
-
-// Convert 4-, 6-, or 8-character Maidenhead grid to center coordinates
-void calcLatLon(const char *grid, double *lat, double *lon) {
-    *lon = (toupper((unsigned char)grid[0]) - 'A') * 20.0 + (grid[2] - '0') * 2.0 - 180.0;
-    *lat = (toupper((unsigned char)grid[1]) - 'A') * 10.0 + (grid[3] - '0') * 1.0 - 90.0;
-
-    if (grid[4] != '\0' && grid[5] != '\0') {
-        *lon += (toupper((unsigned char)grid[4]) - 'A') * (5.0 / 60.0);
-        *lat += (toupper((unsigned char)grid[5]) - 'A') * (2.5 / 60.0);
-        if (grid[6] >= '0' && grid[6] <= '9' && grid[7] >= '0' && grid[7] <= '9') {
-            *lon += (grid[6] - '0') * (0.5 / 60.0) + (0.25 / 60.0);
-            *lat += (grid[7] - '0') * (0.25 / 60.0) + (0.125 / 60.0);
-        } else {
-            *lon += (2.5 / 60.0);
-            *lat += (1.25 / 60.0);
-        }
-    } else {
-        *lon += 1.0;
-        *lat += 0.5;
-    }
-}
-
-// ARRL contest distance calculation (spherical Earth R = 6371.0 km, 1 km minimum)
-double calculateARRLDistance(const char *grid1, const char *grid2) {
-    if (strncmp(grid1, grid2, 6) == 0) {
-        return 1.0;
-    }
-    double lat1, lon1, lat2, lon2;
-    calcLatLon(grid1, &lat1, &lon1);
-    calcLatLon(grid2, &lat2, &lon2);
-
-    double R = 6371.0; // Mean Earth radius in km (ARRL contest standard)
-    double dLat = toRad(lat2 - lat1);
-    double dLon = toRad(lon2 - lon1);
-    double rLat1 = toRad(lat1);
-    double rLat2 = toRad(lat2);
-
-    double a = sin(dLat / 2.0) * sin(dLat / 2.0) +
-               cos(rLat1) * cos(rLat2) *
-               sin(dLon / 2.0) * sin(dLon / 2.0);
-    if (a > 1.0) a = 1.0;
-    if (a < 0.0) a = 0.0;
-    double c = 2.0 * atan2(sqrt(a), sqrt(1.0 - a));
-    double d = R * c;
-
-    return (d < 1.0) ? 1.0 : d;
-}
-
-// Calculate Distance (meters) and Bearing (degrees)
-void calculateWGS84(double lat1, double lon1, double lat2, double lon2, double &distance, double &bearing) {
-    double R = 6378137.0; // WGS84 semi-major axis in meters
-
-    double dLat = toRad(lat2 - lat1);
-    double dLon = toRad(lon2 - lon1);
-
-    double rLat1 = toRad(lat1);
-    double rLat2 = toRad(lat2);
-
-    // Haversine Distance Calculation
-    double a = sin(dLat / 2.0) * sin(dLat / 2.0) +
-               cos(rLat1) * cos(rLat2) *
-               sin(dLon / 2.0) * sin(dLon / 2.0);
-    double c = 2.0 * atan2(sqrt(a), sqrt(1.0 - a));
-    distance = R * c;
-
-    // Initial Bearing Calculation
-    double y = sin(dLon) * cos(rLat2);
-    double x = cos(rLat1) * sin(rLat2) - sin(rLat1) * cos(rLat2) * cos(dLon);
-    bearing = toDeg(atan2(y, x));
-
-    // Normalize bearing to 0-360 degrees
-    if (bearing < 0.0) {
-        bearing += 360.0;
-    }
-}
 
 
 
 
 // --- Bearing Quality & State Machine ---
 #define HEADING_TIMEOUT_MS   1500
-#define BSZ 5
 
-const char* getNthField(const char* str, int n) {
-  int count = 0;
-  while (*str) {
-    if (count == n) return str;
-    if (*str == ',') count++;
-    str++;
-  }
-  if (count == n) return str;
-  return NULL;
-}
-
-bool parseKSXT(const char *sentence, float *heading_out, BearingQuality *quality_out) {
-  const char *h_field = getNthField(sentence, 5);
-  if (h_field == NULL || *h_field == ',' || *h_field == '*' || *h_field == '\0' || *h_field == '\r' || *h_field == '\n') {
-    *quality_out = BEARING_LOST;
-    return false;
-  }
-
-  const char *q_field = getNthField(sentence, 11);
-  int qual = 0;
-  if (q_field != NULL && *q_field >= '0' && *q_field <= '9') {
-    qual = *q_field - '0';
-  }
-
-  if (qual == 3 || qual == 4) {
-    *quality_out = BEARING_FIXED;
-  } else if (qual == 2 || qual == 5) {
-    *quality_out = BEARING_FLOAT;
-  } else {
-    // qual <= 1: 0 (invalid) or 1 (single-point / non-differential): NOT a differential bearing
-    *quality_out = BEARING_LOST;
-    return false;
-  }
-
-  *heading_out = strtof(h_field, NULL);
-  return true;
-}
-
-bool parseKSXTTime(const char *sentence, int *hours_out, int *minutes_out) {
-  const char *utc_field = getNthField(sentence, 1);
-  if (utc_field == NULL || *utc_field == ',' || *utc_field == '*' || *utc_field == '\0') {
-    return false;
-  }
-
-  int len = 0;
-  while (isdigit((unsigned char)utc_field[len])) {
-    len++;
-  }
-
-  int h = -1, m = -1;
-  if (len >= 12) {
-    // Format: yyyymmddhhmmss (14) or yyyymmddhhmm (12)
-    h = (utc_field[8] - '0') * 10 + (utc_field[9] - '0');
-    m = (utc_field[10] - '0') * 10 + (utc_field[11] - '0');
-  } else if (len == 6 || len == 4) {
-    // Format: hhmmss (6) or hhmm (4)
-    h = (utc_field[0] - '0') * 10 + (utc_field[1] - '0');
-    m = (utc_field[2] - '0') * 10 + (utc_field[3] - '0');
-  } else {
-    return false;
-  }
-
-  if (h >= 0 && h < 24 && m >= 0 && m < 60) {
-    *hours_out = h;
-    *minutes_out = m;
-    return true;
-  }
-  return false;
-}
-
-bool parseKSXTLocation(const char *sentence, float *lat_out, float *lon_out) {
-  const char *q_field = getNthField(sentence, 10);
-  if (q_field == NULL || *q_field <= '0' || *q_field > '9') {
-    return false;
-  }
-
-  const char *lon_field = getNthField(sentence, 2);
-  const char *lat_field = getNthField(sentence, 3);
-  if (lon_field == NULL || *lon_field == ',' || *lon_field == '*' ||
-      lat_field == NULL || *lat_field == ',' || *lat_field == '*') {
-    return false;
-  }
-
-  float lon = strtof(lon_field, NULL);
-  float lat = strtof(lat_field, NULL);
-  if (lat < -90.0f || lat > 90.0f || lon < -180.0f || lon > 180.0f || (lat == 0.0f && lon == 0.0f)) {
-    return false;
-  }
-
-  *lat_out = lat;
-  *lon_out = lon;
-  return true;
-}
-
-bool parseHDT(const char *sentence, float *heading_out, BearingQuality *quality_out) {
-  const char *h_field = getNthField(sentence, 1);
-  if (h_field == NULL || *h_field == ',' || *h_field == '*' || *h_field == '\0' || *h_field == '\r' || *h_field == '\n') {
-    *quality_out = BEARING_LOST;
-    return false;
-  }
-
-  *heading_out = strtof(h_field, NULL);
-  *quality_out = BEARING_FIXED;
-  return true;
-}
-
-bool parseTHS(const char *sentence, float *heading_out, BearingQuality *quality_out) {
-  const char *h_field = getNthField(sentence, 1);
-  if (h_field == NULL || *h_field == ',' || *h_field == '*' || *h_field == '\0' || *h_field == '\r' || *h_field == '\n') {
-    *quality_out = BEARING_LOST;
-    return false;
-  }
-
-  const char *m_field = getNthField(sentence, 2);
-  if (m_field == NULL || *m_field == 'V' || *m_field == 'v' || *m_field == ',' || *m_field == '*') {
-    *quality_out = BEARING_LOST;
-    return false;
-  }
-
-  *heading_out = strtof(h_field, NULL);
-  *quality_out = BEARING_FIXED;
-  return true;
-}
-
-bool parseHeadingSentence(const char *sentence, float *heading_out, BearingQuality *quality_out) {
-  if (strncmp(sentence, "$KSXT", 5) == 0) {
-    return parseKSXT(sentence, heading_out, quality_out);
-  } else if (strncmp(sentence, "$GNTHS", 6) == 0 || strncmp(sentence, "$GPTHS", 6) == 0) {
-    return parseTHS(sentence, heading_out, quality_out);
-  } else if (strncmp(sentence, "$GNHDT", 6) == 0 || strncmp(sentence, "$GPHDT", 6) == 0) {
-    return parseHDT(sentence, heading_out, quality_out);
-  }
-  return false;
-}
-
-// --- Antenna Calibration Math Helpers ---
-float normalizeOffset(float delta_deg) {
-  while (delta_deg > 180.0f) delta_deg -= 360.0f;
-  while (delta_deg < -180.0f) delta_deg += 360.0f;
-  return delta_deg;
-}
-
-double applyBearingOffset(double uncalibrated_bearing, float offset_deg) {
-  double b = fmod(uncalibrated_bearing + (double)offset_deg, 360.0);
-  if (b < 0.0) b += 360.0;
-  return b;
-}
-
-double calcCurrentBearing(float s_avg, float c_avg, float cal_offset = 0.0f) {
-  double b = fmod(toDeg(atan2((double)s_avg / (double)BSZ, (double)c_avg / (double)BSZ)) + 270.0 + (double)cal_offset, 360.0);
-  if (b < 0.0) b += 360.0;
-  return b;
-}
-
-GpsLinkVerdict evaluateGpsStream(
-    unsigned long now,
-    unsigned long totalBytes,
-    unsigned long lastByteTime,
-    unsigned int gllCount,
-    unsigned int ksxtCount,
-    unsigned int hdtCount,
-    bool hasLoc,
-    bool hasHdg,
-    BearingQuality quality)
-{
-  if (totalBytes == 0 || (now - lastByteTime > 3000)) {
-    return GPS_LINK_DISCONNECTED;
-  }
-  if (gllCount == 0 && ksxtCount == 0 && hdtCount == 0) {
-    return GPS_LINK_NOISY_CORRUPT;
-  }
-  if (hasHdg) {
-    if (quality == BEARING_FIXED) return GPS_LINK_OK_FIXED;
-    if (quality == BEARING_FLOAT) return GPS_LINK_HEADING_FLOAT;
-  }
-  if (hasLoc) {
-    return GPS_LINK_POSITION_ONLY;
-  }
-  return GPS_LINK_ACQUIRING;
-}
-// --- End Bearing Parsing Functions ---
-
-float sinbuff[BSZ], cosbuff[BSZ];
-float sinavg = 0.0f, cosavg = 0.0f;
-int sin_i = 0;
+BearingFilter bearingFilter;
 
 bool hasHeading = false;
 BearingQuality currentBearingQuality = BEARING_NONE;
 unsigned long lastHeadingUpdate = 0;
 bool rovdist = false;
-float mylongitude = 0.0, mylatitude = 0.0;
+double mylongitude = 0.0, mylatitude = 0.0;
 double remlongitude = 0.0, remlatitude = 0.0;
 double distance = 0.0, bearing = 0.0, revbearing = 0.0;
 
@@ -722,7 +386,7 @@ void drawRawHeadingInModal() {
   gfx->setCursor(55, 148);
   char buf[36];
   if (hasHeading) {
-    double rawHdg = calcCurrentBearing(sinavg, cosavg, 0.0f);
+    double rawHdg = bearingFilter.getRawHeading();
     sprintf(buf, "Raw GNSS Hdg   : %5.1f", rawHdg);
   } else {
     sprintf(buf, "Raw GNSS Hdg   : ---.-");
@@ -902,9 +566,9 @@ void handleCalSerialCommand(const String &cmd) {
     Serial.printf("  Stored Offset : %+5.1f deg\r\n", calibrationOffset);
     Serial.printf("  Target Bearing: %5.1f deg\r\n", bearing);
     if (hasHeading) {
-      double rawHdg = calcCurrentBearing(sinavg, cosavg, 0.0f);
+      double rawHdg = bearingFilter.getRawHeading();
       Serial.printf("  Raw GNSS Hdg  : %5.1f deg\r\n", rawHdg);
-      Serial.printf("  Calibrated Hdg: %5.1f deg\r\n", calcCurrentBearing(sinavg, cosavg, calibrationOffset));
+      Serial.printf("  Calibrated Hdg: %5.1f deg\r\n", bearingFilter.getCalibratedHeading(calibrationOffset));
     } else {
       Serial.println(F("  Raw GNSS Hdg  : ---.- (No heading fix)"));
     }
@@ -918,7 +582,7 @@ void handleCalSerialCommand(const String &cmd) {
     if (!hasHeading) {
       Serial.println(F("[CAL ERROR] Cannot snap: No valid GNSS heading fix."));
     } else {
-      double rawHdg = calcCurrentBearing(sinavg, cosavg, 0.0f);
+      double rawHdg = bearingFilter.getRawHeading();
       float newOffset = normalizeOffset((float)(bearing - rawHdg));
       saveCalibration(newOffset);
       updateBearings();
@@ -960,16 +624,16 @@ void drawCurrentBearing() {
     gfx->print("---.-");
   } else {
     char str[10];
-    sprintf(str, "%5.1f", calcCurrentBearing(sinavg, cosavg, calibrationOffset));
+    sprintf(str, "%5.1f", bearingFilter.getCalibratedHeading(calibrationOffset));
     gfx->print(str);
   }
   gfx->setTextColor(WHITE, BLACK);
 }
 
 void updateBearings() {
-  calcLatLon(remote, &remlatitude, &remlongitude);
-  calculateWGS84(mylatitude, mylongitude, remlatitude, remlongitude, distance, bearing);
-  calculateWGS84(remlatitude, remlongitude, mylatitude, mylongitude, distance, revbearing);
+  gridToGeoPoint(remote, &remlatitude, &remlongitude);
+  calculateWgs84(mylatitude, mylongitude, remlatitude, remlongitude, distance, bearing);
+  calculateWgs84(remlatitude, remlongitude, mylatitude, mylongitude, distance, revbearing);
 
   if (currentUiMode == UI_MODE_CALIBRATING) {
     return;
@@ -996,7 +660,7 @@ void updateBearings() {
 
 #if ENABLE_ARRL_DIST
   char arrl_str[24];
-  double arrl_dist = calculateARRLDistance(mygrid, remote);
+  double arrl_dist = calculateArrlContestDistance(mygrid, remote);
   sprintf(arrl_str, "ARRL %6.1f k  ", arrl_dist);
   gfx->setTextSize(ARRL_SZ);
   gfx->setCursor(ARRL_X, ARRL_Y);
@@ -1012,10 +676,7 @@ void setup() {
   Serial.println(FW_VERSION);
   Serial.println(F("Commands: 'status' (GPS stream diagnosis), 'test' (visual demo), 'sim' (simulation)"));
 
-  for (int i = 0; i < BSZ; i++) {
-    sinbuff[i] = 0.0;
-    cosbuff[i] = 0.0;
-  }
+  bearingFilter.reset();
 
   initPins();
   initBacklight();
@@ -1023,7 +684,7 @@ void setup() {
   initEncoder();
   loadCalibration();
 
-  calcLocator(mygrid, mylatitude, mylongitude);
+  geoPointToGrid(mylatitude, mylongitude, mygrid);
   gfx->setTextSize(LOC_SZ);
   gfx->setCursor(LOC_X, LOC_Y);
   gfx->print(mygrid);
@@ -1191,7 +852,7 @@ void runVisualSelfTest() {
   char saved_mygrid[9];
   memcpy(saved_remote, remote, sizeof(saved_remote));
   memcpy(saved_mygrid, mygrid, sizeof(saved_mygrid));
-  float saved_mylat = mylatitude, saved_mylon = mylongitude;
+  double saved_mylat = mylatitude, saved_mylon = mylongitude;
   bool saved_hasHeading = hasHeading;
   bool saved_rovdist = rovdist;
   bool saved_isEditing = isEditing;
@@ -1210,8 +871,7 @@ void runVisualSelfTest() {
   mylongitude = -119.458;
   hasHeading = true;
   currentBearingQuality = BEARING_FIXED;
-  sinavg = sin(toRad(180.0)) * BSZ;
-  cosavg = cos(toRad(180.0)) * BSZ;
+  bearingFilter.seed(180.0f);
   rovdist = false;
   printLocalGrid();
   printrem();
@@ -1335,10 +995,10 @@ void runVisualSelfTest() {
 
   // Display PASS/FAIL Result Banner
   bool all_pass = true;
-  if (fabs(calculateARRLDistance("CM87wa", "CM87wa") - 1.0) > 0.001) all_pass = false;
+  if (fabs(calculateArrlContestDistance("CM87wa", "CM87wa") - 1.0) > 0.001) all_pass = false;
   double lat_wb, lon_wb, rover_dist, rover_bear;
-  calcLatLon("CM87wb", &lat_wb, &lon_wb);
-  calculateWGS84(38.354, -119.458, lat_wb, lon_wb, rover_dist, rover_bear);
+  gridToGeoPoint("CM87wb", &lat_wb, &lon_wb);
+  calculateWgs84(38.354, -119.458, lat_wb, lon_wb, rover_dist, rover_bear);
   if ((int)floor(rover_dist / 1000.0) >= 16) all_pass = false;
   if (fabs(normalizeOffset(5.0f - 355.0f) - 10.0f) > 0.01f) all_pass = false;
 
@@ -1394,11 +1054,7 @@ void processGpsSentence(char *sentence) {
     lastHeadingUpdate = millis();
     currentBearingQuality = new_quality;
 
-    sinavg -= sinbuff[sin_i];
-    sinavg += sinbuff[sin_i] = sin(toRad(new_heading));
-    cosavg -= cosbuff[sin_i];
-    cosavg += cosbuff[sin_i] = cos(toRad(new_heading));
-    sin_i = (1 + sin_i) % BSZ;
+    bearingFilter.push(new_heading);
 
     drawCurrentBearing();
   } else if (strncmp(sentence, "$KSXT", 5) == 0 ||
@@ -1437,13 +1093,13 @@ void processGpsSentence(char *sentence) {
       }
     }
 
-    float ksxt_lat = 0.0f, ksxt_lon = 0.0f;
+    double ksxt_lat = 0.0, ksxt_lon = 0.0;
     if (parseKSXTLocation(sentence, &ksxt_lat, &ksxt_lon)) {
-      if (!hasLocation || fabs(ksxt_lat - mylatitude) > 0.0001f || fabs(ksxt_lon - mylongitude) > 0.0001f) {
+      if (!hasLocation || fabs(ksxt_lat - mylatitude) > 0.00001 || fabs(ksxt_lon - mylongitude) > 0.00001) {
         hasLocation = true;
         mylatitude = ksxt_lat;
         mylongitude = ksxt_lon;
-        calcLocator(mygrid, mylatitude, mylongitude);
+        geoPointToGrid(mylatitude, mylongitude, mygrid);
 
         if (currentUiMode != UI_MODE_CALIBRATING) {
           gfx->setTextSize(LOC_SZ);
@@ -1461,14 +1117,14 @@ void processGpsSentence(char *sentence) {
     char *ptr;
     char buf[9];
 
-    parselatlon(&sentence[7], &mylatitude, &mylongitude, &ptr);
+    parseLegacyLatLon(&sentence[7], &mylatitude, &mylongitude, &ptr);
     int gll_h = aton(ptr[0]) * 10.0 + aton(ptr[1]);
     int gll_m = aton(ptr[2]) * 10.0 + aton(ptr[3]);
 
     char *status_comma = strchr(ptr, ',');
     if ((status_comma != NULL && *(status_comma + 1) == 'A') || ptr[10] == 'A') {
       hasLocation = true;
-      calcLocator(mygrid, mylatitude, mylongitude);
+      geoPointToGrid(mylatitude, mylongitude, mygrid);
 
       if (currentUiMode != UI_MODE_CALIBRATING) {
         gfx->setTextSize(LOC_SZ);
@@ -1529,7 +1185,7 @@ void handleSimSerialCommand(const String &cmd) {
       Serial.printf("  Last Sim Packet   : %lu ms ago\r\n", millis() - lastSimInjectionMillis);
     }
     Serial.printf("  Current Heading   : %5.1f deg (Quality: %s)\r\n",
-                  hasHeading ? calcCurrentBearing(sinavg, cosavg, calibrationOffset) : 0.0,
+                  hasHeading ? bearingFilter.getCalibratedHeading(calibrationOffset) : 0.0,
                   currentBearingQuality == BEARING_FIXED ? "FIXED" : (currentBearingQuality == BEARING_FLOAT ? "FLOAT" : "LOST"));
     Serial.printf("  Current Position  : %9.5f, %9.5f (Grid: %s)\r\n", mylatitude, mylongitude, mygrid);
     Serial.printf("  Rover Mode Active : %s\r\n", rovdist ? "YES (<16k alert tracking)" : "NO (Stationary target tracking)");
@@ -1574,12 +1230,7 @@ void handleSimSerialCommand(const String &cmd) {
     hasHeading = true;
     lastHeadingUpdate = millis();
     currentBearingQuality = q;
-    for (int i = 0; i < BSZ; i++) {
-      sinbuff[i] = sin(toRad(h));
-      cosbuff[i] = cos(toRad(h));
-    }
-    sinavg = sin(toRad(h)) * BSZ;
-    cosavg = cos(toRad(h)) * BSZ;
+    bearingFilter.seed(h);
     drawCurrentBearing();
     Serial.printf("[SIM] Heading set to %5.1f deg (Quality: %s)\r\n", h, q == BEARING_FIXED ? "FIXED" : (q == BEARING_FLOAT ? "FLOAT" : "LOST"));
   } else if (arg.startsWith("pos") || arg.startsWith("POS")) {
@@ -1587,12 +1238,12 @@ void handleSimSerialCommand(const String &cmd) {
     p.trim();
     int sp = p.indexOf(' ');
     if (sp > 0) {
-      float lat = p.substring(0, sp).toFloat();
-      float lon = p.substring(sp + 1).toFloat();
+      double lat = p.substring(0, sp).toDouble();
+      double lon = p.substring(sp + 1).toDouble();
       mylatitude = lat;
       mylongitude = lon;
       hasLocation = true;
-      calcLocator(mygrid, mylatitude, mylongitude);
+      geoPointToGrid(mylatitude, mylongitude, mygrid);
       if (currentUiMode != UI_MODE_CALIBRATING) {
         gfx->setTextSize(LOC_SZ);
         gfx->setCursor(LOC_X, LOC_Y);
@@ -1612,11 +1263,11 @@ void handleSimSerialCommand(const String &cmd) {
       strncpy(gbuf, g.c_str(), 8);
       gbuf[8] = '\0';
       double lat = 0.0, lon = 0.0;
-      calcLatLon(gbuf, &lat, &lon);
-      mylatitude = (float)lat;
-      mylongitude = (float)lon;
+      gridToGeoPoint(gbuf, &lat, &lon);
+      mylatitude = lat;
+      mylongitude = lon;
       hasLocation = true;
-      calcLocator(mygrid, mylatitude, mylongitude);
+      geoPointToGrid(mylatitude, mylongitude, mygrid);
       if (currentUiMode != UI_MODE_CALIBRATING) {
         gfx->setTextSize(LOC_SZ);
         gfx->setCursor(LOC_X, LOC_Y);
@@ -1645,7 +1296,7 @@ void handleSimSerialCommand(const String &cmd) {
       if (og.length() >= 4) {
         strncpy(orig_grid, og.c_str(), 6);
         orig_grid[6] = '\0';
-        calcLatLon(orig_grid, &orig_lat, &orig_lon);
+        gridToGeoPoint(orig_grid, &orig_lat, &orig_lon);
       }
     } else if (p.length() > 0) {
       dist_km = p.toFloat();
@@ -1658,10 +1309,10 @@ void handleSimSerialCommand(const String &cmd) {
 
     double lat_offset = (dist_km * 1000.0 * cos(toRad(45.0))) / 111132.954;
     double lon_offset = (dist_km * 1000.0 * sin(toRad(45.0))) / (111132.954 * cos(toRad(orig_lat)));
-    mylatitude = (float)(orig_lat + lat_offset);
-    mylongitude = (float)(orig_lon + lon_offset);
+    mylatitude = orig_lat + lat_offset;
+    mylongitude = orig_lon + lon_offset;
     hasLocation = true;
-    calcLocator(mygrid, mylatitude, mylongitude);
+    geoPointToGrid(mylatitude, mylongitude, mygrid);
 
     if (currentUiMode != UI_MODE_CALIBRATING) {
       gfx->setTextSize(LOC_SZ);
@@ -1907,7 +1558,7 @@ void loop() {
             if (55 <= p.x && p.x <= 235 && 230 <= p.y && p.y <= 278) {
               drawSnapButton(true);
               if (hasHeading) {
-                double rawHdg = calcCurrentBearing(sinavg, cosavg, 0.0f);
+                double rawHdg = bearingFilter.getRawHeading();
                 proposedCalibrationOffset = normalizeOffset((float)(bearing - rawHdg));
                 drawProposedOffsetRow();
               }
@@ -1939,7 +1590,7 @@ void loop() {
             // Tap on CAL Pill (Row 3 center slot) -> Immediate tap opens modal!
             if (CAL_TOUCH_X_MIN <= p.x && p.x <= CAL_TOUCH_X_MAX && CAL_TOUCH_Y_MIN <= p.y && p.y <= CAL_TOUCH_Y_MAX) {
               if (hasHeading) {
-                double rawHdg = calcCurrentBearing(sinavg, cosavg, 0.0f);
+                double rawHdg = bearingFilter.getRawHeading();
                 proposedCalibrationOffset = normalizeOffset((float)(bearing - rawHdg));
               } else {
                 proposedCalibrationOffset = calibrationOffset;

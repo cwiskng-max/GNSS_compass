@@ -2,7 +2,10 @@
 #include <cmath>
 #include <cstring>
 #include <string>
-#include "extracted_math.h"
+#include "../src/types.h"
+#include "../src/geo/geo_math.h"
+#include "../src/geo/maidenhead.h"
+#include "../src/protocol/nmea_parser.h"
 
 int tests_run = 0;
 int tests_passed = 0;
@@ -34,22 +37,22 @@ void test_trig_helpers() {
     PASS();
 }
 
-void test_calc_lat_lon() {
-    TEST("calcLatLon center coordinates");
+void test_grid_to_geopoint() {
+    TEST("gridToGeoPoint center coordinates");
     double lat = 0.0, lon = 0.0;
 
     // JJ00AA: Origin grid center (Equator and Prime Meridian)
-    calcLatLon("JJ00AA", &lat, &lon);
+    ASSERT_TRUE(gridToGeoPoint("JJ00AA", &lat, &lon));
     ASSERT_NEAR(lat, 1.25 / 60.0, 1e-6); // +0.020833 deg
     ASSERT_NEAR(lon, 2.5 / 60.0, 1e-6);  // +0.041667 deg
 
     // 4-character grid: EN40 defaults to center of 2 deg x 1 deg square
-    calcLatLon("EN40", &lat, &lon);
+    ASSERT_TRUE(gridToGeoPoint("EN40", &lat, &lon));
     ASSERT_NEAR(lat, 40.5, 1e-5);
     ASSERT_NEAR(lon, -91.0, 1e-5);
 
     // 8-character grid: EN40ab56 preserves extended precision
-    calcLatLon("EN40ab56", &lat, &lon);
+    ASSERT_TRUE(gridToGeoPoint("EN40ab56", &lat, &lon));
     ASSERT_NEAR(lat, 40.06875, 1e-5);
     ASSERT_NEAR(lon, -91.954167, 1e-5);
 
@@ -61,13 +64,13 @@ void test_calc_lat_lon() {
 void test_arrl_1km_rule() {
     TEST("ARRL 1 km minimum distance rule");
     // Same 6-character grid must return exactly 1.0 km
-    ASSERT_NEAR(calculateARRLDistance("CM87wa", "CM87wa"), 1.0, 1e-9);
-    ASSERT_NEAR(calculateARRLDistance("FN31AA", "FN31AA"), 1.0, 1e-9);
-    ASSERT_NEAR(calculateARRLDistance("JJ00AA", "JJ00AA"), 1.0, 1e-9);
-    ASSERT_NEAR(calculateARRLDistance("ZA00AA", "ZA00AA"), 1.0, 1e-9);
+    ASSERT_NEAR(calculateArrlContestDistance("CM87wa", "CM87wa"), 1.0, 1e-9);
+    ASSERT_NEAR(calculateArrlContestDistance("FN31AA", "FN31AA"), 1.0, 1e-9);
+    ASSERT_NEAR(calculateArrlContestDistance("JJ00AA", "JJ00AA"), 1.0, 1e-9);
+    ASSERT_NEAR(calculateArrlContestDistance("ZA00AA", "ZA00AA"), 1.0, 1e-9);
 
     // Adjacent subsquares (2.5' lat step ~ 4.63 km) must exceed 1.0 km
-    double adj = calculateARRLDistance("CM87AA", "CM87AB");
+    double adj = calculateArrlContestDistance("CM87AA", "CM87AB");
     ASSERT_TRUE(adj > 1.0);
     ASSERT_NEAR(adj, 4.63, 0.1);
     PASS();
@@ -76,63 +79,63 @@ void test_arrl_1km_rule() {
 void test_arrl_symmetry_and_known_paths() {
     TEST("ARRL distance symmetry and known distance ranges");
     // Symmetry: distance(A, B) == distance(B, A)
-    double d1 = calculateARRLDistance("CM87wa", "DM04ms");
-    double d2 = calculateARRLDistance("DM04ms", "CM87wa");
+    double d1 = calculateArrlContestDistance("CM87wa", "DM04ms");
+    double d2 = calculateArrlContestDistance("DM04ms", "CM87wa");
     ASSERT_NEAR(d1, d2, 1e-9);
 
     // CM87wa to DM04ms center-to-center is ~379.37 km
     ASSERT_NEAR(d1, 379.37, 0.5);
 
     // Boot default distance: JJ00AA to ZA00AA is > 10,000 km
-    double boot_dist = calculateARRLDistance("JJ00AA", "ZA00AA");
+    double boot_dist = calculateArrlContestDistance("JJ00AA", "ZA00AA");
     ASSERT_TRUE(boot_dist > 10000.0);
     PASS();
 }
 
 void test_wgs84_distance_and_bearing() {
-    TEST("calculateWGS84 distance and cardinal bearings");
+    TEST("calculateWgs84 distance and cardinal bearings");
     double dist = 0.0, bearing = 0.0;
 
     // Same coordinates
-    calculateWGS84(37.5, -122.0, 37.5, -122.0, dist, bearing);
+    calculateWgs84(37.5, -122.0, 37.5, -122.0, dist, bearing);
     ASSERT_NEAR(dist, 0.0, 1e-6);
 
     // True North: lat increases, lon constant -> bearing 0 deg
-    calculateWGS84(0.0, 0.0, 1.0, 0.0, dist, bearing);
+    calculateWgs84(0.0, 0.0, 1.0, 0.0, dist, bearing);
     ASSERT_NEAR(bearing, 0.0, 1e-4);
     ASSERT_NEAR(dist, 111319.5, 1000.0);
 
     // True East: lat constant, lon increases -> bearing 90 deg
-    calculateWGS84(0.0, 0.0, 0.0, 1.0, dist, bearing);
+    calculateWgs84(0.0, 0.0, 0.0, 1.0, dist, bearing);
     ASSERT_NEAR(bearing, 90.0, 1e-4);
 
     // True South: lat decreases, lon constant -> bearing 180 deg
-    calculateWGS84(1.0, 0.0, 0.0, 0.0, dist, bearing);
+    calculateWgs84(1.0, 0.0, 0.0, 0.0, dist, bearing);
     ASSERT_NEAR(bearing, 180.0, 1e-4);
 
     // True West: lat constant, lon decreases -> bearing 270 deg
-    calculateWGS84(0.0, 1.0, 0.0, 0.0, dist, bearing);
+    calculateWgs84(0.0, 1.0, 0.0, 0.0, dist, bearing);
     ASSERT_NEAR(bearing, 270.0, 1e-4);
     PASS();
 }
 
 void test_locator_round_trip() {
-    TEST("calcLocator round-trip consistency");
+    TEST("geoPointToGrid and gridToGeoPoint round-trip consistency");
     const char *grids[] = {"CM87AA", "FN31AA", "JJ00AA", "IO91AA"};
     for (const char *expected : grids) {
         double lat = 0.0, lon = 0.0;
-        calcLatLon(expected, &lat, &lon);
+        ASSERT_TRUE(gridToGeoPoint(expected, &lat, &lon));
 
         char result[9];
-        calcLocator(result, (float)lat, (float)lon);
+        ASSERT_TRUE(geoPointToGrid(lat, lon, result, 8));
         ASSERT_TRUE(std::strncmp(result, expected, 6) == 0);
     }
 
     // 8-character full precision round-trip
     double lat8 = 0.0, lon8 = 0.0;
-    calcLatLon("EN40ab56", &lat8, &lon8);
+    ASSERT_TRUE(gridToGeoPoint("EN40ab56", &lat8, &lon8));
     char result8[9];
-    calcLocator(result8, (float)lat8, (float)lon8);
+    ASSERT_TRUE(geoPointToGrid(lat8, lon8, result8, 8));
     ASSERT_TRUE(std::strcmp(result8, "EN40AB56") == 0);
 
     PASS();
@@ -289,17 +292,17 @@ void test_ksxt_time_and_location() {
     const char *ksxt_empty_time = "$KSXT,,116.23662400,40.07897925,68.3830,299.22,-67.03,190.28,0.022,,1,3,46,28*27";
     ASSERT_TRUE(!parseKSXTTime(ksxt_empty_time, &h, &m));
 
-    // 5. Valid Location extraction (Pos qual == 1, Single)
-    float lat = 0.0f, lon = 0.0f;
+    // 5. Valid Location extraction (Pos qual == 1, Single, full 8-decimal double precision)
+    double lat = 0.0, lon = 0.0;
     ASSERT_TRUE(parseKSXTLocation(ksxt_full, &lat, &lon));
-    ASSERT_NEAR(lat, 40.07897925, 1e-4);
-    ASSERT_NEAR(lon, 116.23662400, 1e-4);
+    ASSERT_NEAR(lat, 40.07897925, 1e-8);
+    ASSERT_NEAR(lon, 116.23662400, 1e-8);
 
     // 6. Western / Southern hemisphere coordinates
     const char *ksxt_west = "$KSXT,20261024185730.00,-122.12345678,37.45678901,68.3830,299.22,-67.03,190.28,0.022,,1,3,46,28*27";
     ASSERT_TRUE(parseKSXTLocation(ksxt_west, &lat, &lon));
-    ASSERT_NEAR(lat, 37.45678901, 1e-4);
-    ASSERT_NEAR(lon, -122.12345678, 1e-4);
+    ASSERT_NEAR(lat, 37.45678901, 1e-8);
+    ASSERT_NEAR(lon, -122.12345678, 1e-8);
 
     // 7. Invalid Location (Pos qual == 0)
     const char *ksxt_no_pos = "$KSXT,20261024185730.00,116.23662400,40.07897925,68.3830,299.22,-67.03,190.28,0.022,,0,0,0,0*27";
@@ -416,6 +419,42 @@ void test_antenna_calibration() {
     PASS();
 }
 
+void test_bearing_filter_class() {
+    TEST("BearingFilter vector smoothing, seed, and 360 wrap-around");
+    BearingFilter filter;
+    ASSERT_TRUE(!filter.hasSamples());
+    ASSERT_TRUE(filter.sampleCount() == 0);
+
+    // Baseline pointing North (0 deg): (0 + 270) % 360 = 270 deg
+    filter.seed(0.0f);
+    ASSERT_TRUE(filter.hasSamples());
+    ASSERT_TRUE(filter.sampleCount() == 5);
+    ASSERT_NEAR(filter.getRawHeading(), 270.0, 1e-3);
+
+    // With +10 deg calibration offset -> 280 deg
+    ASSERT_NEAR(filter.getCalibratedHeading(10.0f), 280.0, 1e-3);
+    // With -10 deg calibration offset -> 260 deg
+    ASSERT_NEAR(filter.getCalibratedHeading(-10.0f), 260.0, 1e-3);
+
+    // Baseline pointing East (90 deg): (90 + 270) % 360 = 0 deg
+    filter.seed(90.0f);
+    ASSERT_NEAR(filter.getRawHeading(), 0.0, 1e-3);
+
+    // Push samples across 0/360 wrap-around: alternate 359 deg and 1 deg
+    // True circular average of 359 and 1 is 0 deg (or 360 deg)
+    // Raw heading = (0 + 270) = 270 deg
+    filter.reset();
+    filter.push(359.0f);
+    filter.push(1.0f);
+    filter.push(359.0f);
+    filter.push(1.0f);
+    filter.push(0.0f);
+    ASSERT_TRUE(filter.sampleCount() == 5);
+    ASSERT_NEAR(filter.getRawHeading(), 270.0, 0.5);
+
+    PASS();
+}
+
 void test_gps_stream_evaluation() {
     TEST("evaluateGpsStream link verdicts (Disconnected, Corrupt, Acquiring, Float, Fixed)");
 
@@ -449,13 +488,56 @@ void test_gps_stream_evaluation() {
     PASS();
 }
 
+void test_geopoint_and_modern_domain() {
+    TEST("GeoPoint domain model, grid projection, and rover threshold checks");
+    GeoPoint origin(38.354, -119.458, true);
+    GeoPoint target;
+
+    // Grid center to GeoPoint
+    ASSERT_TRUE(gridToGeoPoint("CM87wb", target));
+    ASSERT_TRUE(target.isValid);
+    ASSERT_NEAR(target.latitude, 37.0625, 1e-4);
+    ASSERT_NEAR(target.longitude, -122.125, 1e-4);
+
+    // GeoPoint back to Grid
+    char grid6[7];
+    ASSERT_TRUE(geoPointToGrid(origin, grid6, 6));
+    ASSERT_STR_EQ(grid6, "DM08GI");
+
+    // WGS84 with GeoPoint structs
+    double distM = 0.0, bearingDeg = 0.0;
+    calculateWgs84(origin, target, distM, bearingDeg);
+    ASSERT_TRUE(distM > 270000.0 && distM < 280000.0); // ~275 km
+
+    // Reverse bearing
+    double revBearing = calculateReverseBearing(origin, target);
+    ASSERT_NEAR(revBearing, 57.72, 0.05);
+
+    // Rover transit alert: station within 15 km is inside alert; station at 17 km is outside
+    GeoPoint nearby(38.360, -119.460, true);
+    ASSERT_TRUE(isRoverTransitInsideAlert(nearby, origin, 16.0));
+
+    GeoPoint farAway(38.550, -119.460, true); // ~21 km North
+    ASSERT_TRUE(!isRoverTransitInsideAlert(farAway, origin, 16.0));
+
+    // KSXT location parser into GeoPoint
+    const char *ksxt_sample = "$KSXT,20261024185730.00,-119.45821000,38.35412000,68.3830,299.22,-67.03,190.28,0.022,,1,3,46,28*27";
+    GeoPoint parsedGps;
+    ASSERT_TRUE(parseKsxtLocation(ksxt_sample, parsedGps));
+    ASSERT_TRUE(parsedGps.isValid);
+    ASSERT_NEAR(parsedGps.latitude, 38.35412000, 1e-6);
+    ASSERT_NEAR(parsedGps.longitude, -119.45821000, 1e-6);
+
+    PASS();
+}
+
 int main() {
     std::cout << "========================================" << std::endl;
     std::cout << "  GNSS Compass Unit Test Suite" << std::endl;
     std::cout << "========================================" << std::endl;
 
     test_trig_helpers();
-    test_calc_lat_lon();
+    test_grid_to_geopoint();
     test_arrl_1km_rule();
     test_arrl_symmetry_and_known_paths();
     test_wgs84_distance_and_bearing();
@@ -467,8 +549,10 @@ int main() {
     test_ksxt_time_and_location();
     test_legacy_hdt_ths_parsing();
     test_current_bearing_calculation();
+    test_bearing_filter_class();
     test_antenna_calibration();
     test_gps_stream_evaluation();
+    test_geopoint_and_modern_domain();
 
     std::cout << "========================================" << std::endl;
     std::cout << "  All " << tests_passed << " / " << tests_run << " tests PASSED successfully!" << std::endl;

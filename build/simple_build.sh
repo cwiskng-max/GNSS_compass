@@ -15,7 +15,7 @@ echo
 
 # Prepare scratch folder for arduino-cli
 mkdir -p "$SCRATCH_DIR"
-cp "$REPO_ROOT/gps_compass.ino" "$SCRATCH_DIR/"
+cp -r "$REPO_ROOT/gps_compass.ino" "$REPO_ROOT/src" "$SCRATCH_DIR/"
 
 # Compile using modern --output-dir (replaces deprecated --export-binaries)
 arduino-cli compile \
