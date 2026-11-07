@@ -42,6 +42,8 @@ The test suite runs automatically on every push and pull request in [`.github/wo
 17. **Configuration Constants (`src/config.h`):** Verifies hardware pin assignments, screen dimensions, layout coordinates, timeout macros, and target grid editing character macros.
 18. **Antenna Calibration Class (`src/system/calibration.*`):** Tests two-stage offset staging, nudging (+/-0.1 deg), snap calculation, reset, flash commit, wrap-around normalization, and mock NVS persistence across instances.
 19. **GPS Simulator (`src/gnss/simulator.*`):** Tests simulation state activation, virtual sentence injection callbacks, NMEA XOR checksums, synthetic `$KSXT`, `$GNGLL`, and `$GNHDT` sentence generation with roundtrip parser verification, and 64-bit double geodesic rover displacement calculations.
+20. **GNSS Manager (`src/gnss/gps_manager.*`):** Tests UART byte ingestion, line assembly buffer bounds, solution extraction, staleness watchdog timeout transition (`HEADING_TIMEOUT_MS`), and stream health evaluation.
+21. **Host USB Serial CLI (`src/protocol/serial_cli.*`):** Tests USB command execution (`help`, `status`, `cal`, `sim`), terminal echo/backspace handling, antenna calibration snap/zero calculations, simulation parameters, and raw sentence dispatching.
 
 ---
 

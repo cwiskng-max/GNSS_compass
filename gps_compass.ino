@@ -11,11 +11,10 @@
 #include "src/geo/geo_math.h"
 #include "src/geo/maidenhead.h"
 #include "src/protocol/nmea_parser.h"
+#include "src/protocol/serial_cli.h"
 #include "src/system/calibration.h"
 #include "src/gnss/simulator.h"
-
-// Create an instance of the HardwareSerial class for Serial 2
-HardwareSerial gpsSerial(2);
+#include "src/gnss/gps_manager.h"
 
 char remote[7] = "ZA00AA";
 char mygrid[9] = "JJ00AA00";
@@ -24,9 +23,13 @@ bool hasTime = false;
 int hours = 0;
 int minutes = 0;
 
-// System Singletons
+// System Subsystems
+GpsManager gpsManager;
 Calibration calibration;
 GpsSimulator gpsSimulator;
+SerialCli serialCli(gpsManager, calibration, gpsSimulator);
+
+BearingFilter &bearingFilter = gpsManager.getBearingFilter();
 
 // --- UI State Variables ---
 enum UiMode {
@@ -181,8 +184,6 @@ void printrem() {
 
 
 // --- Bearing Quality & State Machine ---
-BearingFilter bearingFilter;
-
 bool hasHeading = false;
 BearingQuality currentBearingQuality = BEARING_NONE;
 unsigned long lastHeadingUpdate = 0;
@@ -190,16 +191,6 @@ bool rovdist = false;
 double mylongitude = 0.0, mylatitude = 0.0;
 double remlongitude = 0.0, remlatitude = 0.0;
 double distance = 0.0, bearing = 0.0, revbearing = 0.0;
-
-// GPS Stream Diagnostic Counters
-unsigned long totalGpsBytesReceived = 0;
-unsigned long lastGpsByteMillis = 0;
-unsigned int gllPacketCount = 0;
-unsigned long lastGllMillis = 0;
-unsigned int ksxtPacketCount = 0;
-unsigned long lastKsxtMillis = 0;
-unsigned int hdtPacketCount = 0;
-unsigned long lastHdtMillis = 0;
 
 void loadCalibration() {
   calibration.begin();
@@ -435,49 +426,6 @@ void redrawMainScreen() {
   showFooterText(FW_VERSION, 0x7BEF);
 }
 
-void handleCalSerialCommand(const String &cmd) {
-  String arg = cmd.substring(3);
-  arg.trim();
-  if (arg.length() == 0 || arg.equalsIgnoreCase("status") || arg.equalsIgnoreCase("show")) {
-    Serial.println();
-    Serial.println(F("=== Antenna Calibration Status ==="));
-    Serial.printf("  Stored Offset : %+5.1f deg\r\n", calibration.getOffset());
-    Serial.printf("  Target Bearing: %5.1f deg\r\n", bearing);
-    if (hasHeading) {
-      double rawHdg = bearingFilter.getRawHeading();
-      Serial.printf("  Raw GNSS Hdg  : %5.1f deg\r\n", rawHdg);
-      Serial.printf("  Calibrated Hdg: %5.1f deg\r\n", bearingFilter.getCalibratedHeading(calibration.getOffset()));
-    } else {
-      Serial.println(F("  Raw GNSS Hdg  : ---.- (No heading fix)"));
-    }
-    Serial.println(F("=================================="));
-    Serial.println();
-  } else if (arg.equalsIgnoreCase("zero") || arg.equalsIgnoreCase("reset") || arg.equals("0")) {
-    calibration.reset();
-    updateBearings();
-    Serial.println(F("[CAL] Offset reset to 0.0 deg (Cleared)."));
-  } else if (arg.equalsIgnoreCase("snap")) {
-    if (!hasHeading) {
-      Serial.println(F("[CAL ERROR] Cannot snap: No valid GNSS heading fix."));
-    } else {
-      double rawHdg = bearingFilter.getRawHeading();
-      calibration.snap(bearing, rawHdg);
-      updateBearings();
-      Serial.printf("[CAL] Snapped! New offset: %+5.1f deg\r\n", calibration.getOffset());
-    }
-  } else if (arg.startsWith("set ") || arg.startsWith("SET ")) {
-    float val = arg.substring(4).toFloat();
-    calibration.setOffset(val);
-    updateBearings();
-    Serial.printf("[CAL] Offset set to %+5.1f deg\r\n", calibration.getOffset());
-  } else {
-    float val = arg.toFloat();
-    calibration.setOffset(val);
-    updateBearings();
-    Serial.printf("[CAL] Offset set to %+5.1f deg\r\n", calibration.getOffset());
-  }
-}
-
 void drawCurrentBearing() {
   if (currentUiMode == UI_MODE_CALIBRATING) {
     drawRawHeadingInModal();
@@ -544,20 +492,115 @@ void updateBearings() {
 }
 
 void setup() {
-
-  gpsSerial.begin(GPS_BAUD, SERIAL_8N1, RXD2, TXD2);
-  Serial.begin (115200);
+  Serial.begin(115200);
   Serial.print("GNSS Compass ");
   Serial.println(FW_VERSION);
   Serial.println(F("Commands: 'status' (GPS stream diagnosis), 'test' (visual demo), 'sim' (simulation)"));
-
-  bearingFilter.reset();
 
   initPins();
   initBacklight();
   initLCD();
   initEncoder();
   loadCalibration();
+
+  gpsManager.setSimulator(&gpsSimulator);
+  gpsManager.begin(GPS_BAUD, RXD2, TXD2);
+
+  // Wire GPS Manager event callbacks to UI presentation
+  gpsManager.setOnHeadingUpdated([](float /* heading */, BearingQuality quality) {
+    hasHeading = gpsManager.hasHeading();
+    currentBearingQuality = quality;
+    lastHeadingUpdate = gpsManager.getLastHeadingUpdate();
+    drawCurrentBearing();
+  });
+
+  gpsManager.setOnLocationUpdated([](const GeoPoint &pos) {
+    hasLocation = true;
+    mylatitude = pos.latitude;
+    mylongitude = pos.longitude;
+    geoPointToGrid(mylatitude, mylongitude, mygrid);
+
+    if (currentUiMode != UI_MODE_CALIBRATING) {
+      gfx->setTextSize(LOC_SZ);
+      gfx->setCursor(LOC_X, LOC_Y);
+      gfx->setTextColor(WHITE, BLACK);
+      gfx->print(mygrid);
+    }
+    updateBearings();
+  });
+
+  gpsManager.setOnTimeUpdated([](int h, int m) {
+    hasTime = true;
+    hours = h;
+    minutes = m;
+    if (currentUiMode != UI_MODE_CALIBRATING) {
+      char tbuf[9];
+      sprintf(tbuf, "%02d:%02dZ", hours, minutes);
+      gfx->setTextSize(TIME_SZ);
+      gfx->setCursor(TIME_X, TIME_Y);
+      gfx->setTextColor(WHITE, BLACK);
+      gfx->print(tbuf);
+    }
+  });
+
+  serialCli.begin();
+  serialCli.setRunTestCallback(runVisualSelfTest);
+  serialCli.setStateChangedCallback([]() {
+    hasHeading = gpsManager.hasHeading();
+    currentBearingQuality = gpsManager.getBearingQuality();
+    lastHeadingUpdate = gpsManager.getLastHeadingUpdate();
+    if (gpsManager.hasLocation()) {
+      hasLocation = true;
+      mylatitude = gpsManager.getLocation().latitude;
+      mylongitude = gpsManager.getLocation().longitude;
+      geoPointToGrid(mylatitude, mylongitude, mygrid);
+      if (currentUiMode != UI_MODE_CALIBRATING) {
+        gfx->setTextSize(LOC_SZ);
+        gfx->setCursor(LOC_X, LOC_Y);
+        gfx->setTextColor(WHITE, BLACK);
+        gfx->print(mygrid);
+      }
+    }
+    if (gpsManager.hasTime()) {
+      hasTime = true;
+      hours = gpsManager.getHours();
+      minutes = gpsManager.getMinutes();
+      if (currentUiMode != UI_MODE_CALIBRATING) {
+        char tbuf[9];
+        sprintf(tbuf, "%02d:%02dZ", hours, minutes);
+        gfx->setTextSize(TIME_SZ);
+        gfx->setCursor(TIME_X, TIME_Y);
+        gfx->setTextColor(WHITE, BLACK);
+        gfx->print(tbuf);
+      }
+    }
+    updateBearings();
+    drawCurrentBearing();
+  });
+
+  serialCli.setRoverSimCallback([](const char *orig_grid, double dist_km) {
+    double orig_lat = mylatitude, orig_lon = mylongitude;
+    if (orig_grid && strlen(orig_grid) >= 4) {
+      gridToGeoPoint(orig_grid, &orig_lat, &orig_lon);
+      strncpy(remote, orig_grid, 6);
+      remote[6] = '\0';
+    }
+    for (int i = 0; i < 6; i++) remote[i] = orig_grid[i];
+    remlatitude = orig_lat;
+    remlongitude = orig_lon;
+    rovdist = true;
+
+    GeoPoint originPoint(orig_lat, orig_lon, true);
+    GeoPoint simulatedPoint = GpsSimulator::calculateRoverDisplacement(originPoint, dist_km, 45.0);
+    gpsManager.setLocation(simulatedPoint);
+    printrem();
+    updateBearings();
+    int rdist = (int)floor(distance / 1000.0);
+    Serial.printf("[SIM ROVER] Origin: %s (%.5f, %.5f) | Current: %s (%.5f, %.5f)\r\n",
+                  remote, remlatitude, remlongitude, mygrid, mylatitude, mylongitude);
+    Serial.printf("[SIM ROVER] Distance: %5.1f km (%d km) | Alert: %s\r\n",
+                  distance / 1000.0, rdist, (rdist < 16) ? "ACTIVE (RED on WHITE)" : "CLEAR (>= 16 km)");
+  });
 
   geoPointToGrid(mylatitude, mylongitude, mygrid);
   gfx->setTextSize(LOC_SZ);
@@ -600,122 +643,7 @@ void showStatusCard(const char *msg, uint16_t bgColor, uint16_t fgColor) {
 
 // Full GNSS Receiver & Data Stream diagnostic report
 void printGpsStatusReport() {
-  unsigned long now = millis();
-  GpsLinkVerdict v = evaluateGpsStream(
-    now, totalGpsBytesReceived, lastGpsByteMillis,
-    gllPacketCount, ksxtPacketCount, hdtPacketCount,
-    hasLocation, hasHeading, currentBearingQuality
-  );
-
-  Serial.println();
-  Serial.println(F("========================================"));
-  Serial.println(F("     GNSS Receiver Stream Diagnosis     "));
-  Serial.println(F("========================================"));
-  if (gpsSimulator.isActive()) {
-    Serial.println(F("Operation Mode: SIMULATION ACTIVE (Hardware Serial2 suppressed)"));
-    Serial.printf("Sim Injections: %u pkts (last %lu ms ago)\r\n", gpsSimulator.getPacketCount(), millis() - gpsSimulator.getLastInjectionMillis());
-  }
-
-  if (v == GPS_LINK_DISCONNECTED) {
-    Serial.println(F("Physical Link:  DISCONNECTED / NO DATA"));
-    if (totalGpsBytesReceived == 0) {
-      Serial.println(F("Details:        0 bytes received on Serial2 since boot."));
-    } else {
-      Serial.print(F("Details:        Last byte received "));
-      Serial.print((now - lastGpsByteMillis) / 1000.0, 1);
-      Serial.println(F(" seconds ago."));
-    }
-    Serial.println(F("Verdict:        [FAIL] NO GPS DATA STREAM DETECTED"));
-    Serial.println(F("Troubleshooting:"));
-    Serial.println(F("  1. Verify GX12 3-pin cable is securely connected."));
-    Serial.println(F("  2. Check 5V / 12V power to the UM982 receiver enclosure."));
-    Serial.println(F("  3. Verify RX pin (GPIO 44) wiring to UM982 TX."));
-  } else if (v == GPS_LINK_NOISY_CORRUPT) {
-    Serial.println(F("Physical Link:  BYTES RECEIVED, BUT NO VALID NMEA/KSXT"));
-    Serial.print(F("Total Bytes:    "));
-    Serial.println(totalGpsBytesReceived);
-    Serial.println(F("Verdict:        [FAIL] FRAMING / BAUD RATE MISMATCH"));
-    Serial.println(F("Troubleshooting:"));
-    Serial.println(F("  1. Verify receiver COM1 baud rate is set to 115200 (8N1)."));
-    Serial.println(F("  2. Check for loose connection or electrical noise on signal line."));
-  } else {
-    Serial.println(F("Physical Link:  CONNECTED (Hardware Serial Link Active)"));
-    Serial.print(F("Total Bytes:    "));
-    Serial.print(totalGpsBytesReceived);
-    Serial.print(F(" (last byte "));
-    Serial.print(now - lastGpsByteMillis);
-    Serial.println(F(" ms ago)"));
-
-    Serial.println();
-    Serial.println(F("Message Streams:"));
-    Serial.print(F("  - $GNGLL (Position):   "));
-    Serial.print(gllPacketCount);
-    Serial.print(F(" pkts (last "));
-    if (gllPacketCount > 0) {
-      Serial.print((now - lastGllMillis) / 1000.0, 1);
-      Serial.println(F("s ago)"));
-    } else {
-      Serial.println(F("none)"));
-    }
-
-    Serial.print(F("  - $KSXT (Dual-Ant):    "));
-    Serial.print(ksxtPacketCount);
-    Serial.print(F(" pkts (last "));
-    if (ksxtPacketCount > 0) {
-      Serial.print(now - lastKsxtMillis);
-      Serial.println(F(" ms ago)"));
-    } else {
-      Serial.println(F("none)"));
-    }
-
-    Serial.print(F("  - $GNHDT/$THS:         "));
-    Serial.print(hdtPacketCount);
-    Serial.println(F(" pkts"));
-
-    Serial.println(F("\nFix Status:"));
-    Serial.print(F("  - Time:                "));
-    if (hasTime) {
-      char tbuf[16];
-      sprintf(tbuf, "%02d:%02d UTC", hours, minutes);
-      Serial.println(tbuf);
-    } else {
-      Serial.println(F("SEARCHING (Syncing...)"));
-    }
-
-    Serial.print(F("  - Position:            "));
-    if (hasLocation) {
-      Serial.print(F("LOCKED (Grid: "));
-      Serial.print(mygrid);
-      Serial.println(F(")"));
-    } else {
-      Serial.println(F("SEARCHING (No fix yet)"));
-    }
-
-    Serial.print(F("  - Dual-Antenna Heading:"));
-    if (hasHeading) {
-      if (currentBearingQuality == BEARING_FIXED) {
-        Serial.println(F("RTK FIXED (Pure White - High Precision)"));
-      } else if (currentBearingQuality == BEARING_FLOAT) {
-        Serial.println(F("RTK FLOAT (Bright Yellow - Degraded Sky View)"));
-      } else {
-        Serial.println(F("LOST / STALE (Bright Red - Tracking Dropped)"));
-      }
-    } else {
-      Serial.println(F("ACQUIRING (Waiting for initial heading lock)"));
-    }
-
-    Serial.print(F("\nOverall Verdict:        "));
-    if (v == GPS_LINK_OK_FIXED) {
-      Serial.println(F("[PASS] FULLY OPERATIONAL (RTK Fixed)"));
-    } else if (v == GPS_LINK_HEADING_FLOAT) {
-      Serial.println(F("[PASS - WARN] OPERATIONAL (RTK Float - Degraded reception)"));
-    } else if (v == GPS_LINK_POSITION_ONLY) {
-      Serial.println(F("[WAIT] POSITION LOCKED, WAITING FOR HEADING BASELINE"));
-    } else {
-      Serial.println(F("[WAIT] RECEIVER TALKING, ACQUIRING SATELLITES"));
-    }
-  }
-  Serial.println(F("========================================\n"));
+  serialCli.printGpsStatus();
 }
 
 // On-demand visual display self-test demo
@@ -822,11 +750,7 @@ void runVisualSelfTest() {
   showFooterText("TEST 6: GPS STREAM", CYAN);
   printGpsStatusReport();
 
-  GpsLinkVerdict liveVerdict = evaluateGpsStream(
-    millis(), totalGpsBytesReceived, lastGpsByteMillis,
-    gllPacketCount, ksxtPacketCount, hdtPacketCount,
-    hasLocation, hasHeading, currentBearingQuality
-  );
+  GpsLinkVerdict liveVerdict = gpsManager.evaluateStreamHealth(millis());
 
   if (liveVerdict == GPS_LINK_OK_FIXED) {
     showStatusCard("GPS: RTK FIXED (OK)", GREEN, BLACK);
@@ -913,410 +837,17 @@ void runVisualSelfTest() {
   Serial.println(F("=== Visual Self-Test Complete (Live state restored) ===\n"));
 }
 
-void processGpsSentence(char *sentence) {
-  float new_heading = 0.0f;
-  BearingQuality new_quality = BEARING_LOST;
-
-  if (parseHeadingSentence(sentence, &new_heading, &new_quality)) {
-    if (strncmp(sentence, "$KSXT", 5) == 0) {
-      ksxtPacketCount++;
-      lastKsxtMillis = millis();
-    } else {
-      hdtPacketCount++;
-      lastHdtMillis = millis();
-    }
-    hasHeading = true;
-    lastHeadingUpdate = millis();
-    currentBearingQuality = new_quality;
-
-    bearingFilter.push(new_heading);
-
-    drawCurrentBearing();
-  } else if (strncmp(sentence, "$KSXT", 5) == 0 ||
-             strncmp(sentence, "$GNTHS", 6) == 0 || strncmp(sentence, "$GPTHS", 6) == 0 ||
-             strncmp(sentence, "$GNHDT", 6) == 0 || strncmp(sentence, "$GPHDT", 6) == 0) {
-    if (strncmp(sentence, "$KSXT", 5) == 0) {
-      ksxtPacketCount++;
-      lastKsxtMillis = millis();
-    } else {
-      hdtPacketCount++;
-      lastHdtMillis = millis();
-    }
-    // Received heading sentence but no valid heading solution (e.g. baseline lost)
-    if (hasHeading && currentBearingQuality != BEARING_LOST) {
-      currentBearingQuality = BEARING_LOST;
-      drawCurrentBearing();
-    }
-  }
-
-  // Extract Time and Position from $KSXT (5 Hz)
-  if (strncmp(sentence, "$KSXT", 5) == 0) {
-    int ksxt_h = 0, ksxt_m = 0;
-    if (parseKSXTTime(sentence, &ksxt_h, &ksxt_m)) {
-      if (!hasTime || ksxt_h != hours || ksxt_m != minutes) {
-        hasTime = true;
-        hours = ksxt_h;
-        minutes = ksxt_m;
-        if (currentUiMode != UI_MODE_CALIBRATING) {
-          char tbuf[9];
-          sprintf(tbuf, "%02d:%02dZ", hours, minutes);
-          gfx->setTextSize(TIME_SZ);
-          gfx->setCursor(TIME_X, TIME_Y);
-          gfx->setTextColor(WHITE, BLACK);
-          gfx->print(tbuf);
-        }
-      }
-    }
-
-    double ksxt_lat = 0.0, ksxt_lon = 0.0;
-    if (parseKSXTLocation(sentence, &ksxt_lat, &ksxt_lon)) {
-      if (!hasLocation || fabs(ksxt_lat - mylatitude) > 0.00001 || fabs(ksxt_lon - mylongitude) > 0.00001) {
-        hasLocation = true;
-        mylatitude = ksxt_lat;
-        mylongitude = ksxt_lon;
-        geoPointToGrid(mylatitude, mylongitude, mygrid);
-
-        if (currentUiMode != UI_MODE_CALIBRATING) {
-          gfx->setTextSize(LOC_SZ);
-          gfx->setCursor(LOC_X, LOC_Y);
-          gfx->setTextColor(WHITE, BLACK);
-          gfx->print(mygrid);
-        }
-
-        updateBearings();
-      }
-    }
-  } else if (strncmp(sentence, "$GNGLL", 6) == 0) {
-    gllPacketCount++;
-    lastGllMillis = millis();
-    char *ptr;
-    char buf[9];
-
-    parseLegacyLatLon(&sentence[7], &mylatitude, &mylongitude, &ptr);
-    int gll_h = aton(ptr[0]) * 10.0 + aton(ptr[1]);
-    int gll_m = aton(ptr[2]) * 10.0 + aton(ptr[3]);
-
-    char *status_comma = strchr(ptr, ',');
-    if ((status_comma != NULL && *(status_comma + 1) == 'A') || ptr[10] == 'A') {
-      hasLocation = true;
-      geoPointToGrid(mylatitude, mylongitude, mygrid);
-
-      if (currentUiMode != UI_MODE_CALIBRATING) {
-        gfx->setTextSize(LOC_SZ);
-        gfx->setCursor(LOC_X, LOC_Y);
-        gfx->setTextColor(WHITE, BLACK);
-        gfx->print(mygrid);
-      }
-
-      if (!hasTime || gll_h != hours || gll_m != minutes) {
-        hasTime = true;
-        hours = gll_h;
-        minutes = gll_m;
-        if (currentUiMode != UI_MODE_CALIBRATING) {
-          sprintf(&buf[0], "%02d:%02dZ", hours, minutes);
-          gfx->setTextSize(TIME_SZ);
-          gfx->setCursor(TIME_X, TIME_Y);
-          gfx->setTextColor(WHITE, BLACK);
-          gfx->print(buf);
-        }
-      }
-
-      updateBearings();
-    }
-  }
-}
-
-void injectSimSentence(const char *sentence) {
-  if (!gpsSimulator.isActive()) {
-    Serial.println(F("[SIM] Simulation mode activated by sentence injection. Hardware Serial2 suppressed."));
-  }
-  totalGpsBytesReceived += strlen(sentence);
-  lastGpsByteMillis = millis();
-
-  gpsSimulator.injectSentence(sentence, [](const char *s) {
-    char sbuf[256];
-    strncpy(sbuf, s, sizeof(sbuf) - 1);
-    sbuf[sizeof(sbuf) - 1] = '\0';
-    processGpsSentence(sbuf);
-  }, millis());
-}
-
-void handleSimSerialCommand(const String &cmd) {
-  String line = cmd;
-  line.trim();
-  String arg = "";
-  if (line.length() > 3) {
-    arg = line.substring(3);
-    arg.trim();
-  }
-
-  if (arg.length() == 0 || arg.equalsIgnoreCase("status")) {
-    Serial.println();
-    Serial.println(F("=== GPS Simulation Mode Status ==="));
-    Serial.printf("  Simulation Active : %s\r\n", gpsSimulator.isActive() ? "YES (Hardware Serial2 suppressed)" : "NO (Live Serial2 active)");
-    Serial.printf("  Sim Packets Recv  : %u\r\n", gpsSimulator.getPacketCount());
-    if (gpsSimulator.getPacketCount() > 0) {
-      Serial.printf("  Last Sim Packet   : %lu ms ago\r\n", millis() - gpsSimulator.getLastInjectionMillis());
-    }
-    Serial.printf("  Current Heading   : %5.1f deg (Quality: %s)\r\n",
-                  hasHeading ? bearingFilter.getCalibratedHeading(calibration.getOffset()) : 0.0,
-                  currentBearingQuality == BEARING_FIXED ? "FIXED" : (currentBearingQuality == BEARING_FLOAT ? "FLOAT" : "LOST"));
-    Serial.printf("  Current Position  : %9.5f, %9.5f (Grid: %s)\r\n", mylatitude, mylongitude, mygrid);
-    Serial.printf("  Rover Mode Active : %s\r\n", rovdist ? "YES (<16k alert tracking)" : "NO (Stationary target tracking)");
-    if (rovdist) {
-      Serial.printf("  Rover Distance    : %5.1f km (Alert: %s)\r\n", distance / 1000.0, (floor(distance / 1000.0) < 16) ? "ACTIVE (RED on WHITE)" : "CLEAR");
-    }
-    Serial.println(F("=================================="));
-    Serial.println();
-    return;
-  }
-
-  if (arg.equalsIgnoreCase("on")) {
-    gpsSimulator.setActive(true);
-    Serial.println(F("[SIM] Simulation mode enabled. Hardware Serial2 input is now SUPPRESSED."));
-    return;
-  }
-
-  if (arg.equalsIgnoreCase("off")) {
-    gpsSimulator.setActive(false);
-    Serial.println(F("[SIM] Simulation mode disabled. Hardware Serial2 receiver link RESTORED."));
-    return;
-  }
-
-  gpsSimulator.setActive(true);
-
-  if (arg.startsWith("hdg") || arg.startsWith("HDG")) {
-    String p = arg.substring(3);
-    p.trim();
-    int sp = p.indexOf(' ');
-    float h = 0.0f;
-    BearingQuality q = BEARING_FIXED;
-    if (sp > 0) {
-      h = p.substring(0, sp).toFloat();
-      String qstr = p.substring(sp + 1);
-      qstr.trim();
-      if (qstr.equalsIgnoreCase("float")) q = BEARING_FLOAT;
-      else if (qstr.equalsIgnoreCase("lost") || qstr.equalsIgnoreCase("invalid")) q = BEARING_LOST;
-      else q = BEARING_FIXED;
-    } else {
-      h = p.toFloat();
-    }
-    hasHeading = true;
-    lastHeadingUpdate = millis();
-    currentBearingQuality = q;
-    bearingFilter.seed(h);
-    drawCurrentBearing();
-    Serial.printf("[SIM] Heading set to %5.1f deg (Quality: %s)\r\n", h, q == BEARING_FIXED ? "FIXED" : (q == BEARING_FLOAT ? "FLOAT" : "LOST"));
-  } else if (arg.startsWith("pos") || arg.startsWith("POS")) {
-    String p = arg.substring(3);
-    p.trim();
-    int sp = p.indexOf(' ');
-    if (sp > 0) {
-      double lat = p.substring(0, sp).toDouble();
-      double lon = p.substring(sp + 1).toDouble();
-      mylatitude = lat;
-      mylongitude = lon;
-      hasLocation = true;
-      geoPointToGrid(mylatitude, mylongitude, mygrid);
-      if (currentUiMode != UI_MODE_CALIBRATING) {
-        gfx->setTextSize(LOC_SZ);
-        gfx->setCursor(LOC_X, LOC_Y);
-        gfx->setTextColor(WHITE, BLACK);
-        gfx->print(mygrid);
-      }
-      updateBearings();
-      Serial.printf("[SIM] Position set to %9.5f, %9.5f (Grid: %s)\r\n", lat, lon, mygrid);
-    } else {
-      Serial.println(F("[SIM ERROR] Usage: sim pos <lat> <lon>"));
-    }
-  } else if (arg.startsWith("grid") || arg.startsWith("GRID")) {
-    String g = arg.substring(4);
-    g.trim();
-    if (g.length() >= 4 && g.length() <= 8) {
-      char gbuf[9];
-      strncpy(gbuf, g.c_str(), 8);
-      gbuf[8] = '\0';
-      double lat = 0.0, lon = 0.0;
-      gridToGeoPoint(gbuf, &lat, &lon);
-      mylatitude = lat;
-      mylongitude = lon;
-      hasLocation = true;
-      geoPointToGrid(mylatitude, mylongitude, mygrid);
-      if (currentUiMode != UI_MODE_CALIBRATING) {
-        gfx->setTextSize(LOC_SZ);
-        gfx->setCursor(LOC_X, LOC_Y);
-        gfx->setTextColor(WHITE, BLACK);
-        gfx->print(mygrid);
-      }
-      updateBearings();
-      Serial.printf("[SIM] Position set to Grid %s (%9.5f, %9.5f)\r\n", mygrid, mylatitude, mylongitude);
-    } else {
-      Serial.println(F("[SIM ERROR] Usage: sim grid <grid4_or_6_or_8>"));
-    }
-  } else if (arg.startsWith("rover") || arg.startsWith("ROVER")) {
-    String p = arg.substring(5);
-    p.trim();
-    int sp = p.indexOf(' ');
-    double orig_lat = mylatitude, orig_lon = mylongitude;
-    char orig_grid[7];
-    strncpy(orig_grid, mygrid, 6);
-    orig_grid[6] = '\0';
-    float dist_km = 0.0f;
-
-    if (sp > 0) {
-      String og = p.substring(0, sp);
-      og.trim();
-      dist_km = p.substring(sp + 1).toFloat();
-      if (og.length() >= 4) {
-        strncpy(orig_grid, og.c_str(), 6);
-        orig_grid[6] = '\0';
-        gridToGeoPoint(orig_grid, &orig_lat, &orig_lon);
-      }
-    } else if (p.length() > 0) {
-      dist_km = p.toFloat();
-    }
-
-    for (int i = 0; i < 6; i++) remote[i] = orig_grid[i];
-    remlatitude = orig_lat;
-    remlongitude = orig_lon;
-    rovdist = true;
-
-    GeoPoint originPoint(orig_lat, orig_lon, true);
-    GeoPoint simulatedPoint = GpsSimulator::calculateRoverDisplacement(originPoint, dist_km, 45.0);
-    mylatitude = simulatedPoint.latitude;
-    mylongitude = simulatedPoint.longitude;
-    hasLocation = true;
-    geoPointToGrid(mylatitude, mylongitude, mygrid);
-
-    if (currentUiMode != UI_MODE_CALIBRATING) {
-      gfx->setTextSize(LOC_SZ);
-      gfx->setCursor(LOC_X, LOC_Y);
-      gfx->setTextColor(WHITE, BLACK);
-      gfx->print(mygrid);
-    }
-    printrem();
-    updateBearings();
-
-    int rdist = (int)floor(distance / 1000.0);
-    Serial.printf("[SIM ROVER] Origin: %s (%.5f, %.5f) | Current: %s (%.5f, %.5f)\r\n",
-                  remote, remlatitude, remlongitude, mygrid, mylatitude, mylongitude);
-    Serial.printf("[SIM ROVER] Distance: %5.1f km (%d km) | Alert: %s\r\n",
-                  distance / 1000.0, rdist, (rdist < 16) ? "ACTIVE (RED on WHITE)" : "CLEAR (>= 16 km)");
-  } else if (arg.startsWith("time") || arg.startsWith("TIME")) {
-    String t = arg.substring(4);
-    t.trim();
-    int colon = t.indexOf(':');
-    if (colon > 0) {
-      int h = t.substring(0, colon).toInt();
-      int m = t.substring(colon + 1).toInt();
-      if (h >= 0 && h < 24 && m >= 0 && m < 60) {
-        hasTime = true;
-        hours = h;
-        minutes = m;
-        if (currentUiMode != UI_MODE_CALIBRATING) {
-          char tbuf[9];
-          sprintf(tbuf, "%02d:%02dZ", hours, minutes);
-          gfx->setTextSize(TIME_SZ);
-          gfx->setCursor(TIME_X, TIME_Y);
-          gfx->setTextColor(WHITE, BLACK);
-          gfx->print(tbuf);
-        }
-        Serial.printf("[SIM] UTC time set to %02d:%02dZ\r\n", hours, minutes);
-      }
-    }
-  } else {
-    Serial.println(F("[SIM ERROR] Unknown sim command. Available:"));
-    Serial.println(F("  sim on / sim off"));
-    Serial.println(F("  sim status"));
-    Serial.println(F("  sim hdg <deg> [fixed|float|lost]"));
-    Serial.println(F("  sim pos <lat> <lon>"));
-    Serial.println(F("  sim grid <grid>"));
-    Serial.println(F("  sim rover [origin_grid] <dist_km>"));
-    Serial.println(F("  sim time <hh:mm>"));
-  }
-}
-
-void handleSerialCommandLine(const String &cmd) {
-  String line = cmd;
-  line.trim();
-  if (line.length() == 0) return;
-
-  if (line.startsWith("$")) {
-    injectSimSentence(line.c_str());
-  } else if (line.startsWith("sim") || line.startsWith("SIM")) {
-    handleSimSerialCommand(line);
-  } else if (line.equalsIgnoreCase("help") || line.equals("?")) {
-    Serial.println();
-    Serial.println(F("=== GNSS Compass Serial Commands ==="));
-    Serial.println(F("  status (or gps)       - Live GNSS receiver stream diagnostic"));
-    Serial.println(F("  test (or demo)        - Run visual display self-test demo"));
-    Serial.println(F("  cal [snap|zero|<val>] - View or configure antenna calibration"));
-    Serial.println(F("  sim [on|off|hdg|pos|grid|rover|status] - GPS simulation commands"));
-    Serial.println(F("  $<NMEA/KSXT sentence> - Inject raw GNSS sentence directly"));
-    Serial.println(F("  help (or ?)           - Show this help menu"));
-    Serial.println(F("===================================="));
-    Serial.println();
-  } else if (line.equalsIgnoreCase("status") || line.equalsIgnoreCase("gps") || line.equalsIgnoreCase("diag") || line.equalsIgnoreCase("s") || line.equalsIgnoreCase("g")) {
-    printGpsStatusReport();
-  } else if (line.equalsIgnoreCase("test") || line.equalsIgnoreCase("demo") || line.equalsIgnoreCase("t")) {
-    runVisualSelfTest();
-  } else if (line.startsWith("cal") || line.startsWith("CAL")) {
-    handleCalSerialCommand(line);
-  } else {
-    Serial.print(F("Unknown command: '"));
-    Serial.print(line);
-    Serial.println(F("'. Type 'help' for available commands."));
-  }
-}
-
-void processSerialInput() {
-  static char lineBuf[256];
-  static size_t lineIdx = 0;
-
-  while (Serial.available()) {
-    char c = (char)Serial.read();
-    if (c == '\r' || c == '\n') {
-      if (lineIdx > 0) {
-        if (lineBuf[0] != '$') {
-          Serial.println(); // Echo newline to terminal for interactive commands
-        }
-        lineBuf[lineIdx] = '\0';
-        handleSerialCommandLine(String(lineBuf));
-        lineIdx = 0;
-      }
-    } else if (c == '\b' || c == 127) { // Backspace or DEL
-      if (lineIdx > 0) {
-        lineIdx--;
-        Serial.print(F("\b \b")); // Visually erase character from terminal screen
-      }
-    } else if (lineIdx < sizeof(lineBuf) - 1) {
-      if (c >= 32 && c <= 126) {
-        lineBuf[lineIdx++] = c;
-        if (lineBuf[0] != '$') {
-          Serial.write(c); // Echo character back to terminal
-        }
-      }
-    }
-  }
-}
-
 void loop() {
-
-  static char sbuff[1000];
-  static int ptr = 0;
-
   while (1) {
+    // 1. Ingest GPS UART bytes & check staleness timeouts
+    gpsManager.update();
 
-    // Heading staleness watchdog: turns bearing RED after timeout if previously acquired
-    if (hasHeading && currentBearingQuality != BEARING_LOST) {
-      if (millis() - lastHeadingUpdate >= HEADING_TIMEOUT_MS) {
-        currentBearingQuality = BEARING_LOST;
-        drawCurrentBearing();
-      }
-    }
-
-    // Non-blocking serial command processor (handles CR, LF, and CRLF)
-    processSerialInput();
+    // 2. Process USB host commands (SIM, CAL, GPS, TEST)
+    serialCli.setTargetBearing(bearing);
+    serialCli.setTargetGrid(remote);
+    serialCli.setRoverAlertActive(rovdist);
+    serialCli.setRoverDistance(distance);
+    serialCli.update();
 
     if (hasChanged) {
       hasChanged = false;
@@ -1517,32 +1048,6 @@ void loop() {
       if (millis() - lastEditActivity >= EDIT_TIMEOUT_MS) {
         isEditing = false;
         printrem();
-      }
-    }
-
-
-
-    if (int num = gpsSerial.available()) {
-      if (gpsSimulator.isActive()) {
-        // Discard physical receiver bytes while simulation mode is active
-        while (gpsSerial.available()) {
-          gpsSerial.read();
-        }
-      } else {
-        int num1 = gpsSerial.readBytesUntil('\n',&sbuff[ptr],num); // read all the available characters up to the end of line
-        ptr += num1;
-        totalGpsBytesReceived += num1;
-        lastGpsByteMillis = millis();
-
-        if (num != num1) {   // if the line ends before all the available characters were read
-          gpsSerial.read();  // consume the '\n'
-          totalGpsBytesReceived++;
-          sbuff[ptr]=0;      // terminate the string
-          Serial.println(sbuff);
-          ptr=0;             // set the ptr back to 0 for the next line from the gps
-
-          processGpsSentence(sbuff);
-        }
       }
     }
   }

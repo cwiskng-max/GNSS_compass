@@ -9,6 +9,8 @@
 #include "../src/protocol/nmea_parser.h"
 #include "../src/system/calibration.h"
 #include "../src/gnss/simulator.h"
+#include "../src/gnss/gps_manager.h"
+#include "../src/protocol/serial_cli.h"
 
 int tests_run = 0;
 int tests_passed = 0;
@@ -684,6 +686,138 @@ void test_gps_simulator() {
     PASS();
 }
 
+void test_gps_manager() {
+    TEST("GpsManager streaming sentence assembly, watchdog, and health evaluation");
+    GpsManager gm;
+    ASSERT_TRUE(!gm.hasHeading());
+    ASSERT_TRUE(!gm.hasLocation());
+    ASSERT_TRUE(!gm.hasTime());
+    ASSERT_TRUE(gm.getTotalBytesReceived() == 0);
+
+    // Ingest synthetic KSXT sentence byte by byte via feedByte
+    char ksxtBuf[256];
+    GpsSimulator::generateKsxt(ksxtBuf, sizeof(ksxtBuf),
+                              "20261106180000.00", 38.35412, -119.45821,
+                              123.4, BEARING_FIXED);
+
+    size_t len = strlen(ksxtBuf);
+    for (size_t i = 0; i < len; ++i) {
+        gm.feedByte((uint8_t)ksxtBuf[i], 1000);
+    }
+
+    ASSERT_TRUE(gm.hasHeading());
+    ASSERT_NEAR(gm.getHeading(), std::fmod(123.4 + 270.0, 360.0), 0.1);
+    ASSERT_TRUE(gm.getBearingQuality() == BEARING_FIXED);
+    ASSERT_TRUE(gm.getLastHeadingUpdate() == 1000);
+
+    ASSERT_TRUE(gm.hasLocation());
+    ASSERT_NEAR(gm.getLocation().latitude, 38.35412, 1e-5);
+    ASSERT_NEAR(gm.getLocation().longitude, -119.45821, 1e-5);
+
+    ASSERT_TRUE(gm.hasTime());
+    ASSERT_TRUE(gm.getHours() == 18);
+    ASSERT_TRUE(gm.getMinutes() == 0);
+
+    // Watchdog check before timeout
+    gm.checkStaleness(1500); // 500 ms elapsed
+    ASSERT_TRUE(gm.getBearingQuality() == BEARING_FIXED);
+
+    // Watchdog check after timeout (HEADING_TIMEOUT_MS = 1500)
+    gm.checkStaleness(2501); // 1501 ms elapsed -> BEARING_LOST
+    ASSERT_TRUE(gm.getBearingQuality() == BEARING_LOST);
+
+    // Feed fresh heading recovery
+    gm.feedSentence(ksxtBuf, 3000);
+    ASSERT_TRUE(gm.getBearingQuality() == BEARING_FIXED);
+    ASSERT_TRUE(gm.getLastHeadingUpdate() == 3000);
+
+    // Stream health evaluation
+    GpsLinkVerdict v = gm.evaluateStreamHealth(3000);
+    ASSERT_TRUE(v == GPS_LINK_OK_FIXED);
+
+    PASS();
+}
+
+void test_serial_cli() {
+    TEST("SerialCli host USB command execution, reports, and dispatching");
+    GpsManager gm;
+    Calibration cal;
+    GpsSimulator sim;
+    SerialCli cli(gm, cal, sim);
+
+    static std::string cliOutput;
+    cliOutput.clear();
+    cli.setOutputHandler([](const char *str) {
+        cliOutput += str;
+    });
+
+    // Test help command
+    cli.executeCommand("help");
+    ASSERT_TRUE(cliOutput.find("GNSS Compass Serial Commands") != std::string::npos);
+    cliOutput.clear();
+
+    // Test status command
+    cli.executeCommand("status");
+    ASSERT_TRUE(cliOutput.find("GNSS Receiver Stream Diagnosis") != std::string::npos);
+    cliOutput.clear();
+
+    // Test sim commands
+    ASSERT_TRUE(!sim.isActive());
+    cli.executeCommand("sim on");
+    ASSERT_TRUE(sim.isActive());
+    ASSERT_TRUE(cliOutput.find("Simulation mode enabled") != std::string::npos);
+    cliOutput.clear();
+
+    cli.executeCommand("sim hdg 180.5 float");
+    ASSERT_TRUE(gm.hasHeading());
+    ASSERT_NEAR(gm.getHeading(), std::fmod(180.5 + 270.0, 360.0), 0.1);
+    ASSERT_TRUE(gm.getBearingQuality() == BEARING_FLOAT);
+    ASSERT_TRUE(cliOutput.find("Heading set to 180.5") != std::string::npos);
+    cliOutput.clear();
+
+    cli.executeCommand("sim pos 38.354 -119.458");
+    ASSERT_TRUE(gm.hasLocation());
+    ASSERT_NEAR(gm.getLocation().latitude, 38.354, 1e-4);
+    ASSERT_NEAR(gm.getLocation().longitude, -119.458, 1e-4);
+    cliOutput.clear();
+
+    cli.executeCommand("sim time 14:25");
+    ASSERT_TRUE(gm.hasTime());
+    ASSERT_TRUE(gm.getHours() == 14);
+    ASSERT_TRUE(gm.getMinutes() == 25);
+    cliOutput.clear();
+
+    // Test cal commands: raw antenna heading is 90.5 deg (180.5 baseline + 270 deg orthogonal offset)
+    cli.setTargetBearing(95.5);
+    cli.executeCommand("cal set 2.0");
+    ASSERT_NEAR(cal.getOffset(), 2.0f, 1e-4);
+    cliOutput.clear();
+
+    // Snap test: raw antenna heading is 90.5, target bearing is 95.5 -> snapped offset = +5.0
+    cli.executeCommand("cal snap");
+    ASSERT_NEAR(cal.getOffset(), 5.0f, 1e-4);
+    cliOutput.clear();
+
+    cli.executeCommand("cal zero");
+    ASSERT_NEAR(cal.getOffset(), 0.0f, 1e-4);
+    cliOutput.clear();
+
+    // Raw sentence injection through CLI: 090.0 baseline
+    char ksxtBuf[256];
+    GpsSimulator::generateKsxt(ksxtBuf, sizeof(ksxtBuf),
+                              "20261106193000.00", 38.35412, -119.45821,
+                              090.0, BEARING_FIXED);
+    cli.executeCommand(ksxtBuf);
+    ASSERT_TRUE(gm.hasHeading());
+    ASSERT_TRUE(gm.getBearingQuality() == BEARING_FIXED);
+    ASSERT_TRUE(sim.isActive());
+
+    cli.executeCommand("sim off");
+    ASSERT_TRUE(!sim.isActive());
+
+    PASS();
+}
+
 int main() {
     std::cout << "========================================" << std::endl;
     std::cout << "  GNSS Compass Unit Test Suite" << std::endl;
@@ -709,6 +843,8 @@ int main() {
     test_config_constants();
     test_calibration_class();
     test_gps_simulator();
+    test_gps_manager();
+    test_serial_cli();
 
     std::cout << "========================================" << std::endl;
     std::cout << "  All " << tests_passed << " / " << tests_run << " tests PASSED successfully!" << std::endl;
