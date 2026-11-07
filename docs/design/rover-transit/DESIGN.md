@@ -105,18 +105,8 @@ The inverted red-on-white block creates high visual contrast that is immediately
 
 ## 4. State Lifecycle & Auto-Reset
 
-To prevent false alarms when the operator subsequently works target stations that happen to be within 16 km, `rovdist` automatically disarms whenever the operator interacts with the target grid:
+To prevent false alarms when the operator subsequently works target stations that happen to be within 16 km, rover origin tracking (`rovdist` / `isRoverAlertActive`) disarms whenever the operator intentionally interacts with the target grid:
 
-* **Rotary Encoder Turn:**
-  ```cpp
-  else if (isEditing) {
-    lastEditActivity = millis();
-    rovdist = false;  // Disarm rover alert
-    if (counter > 0) INCG(remote[remotec]);
-    else DECG(remote[remotec]);
-    printrem();
-    updateBearings();
-  }
-  ```
-* **Target Grid Character Tap:** Selecting a character on Row 2 initiates target editing and disarms rover transit mode.
+* **Origin Snapshot Protection:** Tapping the local grid (Row 1) automatically disarms edit mode (`isEditing = false`). The cursor (`^`) is hidden, protecting the origin grid from accidental bezel turns and road vibration bumps while driving. Turning the rotary bezel while in transit will not mutate characters or drop out of rover mode.
+* **Target Grid Character Tap:** When the rover arrives at a destination and the operator taps a character on Row 2, edit mode is re-armed (`isEditing = true`) and rover transit mode is cleanly disarmed, returning the compass to standard target station tracking.
 

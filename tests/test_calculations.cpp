@@ -1233,14 +1233,22 @@ void test_app_controller() {
     ASSERT_TRUE(app.getUiMode() == UiMode::Normal);
     ASSERT_NEAR(calibration.getOffset(), initProposed + 0.1f, 1e-4);
 
-    // Event: Tap Local Grid -> Copies local station grid and sets Rover Alert active
+    // Event: Tap Local Grid -> Copies local station grid, disarms edit mode, and sets Rover Alert active
     UserEvent evLoc;
     evLoc.type = UserEventType::TouchLocalGrid;
     app.handleUserEvent(evLoc, 2400);
     ASSERT_STR_EQ(app.getTargetGrid(), "DM08GI");
     ASSERT_TRUE(app.isRoverAlertActive());
+    ASSERT_TRUE(!app.getGridEditor().isEditing());
     // Distance to origin is exact 0.0 m physically (not quantized to grid center!)
     ASSERT_NEAR(app.getDistance(), 0.0, 1e-3);
+
+    // Bezel rotation during rover transit: does NOT roll characters and does NOT disarm rover mode
+    UserEvent evBump;
+    evBump.type = UserEventType::RotateClockwise;
+    app.handleUserEvent(evBump, 2450);
+    ASSERT_STR_EQ(app.getTargetGrid(), "DM08GI");
+    ASSERT_TRUE(app.isRoverAlertActive());
 
     // Rover transit movement: 10.0 km physical displacement
     GeoPoint originPos = app.getCurrentPosition();

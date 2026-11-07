@@ -224,6 +224,7 @@ void AppController::begin() {
         } else {
             self->gridEditor_.setGrid(self->myGrid_);
         }
+        self->gridEditor_.setEditing(false); // Disarm edit mode on rover snapshot to protect origin & bezel
         self->targetPosition_ = originPoint;
         self->isRoverAlertActive_ = true;
 
@@ -309,6 +310,7 @@ void AppController::handleUserEvent(const UserEvent &event, unsigned long nowMs)
 
         case UserEventType::TouchLocalGrid:
             gridEditor_.setGrid(myGrid_);
+            gridEditor_.setEditing(false); // Disarm edit mode on rover snapshot to protect origin & bezel
             targetPosition_ = currentPosition_;
             isRoverAlertActive_ = true;
             displayUi_.renderTargetGrid(gridEditor_.getGrid(), gridEditor_.getCursorColumn(), gridEditor_.isEditing());
