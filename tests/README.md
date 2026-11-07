@@ -39,6 +39,9 @@ The test suite runs automatically on every push and pull request in [`.github/wo
 14. **Antenna Calibration:** Tests offset angle normalization within $[-180^\circ, +180^\circ]$, circular bearing offset addition, and modal calibration math.
 15. **GPS Stream Evaluation:** Validates deterministic link verdicts (Disconnected, Corrupt, Acquiring, Position-Only, Float, Fixed).
 16. **GeoPoint Domain & Rover Precision:** Validates `GeoPoint` lat/lon unquantized source of truth, `gridToGeoPoint` / `geoPointToGrid` conversions, reverse bearing calculations, and Rover 16 km threshold evaluation.
+17. **Configuration Constants (`src/config.h`):** Verifies hardware pin assignments, screen dimensions, layout coordinates, timeout macros, and target grid editing character macros.
+18. **Antenna Calibration Class (`src/system/calibration.*`):** Tests two-stage offset staging, nudging (+/-0.1 deg), snap calculation, reset, flash commit, wrap-around normalization, and mock NVS persistence across instances.
+19. **GPS Simulator (`src/gnss/simulator.*`):** Tests simulation state activation, virtual sentence injection callbacks, NMEA XOR checksums, synthetic `$KSXT`, `$GNGLL`, and `$GNHDT` sentence generation with roundtrip parser verification, and 64-bit double geodesic rover displacement calculations.
 
 ---
 

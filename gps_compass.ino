@@ -6,115 +6,13 @@
 #include <math.h>
 #include <ctype.h>
 
+#include "src/config.h"
 #include "src/types.h"
 #include "src/geo/geo_math.h"
 #include "src/geo/maidenhead.h"
 #include "src/protocol/nmea_parser.h"
-
-// I2C to PCF8574
-#define I2C_SDA_PIN 38
-#define I2C_SCL_PIN 39
-#define BKL_PIN 6
-
-#define I2C_TOUCH_ADDR 0x15
-#define INCA(x) (((x+1)>'Z')?'A':(x+1))
-#define DECA(x) (((x-1)<'A')?'Z':(x-1))
-#define INCN(x) (((x+1)>'9')?'0':(x+1))
-#define DECN(x) (((x-1)<'0')?'9':(x-1))
-#define INCG(x) (x=(x>='0' && x<='9')?INCN(x):INCA(x))
-#define DECG(x) (x=(x>='0' && x<='9')?DECN(x):DECA(x))
-
-// --- Color Palette Adjustments ---
-// Rich golden yellow (RGB565: R=31, G=53, B=0 = 0xFEA0, ~#FFD400)
-// Sunlight-optimized: standard yellow (0xFFE0, R=31, G=63, B=0) washes out to near-white under intense sunlight.
-// Reducing green slightly to ~84% creates a rich, warm golden-amber hue clearly differentiated from white,
-// while keeping full red and 0 blue to maintain maximum contrast and photopic brightness.
-#define RICH_YELLOW          0xFEA0
-
-// --- Display Layout (480 x 480) ---
-#define CHAR_W(sz)           (6 * (sz))
-#define CHAR_H(sz)           (8 * (sz))
-
-// Row 1: Local Maidenhead Grid
-#define LOC_SZ               4
-#define LOC_X                144
-#define LOC_Y                35
-
-// Row 2: Target Grid
-#define REMSIZE              8
-#define REMSTARTX            80
-#define REMSTARTY            95
-#define REMSTOPX             (6 * CHAR_W(REMSIZE) + REMSTARTX)
-#define REMSTOPY             (2 * CHAR_H(REMSIZE) + REMSTARTY)
-
-// Target Grid Touch Area (covers character row, caret row, and generous padding)
-#define TOUCH_X_MIN          50
-#define TOUCH_X_MAX          430
-#define TOUCH_Y_MIN          70
-#define TOUCH_Y_MAX          235
-
-// Row 3: Antenna Heading & Target Bearing
-#define BEARSZ               6
-#define BEARX                20
-#define BEARY                REMSTOPY
-#define TGTBEARX             280
-
-// Row 3 Center: Calibration Status Pill & Touch Target
-#define CAL_PILL_X           200
-#define CAL_PILL_Y           225
-#define CAL_PILL_W           80
-#define CAL_PILL_H           44
-#define CAL_TOUCH_X_MIN      180
-#define CAL_TOUCH_X_MAX      300
-#define CAL_TOUCH_Y_MIN      210
-#define CAL_TOUCH_Y_MAX      280
-#define CAL_MODAL_TIMEOUT_MS 15000
-
-// Set to 1 to show ARRL contest distance (Row 6), 0 to hide
-#define ENABLE_ARRL_DIST     1
-
-#if ENABLE_ARRL_DIST
-// Row 4: UTC Time
-#define TIME_SZ              6
-#define TIME_X               132
-#define TIME_Y               290
-
-// Row 5: Reverse Bearing & Distance
-#define REVBEAR_SZ           4
-#define REVBEAR_X            90
-#define REVBEAR_Y            352
-
-// Row 6: ARRL Contest Distance
-#define ARRL_SZ              3
-#define ARRL_X               123
-#define ARRL_Y               408
-#else
-// Row 4: UTC Time
-#define TIME_SZ              6
-#define TIME_X               132
-#define TIME_Y               300
-
-// Row 5: Reverse Bearing & Distance
-#define REVBEAR_SZ           4
-#define REVBEAR_X            90
-#define REVBEAR_Y            372
-#endif
-
-// Row 7: Firmware Version Footer
-#define FW_VERSION           "v0.3-dev"
-#define VER_SZ               2
-#define VER_Y                444
-
-// Inactivity Auto-Lock Timeout (milliseconds; set to 0 to disable)
-#define EDIT_TIMEOUT_MS      5000
-
-#define aton(x) (x-'0')
-
- // Define the RX and TX pins for Serial 2
-#define RXD2 44
-#define TXD2 43
-
-#define GPS_BAUD 115200
+#include "src/system/calibration.h"
+#include "src/gnss/simulator.h"
 
 // Create an instance of the HardwareSerial class for Serial 2
 HardwareSerial gpsSerial(2);
@@ -126,25 +24,24 @@ bool hasTime = false;
 int hours = 0;
 int minutes = 0;
 
-// --- Calibration & UI State Variables ---
-float calibrationOffset = 0.0f;
+// System Singletons
+Calibration calibration;
+GpsSimulator gpsSimulator;
+
+// --- UI State Variables ---
 enum UiMode {
   UI_MODE_NORMAL = 0,
   UI_MODE_CALIBRATING = 1
 };
 UiMode currentUiMode = UI_MODE_NORMAL;
-float proposedCalibrationOffset = 0.0f;
 unsigned long calModalOpenedMillis = 0;
-
-#define ENCODER_CLK 42
-#define ENCODER_DT 4
 
 volatile int counter=0;
 volatile int encState = 0;
 volatile int oldState = -1;
 volatile bool hasChanged = false;
 
-PCF8574 pcf8574(0x21);
+PCF8574 pcf8574(PCF8574_ADDR);
 
 Adafruit_CST8XX tsPanel = Adafruit_CST8XX();
 
@@ -284,8 +181,6 @@ void printrem() {
 
 
 // --- Bearing Quality & State Machine ---
-#define HEADING_TIMEOUT_MS   1500
-
 BearingFilter bearingFilter;
 
 bool hasHeading = false;
@@ -306,29 +201,12 @@ unsigned long lastKsxtMillis = 0;
 unsigned int hdtPacketCount = 0;
 unsigned long lastHdtMillis = 0;
 
-// GPS Simulation Mode State
-bool simModeActive = false;
-unsigned long lastSimInjectionMillis = 0;
-unsigned int simPacketCount = 0;
-
 void loadCalibration() {
-  Preferences prefs;
-  prefs.begin("compass", true);
-  calibrationOffset = prefs.getFloat("cal_offset", 0.0f);
-  prefs.end();
-  Serial.printf("[NVS] Loaded antenna calibration offset: %+5.1f deg\r\n", calibrationOffset);
+  calibration.begin();
 }
 
 void saveCalibration(float offset) {
-  offset = normalizeOffset(offset);
-  if (fabs(offset - calibrationOffset) > 0.01f) {
-    calibrationOffset = offset;
-    Preferences prefs;
-    prefs.begin("compass", false);
-    prefs.putFloat("cal_offset", calibrationOffset);
-    prefs.end();
-    Serial.printf("[NVS] Saved antenna calibration offset: %+5.1f deg\r\n", calibrationOffset);
-  }
+  calibration.setOffset(offset);
 }
 
 void drawCalibrationPill() {
@@ -337,12 +215,12 @@ void drawCalibrationPill() {
   // Clear pill region
   gfx->fillRect(CAL_PILL_X - 2, CAL_PILL_Y - 2, CAL_PILL_W + 4, CAL_PILL_H + 4, BLACK);
 
-  uint16_t borderColor = 0x39E7; // Dark gray border
-  uint16_t textColor = 0x7BEF;   // Dim gray text
+  uint16_t borderColor = DARK_GRAY_BORDER; // Dark gray border
+  uint16_t textColor = DIM_GRAY_TEXT;     // Dim gray text
 
-  if (fabs(calibrationOffset) >= 0.05f) {
-    borderColor = 0x07FF;        // Cyan border when active
-    textColor = 0x07FF;          // Cyan text when active
+  if (calibration.isCalibrated()) {
+    borderColor = CYAN;          // Cyan border when active
+    textColor = CYAN;            // Cyan text when active
   }
 
   // Draw rounded pill frame
@@ -356,10 +234,10 @@ void drawCalibrationPill() {
 
   // Line 2: "OFF" or "+4.2"
   char valStr[12];
-  if (fabs(calibrationOffset) < 0.05f) {
+  if (!calibration.isCalibrated()) {
     strcpy(valStr, "OFF");
   } else {
-    sprintf(valStr, "%+4.1f", calibrationOffset);
+    sprintf(valStr, "%+4.1f", calibration.getOffset());
   }
   int txtW = strlen(valStr) * CHAR_W(2);
   gfx->setCursor(CAL_PILL_X + (CAL_PILL_W - txtW) / 2, CAL_PILL_Y + 24);
@@ -368,11 +246,11 @@ void drawCalibrationPill() {
 }
 
 void drawProposedOffsetRow() {
-  gfx->fillRect(50, 198, 380, 26, 0x10A2);
+  gfx->fillRect(50, 198, 380, 26, MODAL_BG_COLOR);
   gfx->setTextSize(2);
-  gfx->setTextColor(RICH_YELLOW, 0x10A2);
+  gfx->setTextColor(RICH_YELLOW, MODAL_BG_COLOR);
   char buf[36];
-  sprintf(buf, "Proposed Offset: %+5.1f", proposedCalibrationOffset);
+  sprintf(buf, "Proposed Offset: %+5.1f", calibration.getProposedOffset());
   gfx->setCursor(55, 202);
   gfx->print(buf);
   gfx->setTextColor(WHITE, BLACK);
@@ -509,7 +387,7 @@ void drawCalibrationModal() {
 
   // Current Stored Offset
   gfx->setCursor(55, 172);
-  sprintf(buf, "Current Offset : %+5.1f", calibrationOffset);
+  sprintf(buf, "Current Offset : %+5.1f", calibration.getOffset());
   gfx->print(buf);
 
   // Proposed Offset (with fine-tuning knob)
@@ -563,19 +441,19 @@ void handleCalSerialCommand(const String &cmd) {
   if (arg.length() == 0 || arg.equalsIgnoreCase("status") || arg.equalsIgnoreCase("show")) {
     Serial.println();
     Serial.println(F("=== Antenna Calibration Status ==="));
-    Serial.printf("  Stored Offset : %+5.1f deg\r\n", calibrationOffset);
+    Serial.printf("  Stored Offset : %+5.1f deg\r\n", calibration.getOffset());
     Serial.printf("  Target Bearing: %5.1f deg\r\n", bearing);
     if (hasHeading) {
       double rawHdg = bearingFilter.getRawHeading();
       Serial.printf("  Raw GNSS Hdg  : %5.1f deg\r\n", rawHdg);
-      Serial.printf("  Calibrated Hdg: %5.1f deg\r\n", bearingFilter.getCalibratedHeading(calibrationOffset));
+      Serial.printf("  Calibrated Hdg: %5.1f deg\r\n", bearingFilter.getCalibratedHeading(calibration.getOffset()));
     } else {
       Serial.println(F("  Raw GNSS Hdg  : ---.- (No heading fix)"));
     }
     Serial.println(F("=================================="));
     Serial.println();
   } else if (arg.equalsIgnoreCase("zero") || arg.equalsIgnoreCase("reset") || arg.equals("0")) {
-    saveCalibration(0.0f);
+    calibration.reset();
     updateBearings();
     Serial.println(F("[CAL] Offset reset to 0.0 deg (Cleared)."));
   } else if (arg.equalsIgnoreCase("snap")) {
@@ -583,23 +461,20 @@ void handleCalSerialCommand(const String &cmd) {
       Serial.println(F("[CAL ERROR] Cannot snap: No valid GNSS heading fix."));
     } else {
       double rawHdg = bearingFilter.getRawHeading();
-      float newOffset = normalizeOffset((float)(bearing - rawHdg));
-      saveCalibration(newOffset);
+      calibration.snap(bearing, rawHdg);
       updateBearings();
-      Serial.printf("[CAL] Snapped! New offset: %+5.1f deg\r\n", newOffset);
+      Serial.printf("[CAL] Snapped! New offset: %+5.1f deg\r\n", calibration.getOffset());
     }
   } else if (arg.startsWith("set ") || arg.startsWith("SET ")) {
     float val = arg.substring(4).toFloat();
-    val = normalizeOffset(val);
-    saveCalibration(val);
+    calibration.setOffset(val);
     updateBearings();
-    Serial.printf("[CAL] Offset set to %+5.1f deg\r\n", val);
+    Serial.printf("[CAL] Offset set to %+5.1f deg\r\n", calibration.getOffset());
   } else {
     float val = arg.toFloat();
-    val = normalizeOffset(val);
-    saveCalibration(val);
+    calibration.setOffset(val);
     updateBearings();
-    Serial.printf("[CAL] Offset set to %+5.1f deg\r\n", val);
+    Serial.printf("[CAL] Offset set to %+5.1f deg\r\n", calibration.getOffset());
   }
 }
 
@@ -624,7 +499,7 @@ void drawCurrentBearing() {
     gfx->print("---.-");
   } else {
     char str[10];
-    sprintf(str, "%5.1f", bearingFilter.getCalibratedHeading(calibrationOffset));
+    sprintf(str, "%5.1f", bearingFilter.getCalibratedHeading(calibration.getOffset()));
     gfx->print(str);
   }
   gfx->setTextColor(WHITE, BLACK);
@@ -736,9 +611,9 @@ void printGpsStatusReport() {
   Serial.println(F("========================================"));
   Serial.println(F("     GNSS Receiver Stream Diagnosis     "));
   Serial.println(F("========================================"));
-  if (simModeActive) {
+  if (gpsSimulator.isActive()) {
     Serial.println(F("Operation Mode: SIMULATION ACTIVE (Hardware Serial2 suppressed)"));
-    Serial.printf("Sim Injections: %u pkts (last %lu ms ago)\r\n", simPacketCount, millis() - lastSimInjectionMillis);
+    Serial.printf("Sim Injections: %u pkts (last %lu ms ago)\r\n", gpsSimulator.getPacketCount(), millis() - gpsSimulator.getLastInjectionMillis());
   }
 
   if (v == GPS_LINK_DISCONNECTED) {
@@ -858,7 +733,7 @@ void runVisualSelfTest() {
   bool saved_isEditing = isEditing;
   BearingQuality saved_quality = currentBearingQuality;
   unsigned long saved_lastHeading = lastHeadingUpdate;
-  float saved_calibrationOffset = calibrationOffset;
+  float savedOffset = calibration.getOffset();
   UiMode saved_uiMode = currentUiMode;
   isEditing = false;
 
@@ -970,21 +845,21 @@ void runVisualSelfTest() {
   Serial.println(F("[Test 7/7] Antenna Calibration Pill & Modal Display Demo"));
   Serial.println(F("  -> Testing Calibration Pill Display (Uncalibrated: OFF)"));
   showFooterText("TEST 7: CAL PILL OFF", CYAN);
-  calibrationOffset = 0.0f;
+  calibration.setOffset(0.0f);
   drawCalibrationPill();
   drawCurrentBearing();
   delay(1500);
 
   Serial.println(F("  -> Testing Calibration Pill Display (Calibrated: +4.2 deg)"));
   showFooterText("TEST 7: CAL PILL +4.2", GREEN);
-  calibrationOffset = 4.2f;
+  calibration.setOffset(4.2f);
   drawCalibrationPill();
   drawCurrentBearing();
   delay(1500);
 
   Serial.println(F("  -> Demonstrating Calibration Modal Dialog"));
   showFooterText("TEST 7: CAL MODAL", RICH_YELLOW);
-  proposedCalibrationOffset = 4.2f;
+  calibration.stageProposedOffset(4.2f);
   currentUiMode = UI_MODE_CALIBRATING;
   drawCalibrationModal();
   delay(1200);
@@ -1031,7 +906,7 @@ void runVisualSelfTest() {
   lastHeadingUpdate = saved_lastHeading;
   rovdist = saved_rovdist;
   isEditing = saved_isEditing;
-  calibrationOffset = saved_calibrationOffset;
+  calibration.setOffset(savedOffset);
   currentUiMode = saved_uiMode;
   redrawMainScreen();
 
@@ -1152,19 +1027,18 @@ void processGpsSentence(char *sentence) {
 }
 
 void injectSimSentence(const char *sentence) {
-  if (!simModeActive) {
-    simModeActive = true;
+  if (!gpsSimulator.isActive()) {
     Serial.println(F("[SIM] Simulation mode activated by sentence injection. Hardware Serial2 suppressed."));
   }
-  simPacketCount++;
-  lastSimInjectionMillis = millis();
   totalGpsBytesReceived += strlen(sentence);
   lastGpsByteMillis = millis();
 
-  char sbuf[256];
-  strncpy(sbuf, sentence, sizeof(sbuf) - 1);
-  sbuf[sizeof(sbuf) - 1] = '\0';
-  processGpsSentence(sbuf);
+  gpsSimulator.injectSentence(sentence, [](const char *s) {
+    char sbuf[256];
+    strncpy(sbuf, s, sizeof(sbuf) - 1);
+    sbuf[sizeof(sbuf) - 1] = '\0';
+    processGpsSentence(sbuf);
+  }, millis());
 }
 
 void handleSimSerialCommand(const String &cmd) {
@@ -1179,13 +1053,13 @@ void handleSimSerialCommand(const String &cmd) {
   if (arg.length() == 0 || arg.equalsIgnoreCase("status")) {
     Serial.println();
     Serial.println(F("=== GPS Simulation Mode Status ==="));
-    Serial.printf("  Simulation Active : %s\r\n", simModeActive ? "YES (Hardware Serial2 suppressed)" : "NO (Live Serial2 active)");
-    Serial.printf("  Sim Packets Recv  : %u\r\n", simPacketCount);
-    if (simPacketCount > 0) {
-      Serial.printf("  Last Sim Packet   : %lu ms ago\r\n", millis() - lastSimInjectionMillis);
+    Serial.printf("  Simulation Active : %s\r\n", gpsSimulator.isActive() ? "YES (Hardware Serial2 suppressed)" : "NO (Live Serial2 active)");
+    Serial.printf("  Sim Packets Recv  : %u\r\n", gpsSimulator.getPacketCount());
+    if (gpsSimulator.getPacketCount() > 0) {
+      Serial.printf("  Last Sim Packet   : %lu ms ago\r\n", millis() - gpsSimulator.getLastInjectionMillis());
     }
     Serial.printf("  Current Heading   : %5.1f deg (Quality: %s)\r\n",
-                  hasHeading ? bearingFilter.getCalibratedHeading(calibrationOffset) : 0.0,
+                  hasHeading ? bearingFilter.getCalibratedHeading(calibration.getOffset()) : 0.0,
                   currentBearingQuality == BEARING_FIXED ? "FIXED" : (currentBearingQuality == BEARING_FLOAT ? "FLOAT" : "LOST"));
     Serial.printf("  Current Position  : %9.5f, %9.5f (Grid: %s)\r\n", mylatitude, mylongitude, mygrid);
     Serial.printf("  Rover Mode Active : %s\r\n", rovdist ? "YES (<16k alert tracking)" : "NO (Stationary target tracking)");
@@ -1198,18 +1072,18 @@ void handleSimSerialCommand(const String &cmd) {
   }
 
   if (arg.equalsIgnoreCase("on")) {
-    simModeActive = true;
+    gpsSimulator.setActive(true);
     Serial.println(F("[SIM] Simulation mode enabled. Hardware Serial2 input is now SUPPRESSED."));
     return;
   }
 
   if (arg.equalsIgnoreCase("off")) {
-    simModeActive = false;
+    gpsSimulator.setActive(false);
     Serial.println(F("[SIM] Simulation mode disabled. Hardware Serial2 receiver link RESTORED."));
     return;
   }
 
-  simModeActive = true;
+  gpsSimulator.setActive(true);
 
   if (arg.startsWith("hdg") || arg.startsWith("HDG")) {
     String p = arg.substring(3);
@@ -1307,10 +1181,10 @@ void handleSimSerialCommand(const String &cmd) {
     remlongitude = orig_lon;
     rovdist = true;
 
-    double lat_offset = (dist_km * 1000.0 * cos(toRad(45.0))) / 111132.954;
-    double lon_offset = (dist_km * 1000.0 * sin(toRad(45.0))) / (111132.954 * cos(toRad(orig_lat)));
-    mylatitude = orig_lat + lat_offset;
-    mylongitude = orig_lon + lon_offset;
+    GeoPoint originPoint(orig_lat, orig_lon, true);
+    GeoPoint simulatedPoint = GpsSimulator::calculateRoverDisplacement(originPoint, dist_km, 45.0);
+    mylatitude = simulatedPoint.latitude;
+    mylongitude = simulatedPoint.longitude;
     hasLocation = true;
     geoPointToGrid(mylatitude, mylongitude, mygrid);
 
@@ -1449,9 +1323,8 @@ void loop() {
 
       if (currentUiMode == UI_MODE_CALIBRATING) {
         calModalOpenedMillis = millis();
-        if (counter > 0) proposedCalibrationOffset += 0.1f;
-        else proposedCalibrationOffset -= 0.1f;
-        proposedCalibrationOffset = normalizeOffset(proposedCalibrationOffset);
+        if (counter > 0) calibration.adjustProposedOffset(0.1f);
+        else calibration.adjustProposedOffset(-0.1f);
         counter = 0;
         drawProposedOffsetRow();
       } else if (isEditing) {
@@ -1524,7 +1397,7 @@ void loop() {
             if (holdDuration >= LONG_PRESS_MS) {
               longPressTriggered = true;
               holdingSaveBtn = false;
-              saveCalibration(proposedCalibrationOffset);
+              calibration.commitProposed();
               currentUiMode = UI_MODE_NORMAL;
               redrawMainScreen();
             }
@@ -1559,7 +1432,7 @@ void loop() {
               drawSnapButton(true);
               if (hasHeading) {
                 double rawHdg = bearingFilter.getRawHeading();
-                proposedCalibrationOffset = normalizeOffset((float)(bearing - rawHdg));
+                calibration.snapProposed(bearing, rawHdg);
                 drawProposedOffsetRow();
               }
               delay(120);
@@ -1568,7 +1441,7 @@ void loop() {
             // Button 2: [ RESET (0.0) ] (X: 245..425, Y: 230..278) -> Tap resets display only!
             else if (245 <= p.x && p.x <= 425 && 230 <= p.y && p.y <= 278) {
               drawResetButton(true);
-              proposedCalibrationOffset = 0.0f;
+              calibration.resetProposed();
               drawProposedOffsetRow();
               delay(120);
               drawResetButton(false);
@@ -1591,9 +1464,9 @@ void loop() {
             if (CAL_TOUCH_X_MIN <= p.x && p.x <= CAL_TOUCH_X_MAX && CAL_TOUCH_Y_MIN <= p.y && p.y <= CAL_TOUCH_Y_MAX) {
               if (hasHeading) {
                 double rawHdg = bearingFilter.getRawHeading();
-                proposedCalibrationOffset = normalizeOffset((float)(bearing - rawHdg));
+                calibration.snapProposed(bearing, rawHdg);
               } else {
-                proposedCalibrationOffset = calibrationOffset;
+                calibration.syncProposedFromActive();
               }
               currentUiMode = UI_MODE_CALIBRATING;
               calModalOpenedMillis = millis();
@@ -1650,7 +1523,7 @@ void loop() {
 
 
     if (int num = gpsSerial.available()) {
-      if (simModeActive) {
+      if (gpsSimulator.isActive()) {
         // Discard physical receiver bytes while simulation mode is active
         while (gpsSerial.available()) {
           gpsSerial.read();

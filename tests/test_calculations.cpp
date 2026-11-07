@@ -3,9 +3,12 @@
 #include <cstring>
 #include <string>
 #include "../src/types.h"
+#include "../src/config.h"
 #include "../src/geo/geo_math.h"
 #include "../src/geo/maidenhead.h"
 #include "../src/protocol/nmea_parser.h"
+#include "../src/system/calibration.h"
+#include "../src/gnss/simulator.h"
 
 int tests_run = 0;
 int tests_passed = 0;
@@ -531,6 +534,156 @@ void test_geopoint_and_modern_domain() {
     PASS();
 }
 
+void test_config_constants() {
+    TEST("src/config.h constants and macro dimensions");
+    ASSERT_TRUE(SCREEN_WIDTH == 480);
+    ASSERT_TRUE(SCREEN_HEIGHT == 480);
+    ASSERT_TRUE(CHAR_W(2) == 12);
+    ASSERT_TRUE(CHAR_H(2) == 16);
+    ASSERT_TRUE(RICH_YELLOW == 0xFEA0);
+    ASSERT_TRUE(HEADING_TIMEOUT_MS == 1500);
+    ASSERT_TRUE(EDIT_TIMEOUT_MS == 5000);
+    ASSERT_TRUE(CAL_MODAL_TIMEOUT_MS == 15000);
+    ASSERT_NEAR(ROVER_ALERT_THRESHOLD_KM, 16.0, 1e-6);
+
+    // Test grid character rolling macros
+    char c = 'A';
+    ASSERT_TRUE(INCA(c) == 'B');
+    ASSERT_TRUE(DECA(c) == 'Z');
+    c = 'Z';
+    ASSERT_TRUE(INCA(c) == 'A');
+
+    char n = '0';
+    ASSERT_TRUE(INCN(n) == '1');
+    ASSERT_TRUE(DECN(n) == '9');
+    n = '9';
+    ASSERT_TRUE(INCN(n) == '0');
+
+    PASS();
+}
+
+void test_calibration_class() {
+    TEST("Calibration class offset staging and persistence");
+    Calibration::resetHostStorage();
+
+    Calibration cal;
+    cal.begin();
+    ASSERT_NEAR(cal.getOffset(), 0.0f, 1e-4);
+    ASSERT_TRUE(!cal.isCalibrated());
+
+    // Setting offset and wrap normalization
+    cal.setOffset(4.2f);
+    ASSERT_NEAR(cal.getOffset(), 4.2f, 1e-4);
+    ASSERT_TRUE(cal.isCalibrated());
+
+    // Wrap-around normalization > 180 and < -180
+    cal.setOffset(190.0f);
+    ASSERT_NEAR(cal.getOffset(), -170.0f, 1e-4);
+
+    cal.setOffset(-200.0f);
+    ASSERT_NEAR(cal.getOffset(), 160.0f, 1e-4);
+
+    // Snapping: target = 10.0, raw = 355.0 -> delta = +15.0
+    cal.snap(10.0, 355.0);
+    ASSERT_NEAR(cal.getOffset(), 15.0f, 1e-4);
+
+    // Staging and proposed offset manipulation
+    cal.reset();
+    ASSERT_NEAR(cal.getOffset(), 0.0f, 1e-4);
+    ASSERT_TRUE(!cal.isCalibrated());
+
+    cal.stageProposedOffset(5.0f);
+    ASSERT_NEAR(cal.getProposedOffset(), 5.0f, 1e-4);
+    ASSERT_NEAR(cal.getOffset(), 0.0f, 1e-4); // Active unchanged until commit
+
+    cal.adjustProposedOffset(0.1f);
+    ASSERT_NEAR(cal.getProposedOffset(), 5.1f, 1e-4);
+
+    cal.adjustProposedOffset(-0.2f);
+    ASSERT_NEAR(cal.getProposedOffset(), 4.9f, 1e-4);
+
+    cal.snapProposed(45.0, 40.0); // +5.0
+    ASSERT_NEAR(cal.getProposedOffset(), 5.0f, 1e-4);
+
+    cal.commitProposed();
+    ASSERT_NEAR(cal.getOffset(), 5.0f, 1e-4);
+
+    // Persistence verification: new instance loads persisted value
+    Calibration cal2;
+    cal2.begin();
+    ASSERT_NEAR(cal2.getOffset(), 5.0f, 1e-4);
+    ASSERT_TRUE(cal2.isCalibrated());
+
+    // Bearing application
+    ASSERT_NEAR(cal2.apply(358.0), 3.0, 1e-4);
+
+    PASS();
+}
+
+void test_gps_simulator() {
+    TEST("GpsSimulator synthetic sentences and virtual rover displacement");
+    GpsSimulator sim;
+    ASSERT_TRUE(!sim.isActive());
+    ASSERT_TRUE(sim.getPacketCount() == 0);
+
+    // Checksum verification
+    uint8_t csum = GpsSimulator::computeChecksum("$GNHDT,123.4,T");
+    ASSERT_TRUE(csum != 0);
+
+    // Sentence injection and callback
+    static bool sentenceReceived = false;
+    static std::string lastSentence;
+    sim.injectSentence("$GNHDT,045.0,T*26", [](const char *s) {
+        sentenceReceived = true;
+        lastSentence = s;
+    }, 1000);
+
+    ASSERT_TRUE(sentenceReceived);
+    ASSERT_STR_EQ(lastSentence.c_str(), "$GNHDT,045.0,T*26");
+    ASSERT_TRUE(sim.isActive());
+    ASSERT_TRUE(sim.getPacketCount() == 1);
+    ASSERT_TRUE(sim.getLastInjectionMillis() == 1000);
+
+    // Synthetic KSXT generation & roundtrip parsing
+    char ksxtBuf[256];
+    ASSERT_TRUE(GpsSimulator::generateKsxt(ksxtBuf, sizeof(ksxtBuf),
+                                          "20261106180000.00", 38.35412, -119.45821,
+                                          125.5, BEARING_FIXED));
+    float hOut = 0.0f;
+    BearingQuality qOut = BEARING_LOST;
+    ASSERT_TRUE(parseKsxtHeading(ksxtBuf, hOut, qOut));
+    ASSERT_NEAR(hOut, 125.5, 0.01);
+    ASSERT_TRUE(qOut == BEARING_FIXED);
+
+    GeoPoint ptOut;
+    ASSERT_TRUE(parseKsxtLocation(ksxtBuf, ptOut));
+    ASSERT_NEAR(ptOut.latitude, 38.35412, 1e-5);
+    ASSERT_NEAR(ptOut.longitude, -119.45821, 1e-5);
+
+    // Synthetic HDT generation & roundtrip parsing
+    char hdtBuf[64];
+    ASSERT_TRUE(GpsSimulator::generateHdt(hdtBuf, sizeof(hdtBuf), 270.5));
+    ASSERT_TRUE(parseHDT(hdtBuf, &hOut, &qOut));
+    ASSERT_NEAR(hOut, 270.5, 0.01);
+
+    // Virtual rover displacement math
+    GeoPoint origin(38.35412, -119.45821, true); // CM87wa center
+    GeoPoint displaced10km = GpsSimulator::calculateRoverDisplacement(origin, 10.0, 45.0);
+    double dist10m = 0.0, brg10 = 0.0;
+    calculateWgs84(origin, displaced10km, dist10m, brg10);
+    ASSERT_NEAR(dist10m / 1000.0, 10.0, 0.2); // within 200m over 10km planar approximation
+    ASSERT_NEAR(brg10, 45.0, 1.0);
+    ASSERT_TRUE(isRoverTransitInsideAlert(displaced10km, origin, 16.0));
+
+    GeoPoint displaced20km = GpsSimulator::calculateRoverDisplacement(origin, 20.0, 45.0);
+    double dist20m = 0.0, brg20 = 0.0;
+    calculateWgs84(origin, displaced20km, dist20m, brg20);
+    ASSERT_NEAR(dist20m / 1000.0, 20.0, 0.4);
+    ASSERT_TRUE(!isRoverTransitInsideAlert(displaced20km, origin, 16.0));
+
+    PASS();
+}
+
 int main() {
     std::cout << "========================================" << std::endl;
     std::cout << "  GNSS Compass Unit Test Suite" << std::endl;
@@ -553,6 +706,9 @@ int main() {
     test_antenna_calibration();
     test_gps_stream_evaluation();
     test_geopoint_and_modern_domain();
+    test_config_constants();
+    test_calibration_class();
+    test_gps_simulator();
 
     std::cout << "========================================" << std::endl;
     std::cout << "  All " << tests_passed << " / " << tests_run << " tests PASSED successfully!" << std::endl;

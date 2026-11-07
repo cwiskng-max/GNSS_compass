@@ -10,6 +10,8 @@ g++ -O2 -Wall -Wextra -I"$REPO_DIR" \
     "$REPO_DIR/src/geo/maidenhead.cpp" \
     "$REPO_DIR/src/geo/bearing_filter.cpp" \
     "$REPO_DIR/src/protocol/nmea_parser.cpp" \
+    "$REPO_DIR/src/system/calibration.cpp" \
+    "$REPO_DIR/src/gnss/simulator.cpp" \
     "$SCRIPT_DIR/test_calculations.cpp" -o "$SCRIPT_DIR/run_tests"
 
 echo "=== Running unit tests ==="
