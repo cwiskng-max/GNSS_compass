@@ -127,6 +127,29 @@ void GpsManager::feedSentence(const char *sentence, unsigned long nowMs) {
     processSentence(feedBuffer_, nowMs);
 }
 
+bool GpsManager::sendBytes(const uint8_t *data, size_t len) {
+    if (!data || len == 0) return false;
+    if (txCallback_) {
+        txCallback_(data, len, txContext_);
+    }
+#if defined(ARDUINO)
+    return serialPort_.write(data, len) == len;
+#else
+    return true;
+#endif
+}
+
+bool GpsManager::sendCommand(const char *cmd) {
+    if (!cmd) return false;
+    size_t len = strlen(cmd);
+    bool ok = sendBytes((const uint8_t*)cmd, len);
+    if (ok && (len == 0 || (cmd[len - 1] != '\n' && cmd[len - 1] != '\r'))) {
+        const uint8_t crlf[2] = {'\r', '\n'};
+        sendBytes(crlf, 2);
+    }
+    return ok;
+}
+
 void GpsManager::setLocation(const GeoPoint &point, unsigned long /* nowMs */) {
     location_ = point;
     if (onLocationUpdated_) {
@@ -229,17 +252,20 @@ void GpsManager::processSentence(char *sentence, unsigned long nowMs) {
         char *ptr = nullptr;
         double gllLat = 0.0, gllLon = 0.0;
 
-        parseLegacyLatLon(&sentence[7], &gllLat, &gllLon, &ptr);
-        if (ptr && strlen(ptr) >= 4) {
-            int gllH = aton(ptr[0]) * 10 + aton(ptr[1]);
-            int gllM = aton(ptr[2]) * 10 + aton(ptr[3]);
+        const char *field1 = getNthField(sentence, 1);
+        if (field1 && *field1) {
+            parseLegacyLatLon(const_cast<char*>(field1), &gllLat, &gllLon, &ptr);
+            if (ptr && strlen(ptr) >= 4) {
+                int gllH = aton(ptr[0]) * 10 + aton(ptr[1]);
+                int gllM = aton(ptr[2]) * 10 + aton(ptr[3]);
 
-            char *statusComma = strchr(ptr, ',');
-            if ((statusComma != nullptr && *(statusComma + 1) == 'A') || (strlen(ptr) >= 11 && ptr[10] == 'A')) {
-                setLocation(gllLat, gllLon, nowMs);
+                char *statusComma = strchr(ptr, ',');
+                if ((statusComma != nullptr && *(statusComma + 1) == 'A') || (strlen(ptr) >= 11 && ptr[10] == 'A')) {
+                    setLocation(gllLat, gllLon, nowMs);
 
-                if (!hasTime_ || gllH != hours_ || gllM != minutes_) {
-                    setTime(gllH, gllM);
+                    if (!hasTime_ || gllH != hours_ || gllM != minutes_) {
+                        setTime(gllH, gllM);
+                    }
                 }
             }
         }

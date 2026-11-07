@@ -38,7 +38,6 @@ public:
     DisplayUi();
 
     void begin();
-    void initBacklight();
     void initLcd();
     void clearScreen(uint16_t color = 0x0000 /* BLACK */);
 

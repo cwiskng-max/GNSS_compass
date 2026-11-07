@@ -34,7 +34,7 @@ AppController::AppController(Board &board,
       currentUiMode_(UiMode::Normal),
       calModalOpenedMillis_(0),
       pendingModalButtonRelease_(ModalButtonId::None),
-      pendingModalButtonReleaseMillis_(0)
+      pendingModalButtonReleaseStartMillis_(0)
 {
     std::strcpy(myGrid_, "JJ00AA00");
 }
@@ -76,7 +76,9 @@ void AppController::drawCurrentBearing() {
 }
 
 void AppController::updateBearings() {
-    gridToGeoPoint(gridEditor_.getGrid(), targetPosition_);
+    if (!isRoverAlertActive_) {
+        gridToGeoPoint(gridEditor_.getGrid(), targetPosition_);
+    }
     calculateWgs84(currentPosition_, targetPosition_, distance_, bearing_);
     revbearing_ = calculateReverseBearing(currentPosition_, targetPosition_);
 
@@ -213,6 +215,8 @@ void AppController::begin() {
         if (orig_grid && strlen(orig_grid) >= 4) {
             gridToGeoPoint(orig_grid, originPoint);
             self->gridEditor_.setGrid(orig_grid);
+        } else {
+            self->gridEditor_.setGrid(self->myGrid_);
         }
         self->targetPosition_ = originPoint;
         self->isRoverAlertActive_ = true;
@@ -306,8 +310,10 @@ void AppController::handleUserEvent(const UserEvent &event, unsigned long nowMs)
             break;
 
         case UserEventType::TouchGridCharacter:
+            isRoverAlertActive_ = false;
             gridEditor_.selectCharacter(event.gridIndex, nowMs);
             displayUi_.renderTargetGrid(gridEditor_.getGrid(), gridEditor_.getCursorColumn(), gridEditor_.isEditing());
+            updateBearings();
             break;
 
         case UserEventType::TouchVersionFooter:
@@ -349,7 +355,7 @@ void AppController::handleUserEvent(const UserEvent &event, unsigned long nowMs)
                 displayUi_.getCalModal().drawProposedOffsetRow(calibration_.getProposedOffset());
             }
             pendingModalButtonRelease_ = ModalButtonId::Snap;
-            pendingModalButtonReleaseMillis_ = nowMs + 120;
+            pendingModalButtonReleaseStartMillis_ = nowMs;
             break;
 
         case UserEventType::ResetOffsetTriggered:
@@ -358,13 +364,13 @@ void AppController::handleUserEvent(const UserEvent &event, unsigned long nowMs)
             calibration_.resetProposed();
             displayUi_.getCalModal().drawProposedOffsetRow(calibration_.getProposedOffset());
             pendingModalButtonRelease_ = ModalButtonId::Reset;
-            pendingModalButtonReleaseMillis_ = nowMs + 120;
+            pendingModalButtonReleaseStartMillis_ = nowMs;
             break;
 
         case UserEventType::CancelModalTriggered:
             displayUi_.getCalModal().drawCancelButton(true);
             pendingModalButtonRelease_ = ModalButtonId::Cancel;
-            pendingModalButtonReleaseMillis_ = nowMs + 120;
+            pendingModalButtonReleaseStartMillis_ = nowMs;
             break;
 
         default:
@@ -390,8 +396,9 @@ void AppController::update(unsigned long nowMs) {
         handleUserEvent(event, nowMs);
     }
 
-    // 4. Non-blocking modal button unpress timer
-    if (pendingModalButtonRelease_ != ModalButtonId::None && nowMs >= pendingModalButtonReleaseMillis_) {
+    // 4. Non-blocking modal button unpress timer (rollover safe)
+    if (pendingModalButtonRelease_ != ModalButtonId::None &&
+        (nowMs - pendingModalButtonReleaseStartMillis_) >= 120) {
         if (pendingModalButtonRelease_ == ModalButtonId::Snap) {
             displayUi_.getCalModal().drawSnapButton(false, hasHeading_);
         } else if (pendingModalButtonRelease_ == ModalButtonId::Reset) {

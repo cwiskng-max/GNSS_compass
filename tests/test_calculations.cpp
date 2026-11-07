@@ -804,6 +804,20 @@ void test_gps_manager() {
     gm.checkStaleness(1500UL); // 1500 - 0xFFFFFFF0 = 1516 ms >= 1500 ms -> BEARING_LOST
     ASSERT_TRUE(gm.getBearingQuality() == BEARING_LOST);
 
+    // Bidirectional TX command transmission
+    std::string sentData;
+    gm.setTxHandler([](const uint8_t *data, size_t len, void *ctx) {
+        auto *s = static_cast<std::string*>(ctx);
+        if (s) s->append(reinterpret_cast<const char*>(data), len);
+    }, &sentData);
+    ASSERT_TRUE(gm.sendCommand("$PCFG,SAVE"));
+    ASSERT_STR_EQ(sentData.c_str(), "$PCFG,SAVE\r\n");
+
+    // Malformed & truncated NMEA boundary safety
+    gm.feedSentence("$GNGLL");
+    gm.feedSentence("$GPGLL");
+    gm.feedSentence("$GNGLL,");
+
     PASS();
 }
 
@@ -1225,7 +1239,36 @@ void test_app_controller() {
     app.handleUserEvent(evLoc, 2400);
     ASSERT_STR_EQ(app.getTargetGrid(), "DM08GI");
     ASSERT_TRUE(app.isRoverAlertActive());
-    ASSERT_TRUE(app.getDistance() < 16000.0); // Inside 16 km rover proximity alert threshold
+    // Distance to origin is exact 0.0 m physically (not quantized to grid center!)
+    ASSERT_NEAR(app.getDistance(), 0.0, 1e-3);
+
+    // Rover transit movement: 10.0 km physical displacement
+    GeoPoint originPos = app.getCurrentPosition();
+    GeoPoint displaced10km = GpsSimulator::calculateRoverDisplacement(originPos, 10.0, 45.0);
+    gpsManager.setLocation(displaced10km, 2500);
+    ASSERT_TRUE(app.isRoverAlertActive());
+    ASSERT_NEAR(app.getDistance() / 1000.0, 10.0, 0.05);
+
+    // Rover transit movement: 18.0 km physical displacement (alert clears >= 16 km)
+    GeoPoint displaced18km = GpsSimulator::calculateRoverDisplacement(originPos, 18.0, 45.0);
+    gpsManager.setLocation(displaced18km, 2600);
+    ASSERT_TRUE(app.isRoverAlertActive()); // Flag stays active to show normal white text
+    ASSERT_NEAR(app.getDistance() / 1000.0, 18.0, 0.05);
+
+    // Event: Touch Target Grid character -> Disarms rover alert and returns to stationary tracking
+    UserEvent evChar;
+    evChar.type = UserEventType::TouchGridCharacter;
+    evChar.gridIndex = 2;
+    app.handleUserEvent(evChar, 2700);
+    ASSERT_TRUE(!app.isRoverAlertActive());
+
+    // Non-blocking modal button unpress timer across 32-bit millis() rollover
+    UserEvent evSnap;
+    evSnap.type = UserEventType::SnapOffsetTriggered;
+    app.handleUserEvent(evSnap, 0xFFFFFFF0UL);
+    app.update(0xFFFFFFF0UL + 50); // 50 ms elapsed
+    app.update(50UL);              // 56 + 50 = 106 ms elapsed (< 120 ms)
+    app.update(100UL);             // 56 + 100 = 156 ms elapsed (>= 120 ms -> released)
 
     PASS();
 }

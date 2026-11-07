@@ -18,6 +18,7 @@ typedef void (*GpsHeadingCallback)(float headingDeg, BearingQuality quality, voi
 typedef void (*GpsLocationCallback)(const GeoPoint &pos, void *context);
 typedef void (*GpsTimeCallback)(int hours, int minutes, void *context);
 typedef void (*GpsSentenceCallback)(const char *sentence, void *context);
+typedef void (*GpsTxCallback)(const uint8_t *data, size_t len, void *context);
 
 /**
  * @brief Manages the GNSS receiver UART hardware link, streaming sentence assembly,
@@ -44,6 +45,14 @@ public:
     void feedSentence(const char *sentence, unsigned long nowMs = 0);
     void feedByte(uint8_t byte, unsigned long nowMs = 0);
     void feedBytes(const uint8_t *data, size_t len, unsigned long nowMs = 0);
+
+    // Bidirectional TX transmission (commands / configuration to receiver)
+    bool sendBytes(const uint8_t *data, size_t len);
+    bool sendCommand(const char *cmd);
+    void setTxHandler(GpsTxCallback cb, void *context = nullptr) {
+        txCallback_ = cb;
+        txContext_ = context;
+    }
 
     // Simulator linkage
     void setSimulator(GpsSimulator *sim) { simulator_ = sim; }
@@ -151,6 +160,8 @@ private:
     void *timeContext_;
     GpsSentenceCallback onRawSentence_;
     void *sentenceContext_;
+    GpsTxCallback txCallback_ = nullptr;
+    void *txContext_ = nullptr;
 
 #if defined(ARDUINO)
     HardwareSerial serialPort_;

@@ -117,6 +117,6 @@ private:
     UiMode currentUiMode_;
     unsigned long calModalOpenedMillis_;
     ModalButtonId pendingModalButtonRelease_;
-    unsigned long pendingModalButtonReleaseMillis_;
+    unsigned long pendingModalButtonReleaseStartMillis_;
 };
 

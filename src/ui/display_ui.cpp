@@ -62,11 +62,6 @@ void DisplayUi::formatSelfTestFailure(const int *failedTests, int count, char *o
 #if defined(ARDUINO)
 DisplayUi::DisplayUi() {}
 
-void DisplayUi::initBacklight() {
-    pinMode(BKL_PIN, OUTPUT);
-    analogWrite(BKL_PIN, 250);
-}
-
 void DisplayUi::initLcd() {
     bus_ = new Arduino_ESP32RGBPanel(
         16 /* CS */, 2 /* SCK */, 1 /* SDA */,
@@ -281,7 +276,6 @@ void DisplayUi::redrawMainScreen(const MainScreenState &s) {
 #else
 DisplayUi::DisplayUi() = default;
 void DisplayUi::begin() {}
-void DisplayUi::initBacklight() {}
 void DisplayUi::initLcd() {}
 void DisplayUi::clearScreen(uint16_t) {}
 void DisplayUi::renderMyGrid(const char *) {}
