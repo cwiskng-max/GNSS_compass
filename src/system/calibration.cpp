@@ -41,11 +41,13 @@ void Calibration::saveToNvs(float offsetDeg) {
 #endif
 }
 
-void Calibration::setOffset(float offsetDeg) {
+void Calibration::setOffset(float offsetDeg, bool persist) {
     offsetDeg = normalizeOffset(offsetDeg);
     if (std::abs(offsetDeg - activeOffset_) > 0.01f) {
         activeOffset_ = offsetDeg;
-        saveToNvs(activeOffset_);
+        if (persist) {
+            saveToNvs(activeOffset_);
+        }
     }
 }
 

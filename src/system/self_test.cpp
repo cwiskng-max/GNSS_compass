@@ -29,7 +29,7 @@ void SelfTest::run(SelfTestContext &ctx) {
     ctx.isEditing = false;
 
     // Test 1: Same Grid (ARRL 1.0 km minimum rule)
-    Serial.println(F("[Test 1/6] Same Grid (ARRL 1.0 km rule)"));
+    Serial.println(F("[Test 1/7] Same Grid (ARRL 1.0 km rule)"));
     ctx.displayUi.showFooterText("TEST 1: SAME GRID", CYAN);
     strcpy(ctx.mygrid, "CM87wa00");
     strcpy(ctx.remote, "CM87wa");
@@ -44,7 +44,7 @@ void SelfTest::run(SelfTestContext &ctx) {
     delay(3000);
 
     // Test 2: Rover Transit Alert (< 16 km, highlighted RED on WHITE)
-    Serial.println(F("[Test 2/6] Rover Transit Alert (< 16 km, highlighted RED on WHITE)"));
+    Serial.println(F("[Test 2/7] Rover Transit Alert (< 16 km, highlighted RED on WHITE)"));
     ctx.displayUi.showFooterText("TEST 2: ROVER < 16K", RICH_YELLOW);
     strcpy(ctx.remote, "CM87wb");
     ctx.currentBearingQuality = BEARING_FIXED;
@@ -54,7 +54,7 @@ void SelfTest::run(SelfTestContext &ctx) {
     delay(3000);
 
     // Test 3: Distance Under 1,000 km (~600 km)
-    Serial.println(F("[Test 3/6] Under 1,000 km formatting (~600 km)"));
+    Serial.println(F("[Test 3/7] Under 1,000 km formatting (~600 km)"));
     ctx.displayUi.showFooterText("TEST 3: DIST < 1000K", CYAN);
     strcpy(ctx.remote, "DN13ab");
     ctx.currentBearingQuality = BEARING_FIXED;
@@ -64,7 +64,7 @@ void SelfTest::run(SelfTestContext &ctx) {
     delay(3000);
 
     // Test 4: Distance Over 1,000 km (~2,500 km)
-    Serial.println(F("[Test 4/6] Over 1,000 km formatting (~2,500 km)"));
+    Serial.println(F("[Test 4/7] Over 1,000 km formatting (~2,500 km)"));
     ctx.displayUi.showFooterText("TEST 4: DIST > 1000K", CYAN);
     strcpy(ctx.remote, "EL29ja");
     ctx.currentBearingQuality = BEARING_FIXED;
@@ -73,7 +73,7 @@ void SelfTest::run(SelfTestContext &ctx) {
     delay(3000);
 
     // Test 5: Extreme Distance (> 10,000 km) and Recovery to 1.0 km
-    Serial.println(F("[Test 5/6] Extreme distance (> 10,000 km)"));
+    Serial.println(F("[Test 5/7] Extreme distance (> 10,000 km)"));
     ctx.displayUi.showFooterText("TEST 5: GHOST RECOVERY", CYAN);
     strcpy(ctx.remote, "ZA00AA");
     ctx.displayUi.renderTargetGrid(ctx.remote, ctx.remotec, ctx.isEditing);
@@ -87,7 +87,7 @@ void SelfTest::run(SelfTestContext &ctx) {
     delay(2000);
 
     // Test 6: Bearing Color States & Live GPS Receiver Link Diagnostic
-    Serial.println(F("[Test 6/6] Bearing Color States & Live GPS Stream Diagnostic"));
+    Serial.println(F("[Test 6/7] Bearing Color States & Live GPS Stream Diagnostic"));
     Serial.println(F("  -> Bearing Color: Pure White (RTK Fixed)"));
     ctx.displayUi.showFooterText("TEST 6: BEARING WHITE", WHITE);
     ctx.currentBearingQuality = BEARING_FIXED;
@@ -129,14 +129,14 @@ void SelfTest::run(SelfTestContext &ctx) {
     Serial.println(F("[Test 7/7] Antenna Calibration Pill & Modal Display Demo"));
     Serial.println(F("  -> Testing Calibration Pill Display (Uncalibrated: OFF)"));
     ctx.displayUi.showFooterText("TEST 7: CAL PILL OFF", CYAN);
-    ctx.calibration.setOffset(0.0f);
+    ctx.calibration.setOffset(0.0f, false);
     ctx.displayUi.renderCalibrationPill(ctx.calibration.getOffset(), ctx.calibration.isCalibrated());
     if (ctx.drawCurrentBearing) ctx.drawCurrentBearing();
     delay(1500);
 
     Serial.println(F("  -> Testing Calibration Pill Display (Calibrated: +4.2 deg)"));
     ctx.displayUi.showFooterText("TEST 7: CAL PILL +4.2", GREEN);
-    ctx.calibration.setOffset(4.2f);
+    ctx.calibration.setOffset(4.2f, false);
     ctx.displayUi.renderCalibrationPill(ctx.calibration.getOffset(), ctx.calibration.isCalibrated());
     if (ctx.drawCurrentBearing) ctx.drawCurrentBearing();
     delay(1500);
@@ -201,6 +201,13 @@ void SelfTest::run(SelfTestContext &ctx) {
         failedTests[failedCount++] = 5;
     }
 
+    // Test 6: Antenna baseline offset calculation
+    if (fabs(calcCurrentBearing(0.0f, 10.0f) - 270.0f) > 0.01f ||
+        fabs(calcCurrentBearing(10.0f, 0.0f) - 0.0f) > 0.01f) {
+        Serial.println(F("FAIL: Test 6 (Antenna baseline offset calculation)"));
+        failedTests[failedCount++] = 6;
+    }
+
     // Test 7: Heading offset wrap & normalization
     if (fabs(normalizeOffset(5.0f - 355.0f) - 10.0f) > 0.01f ||
         fabs(normalizeOffset(355.0f - 5.0f) - (-10.0f)) > 0.01f) {
@@ -223,8 +230,8 @@ void SelfTest::run(SelfTestContext &ctx) {
     ctx.displayUi.getGfx()->fillRect(40, 215, 400, 52, BLACK);
 
     // Restore live state and firmware version footer
-    memcpy(ctx.remote, saved_remote, sizeof(ctx.remote));
-    memcpy(ctx.mygrid, saved_mygrid, sizeof(ctx.mygrid));
+    memcpy(ctx.remote, saved_remote, sizeof(saved_remote));
+    memcpy(ctx.mygrid, saved_mygrid, sizeof(saved_mygrid));
     ctx.mylatitude = saved_mylat;
     ctx.mylongitude = saved_mylon;
     ctx.hasHeading = saved_hasHeading;
@@ -232,9 +239,10 @@ void SelfTest::run(SelfTestContext &ctx) {
     ctx.lastHeadingUpdate = saved_lastHeading;
     ctx.rovdist = saved_rovdist;
     ctx.isEditing = saved_isEditing;
-    ctx.calibration.setOffset(savedOffset);
+    ctx.calibration.setOffset(savedOffset, false);
     ctx.currentUiMode = saved_uiMode;
     ctx.inputManager.setUiMode(saved_uiMode);
+    if (ctx.updateBearings) ctx.updateBearings();
     if (ctx.redrawMainScreen) ctx.redrawMainScreen();
 
     Serial.println(F("=== Visual Self-Test Complete (Live state restored) ===\n"));

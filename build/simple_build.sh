@@ -5,6 +5,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT"
 
+# Ensure ~/.local/bin is in PATH if arduino-cli is installed there
+if [ -d "$HOME/.local/bin" ] && [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
+    export PATH="$HOME/.local/bin:$PATH"
+fi
+
 BUILD_DIR="$REPO_ROOT/build"
 SCRATCH_DIR="$BUILD_DIR/tmp/gps_compass"
 OUTPUT_BIN="$REPO_ROOT/gps_compass.ino.esp32s3.bin"

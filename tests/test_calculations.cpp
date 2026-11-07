@@ -622,6 +622,13 @@ void test_calibration_class() {
     // Bearing application
     ASSERT_NEAR(cal2.apply(358.0), 3.0, 1e-4);
 
+    // In-memory update without persistence (used during Self-Test demo to avoid flash wear)
+    cal2.setOffset(4.2f, false);
+    ASSERT_NEAR(cal2.getOffset(), 4.2f, 1e-4);
+    Calibration cal3;
+    cal3.begin();
+    ASSERT_NEAR(cal3.getOffset(), 5.0f, 1e-4); // NVS storage preserved at 5.0f!
+
     PASS();
 }
 

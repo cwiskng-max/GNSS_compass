@@ -177,7 +177,6 @@ void setup() {
       strncpy(remote, orig_grid, 6);
       remote[6] = '\0';
     }
-    for (int i = 0; i < 6; i++) remote[i] = orig_grid[i];
     remlatitude = orig_lat;
     remlongitude = orig_lon;
     rovdist = true;
@@ -364,4 +363,7 @@ void loop() {
       displayUi.renderTargetGrid(remote, remotec, isEditing);
     }
   }
+
+  // Cooperative FreeRTOS yield for background tasks & watchdog
+  delay(1);
 }

@@ -19,9 +19,10 @@ public:
 
     // Active (committed) antenna offset
     float getOffset() const { return activeOffset_; }
-    void setOffset(float offsetDeg);
-    void save(float offsetDeg) { setOffset(offsetDeg); }
-    void reset() { setOffset(0.0f); }
+    void setOffset(float offsetDeg, bool persist = true);
+    void setActiveOffsetInMemory(float offsetDeg) { setOffset(offsetDeg, false); }
+    void save(float offsetDeg) { setOffset(offsetDeg, true); }
+    void reset() { setOffset(0.0f, true); }
     bool snap(double targetBearingDeg, double rawHeadingDeg);
 
     // Staging / Proposed offset (for Calibration Modal Dialog)
