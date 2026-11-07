@@ -69,6 +69,10 @@
 #define BUTTON_BLUE_BG       0x1B19
 #define BUTTON_CYAN_BORDER   0x3DFF
 #define BUTTON_MUTED_BG      0x2104
+#define BUTTON_RESET_BG      0x5000
+#define BUTTON_CANCEL_BG     0x2945
+#define BUTTON_SAVE_IDLE_BG  0x0320
+#define BUTTON_SAVE_HOLD_BG  0x0540
 
 // ==============================================================================
 // Display Dimensions & Layout (480 x 480 Round Display)
@@ -146,6 +150,65 @@
 // Row 7: Firmware Version Footer
 #define VER_SZ               2
 #define VER_Y                444
+
+// Modal Dialog Geometry
+#define CAL_MODAL_X              35
+#define CAL_MODAL_Y              75
+#define CAL_MODAL_W              410
+#define CAL_MODAL_H              335
+
+// Modal Buttons
+#define CAL_BTN_SNAP_X           55
+#define CAL_BTN_SNAP_Y           234
+#define CAL_BTN_SNAP_W           180
+#define CAL_BTN_SNAP_H           40
+
+#define CAL_BTN_RESET_X          245
+#define CAL_BTN_RESET_Y          234
+#define CAL_BTN_RESET_W          180
+#define CAL_BTN_RESET_H          40
+
+#define CAL_BTN_SAVE_X           55
+#define CAL_BTN_SAVE_Y           284
+#define CAL_BTN_SAVE_W           370
+#define CAL_BTN_SAVE_H           48
+
+#define CAL_BTN_CANCEL_X         140
+#define CAL_BTN_CANCEL_Y         342
+#define CAL_BTN_CANCEL_W         200
+#define CAL_BTN_CANCEL_H         36
+
+// Modal Touch Hit Areas
+#define CAL_TOUCH_SNAP_X_MIN     55
+#define CAL_TOUCH_SNAP_X_MAX     235
+#define CAL_TOUCH_SNAP_Y_MIN     230
+#define CAL_TOUCH_SNAP_Y_MAX     278
+
+#define CAL_TOUCH_RESET_X_MIN    245
+#define CAL_TOUCH_RESET_X_MAX    425
+#define CAL_TOUCH_RESET_Y_MIN    230
+#define CAL_TOUCH_RESET_Y_MAX    278
+
+#define CAL_TOUCH_SAVE_X_MIN     55
+#define CAL_TOUCH_SAVE_X_MAX     425
+#define CAL_TOUCH_SAVE_Y_MIN     284
+#define CAL_TOUCH_SAVE_Y_MAX     332
+
+#define CAL_TOUCH_CANCEL_X_MIN   130
+#define CAL_TOUCH_CANCEL_X_MAX   350
+#define CAL_TOUCH_CANCEL_Y_MIN   340
+#define CAL_TOUCH_CANCEL_Y_MAX   385
+
+// Normal Mode Touch Hit Areas
+#define TOUCH_LOCAL_GRID_X_MIN   100
+#define TOUCH_LOCAL_GRID_X_MAX   340
+#define TOUCH_LOCAL_GRID_Y_MIN   0
+#define TOUCH_LOCAL_GRID_Y_MAX   75
+
+#define TOUCH_FOOTER_X_MIN       100
+#define TOUCH_FOOTER_X_MAX       380
+#define TOUCH_FOOTER_Y_MIN       435
+#define TOUCH_FOOTER_Y_MAX       480
 
 // ==============================================================================
 // Timeouts & Operational Thresholds

@@ -14,6 +14,7 @@ echo "Building the binary..."
 echo
 
 # Prepare scratch folder for arduino-cli
+rm -rf "$SCRATCH_DIR"
 mkdir -p "$SCRATCH_DIR"
 cp -r "$REPO_ROOT/gps_compass.ino" "$REPO_ROOT/src" "$SCRATCH_DIR/"
 

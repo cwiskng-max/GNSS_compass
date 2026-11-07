@@ -14,6 +14,9 @@ g++ -O2 -Wall -Wextra -I"$REPO_DIR" \
     "$REPO_DIR/src/system/calibration.cpp" \
     "$REPO_DIR/src/gnss/simulator.cpp" \
     "$REPO_DIR/src/gnss/gps_manager.cpp" \
+    "$REPO_DIR/src/ui/input_manager.cpp" \
+    "$REPO_DIR/src/ui/cal_modal.cpp" \
+    "$REPO_DIR/src/ui/display_ui.cpp" \
     "$SCRIPT_DIR/test_calculations.cpp" -o "$SCRIPT_DIR/run_tests"
 
 echo "=== Running unit tests ==="

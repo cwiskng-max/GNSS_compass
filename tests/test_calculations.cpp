@@ -11,6 +11,9 @@
 #include "../src/gnss/simulator.h"
 #include "../src/gnss/gps_manager.h"
 #include "../src/protocol/serial_cli.h"
+#include "../src/ui/input_manager.h"
+#include "../src/ui/cal_modal.h"
+#include "../src/ui/display_ui.h"
 
 int tests_run = 0;
 int tests_passed = 0;
@@ -818,6 +821,211 @@ void test_serial_cli() {
     PASS();
 }
 
+void test_input_manager_hit_testing() {
+    TEST("InputManager touch hit-testing and grid character translation");
+
+    // Local Grid Hit Area (100..340, 0..75)
+    ASSERT_TRUE(InputManager::isLocalGridTouched(100, 0));
+    ASSERT_TRUE(InputManager::isLocalGridTouched(340, 75));
+    ASSERT_TRUE(InputManager::isLocalGridTouched(220, 35));
+    ASSERT_TRUE(!InputManager::isLocalGridTouched(99, 35));
+    ASSERT_TRUE(!InputManager::isLocalGridTouched(341, 35));
+    ASSERT_TRUE(!InputManager::isLocalGridTouched(220, 76));
+
+    // Target Grid Hit Area (50..430, 70..235)
+    ASSERT_TRUE(InputManager::isTargetGridTouched(50, 70));
+    ASSERT_TRUE(InputManager::isTargetGridTouched(430, 235));
+    ASSERT_TRUE(InputManager::isTargetGridTouched(200, 150));
+    ASSERT_TRUE(!InputManager::isTargetGridTouched(49, 150));
+    ASSERT_TRUE(!InputManager::isTargetGridTouched(431, 150));
+    ASSERT_TRUE(!InputManager::isTargetGridTouched(200, 69));
+    ASSERT_TRUE(!InputManager::isTargetGridTouched(200, 236));
+
+    // Target Grid Character Column Mapping (REMSTARTX=80, CHAR_W(REMSIZE)=48)
+    ASSERT_TRUE(InputManager::getTargetGridCharFromTouch(80) == 0);
+    ASSERT_TRUE(InputManager::getTargetGridCharFromTouch(127) == 0);
+    ASSERT_TRUE(InputManager::getTargetGridCharFromTouch(128) == 1);
+    ASSERT_TRUE(InputManager::getTargetGridCharFromTouch(80 + 5 * 48) == 5);
+    ASSERT_TRUE(InputManager::getTargetGridCharFromTouch(30) == 0);   // Underflow clamp
+    ASSERT_TRUE(InputManager::getTargetGridCharFromTouch(450) == 5);  // Overflow clamp
+
+    // Calibration Pill Hit Area (180..300, 210..280)
+    ASSERT_TRUE(InputManager::isCalPillTouched(180, 210));
+    ASSERT_TRUE(InputManager::isCalPillTouched(300, 280));
+    ASSERT_TRUE(InputManager::isCalPillTouched(240, 245));
+    ASSERT_TRUE(!InputManager::isCalPillTouched(179, 245));
+    ASSERT_TRUE(!InputManager::isCalPillTouched(301, 245));
+    ASSERT_TRUE(!InputManager::isCalPillTouched(240, 209));
+    ASSERT_TRUE(!InputManager::isCalPillTouched(240, 281));
+
+    // Footer Hit Area (100..380, >= 435)
+    ASSERT_TRUE(InputManager::isFooterTouched(100, 435));
+    ASSERT_TRUE(InputManager::isFooterTouched(380, 479));
+    ASSERT_TRUE(InputManager::isFooterTouched(240, 450));
+    ASSERT_TRUE(!InputManager::isFooterTouched(99, 450));
+    ASSERT_TRUE(!InputManager::isFooterTouched(381, 450));
+    ASSERT_TRUE(!InputManager::isFooterTouched(240, 434));
+
+    // Modal Buttons Hit Areas
+    ASSERT_TRUE(InputManager::getModalButtonFromTouch(100, 250) == ModalButtonId::Snap);
+    ASSERT_TRUE(InputManager::getModalButtonFromTouch(300, 250) == ModalButtonId::Reset);
+    ASSERT_TRUE(InputManager::getModalButtonFromTouch(200, 300) == ModalButtonId::Save);
+    ASSERT_TRUE(InputManager::getModalButtonFromTouch(200, 360) == ModalButtonId::Cancel);
+    ASSERT_TRUE(InputManager::getModalButtonFromTouch(10, 10) == ModalButtonId::None);
+
+    PASS();
+}
+
+void test_input_manager_gestures() {
+    TEST("InputManager gesture state machine, encoder events, and long-press hold");
+
+    InputManager im;
+
+    // 1. Rotary Encoder Events
+    im.injectEncoderStep(+1);
+    UserEvent evt;
+    ASSERT_TRUE(im.pollEvent(evt));
+    ASSERT_TRUE(evt.type == UserEventType::RotateClockwise);
+
+    im.injectEncoderStep(-1);
+    ASSERT_TRUE(im.pollEvent(evt));
+    ASSERT_TRUE(evt.type == UserEventType::RotateCounterClockwise);
+
+    // 2. Normal Mode Short Taps
+    // Tap on Cal Pill
+    im.injectTouch(true, 240, 245, 1000);
+    im.injectTouch(false, 0, 0, 1150);
+    ASSERT_TRUE(im.pollEvent(evt));
+    ASSERT_TRUE(evt.type == UserEventType::TouchCalibrationPill);
+
+    // Tap on Local Grid
+    im.injectTouch(true, 200, 35, 1300);
+    im.injectTouch(false, 0, 0, 1420);
+    ASSERT_TRUE(im.pollEvent(evt));
+    ASSERT_TRUE(evt.type == UserEventType::TouchLocalGrid);
+
+    // Tap on Target Grid col 3
+    im.injectTouch(true, 80 + 3 * 48 + 10, 120, 1600);
+    im.injectTouch(false, 0, 0, 1750);
+    ASSERT_TRUE(im.pollEvent(evt));
+    ASSERT_TRUE(evt.type == UserEventType::TouchGridCharacter);
+    ASSERT_TRUE(evt.gridIndex == 3);
+
+    // Tap on Footer
+    im.injectTouch(true, 240, 450, 1900);
+    im.injectTouch(false, 0, 0, 2020);
+    ASSERT_TRUE(im.pollEvent(evt));
+    ASSERT_TRUE(evt.type == UserEventType::TouchVersionFooter);
+
+    // 3. Calibration Mode Interactions
+    im.setUiMode(UiMode::Calibrating);
+
+    // Tap on Snap
+    im.injectTouch(true, 100, 250, 2200);
+    ASSERT_TRUE(im.pollEvent(evt));
+    ASSERT_TRUE(evt.type == UserEventType::ModalButtonDown);
+    ASSERT_TRUE(evt.buttonId == ModalButtonId::Snap);
+    im.injectTouch(false, 0, 0, 2300);
+    ASSERT_TRUE(im.pollEvent(evt));
+    ASSERT_TRUE(evt.type == UserEventType::SnapOffsetTriggered);
+
+    // Tap on Reset
+    im.injectTouch(true, 300, 250, 2500);
+    ASSERT_TRUE(im.pollEvent(evt));
+    ASSERT_TRUE(evt.type == UserEventType::ModalButtonDown);
+    ASSERT_TRUE(evt.buttonId == ModalButtonId::Reset);
+    im.injectTouch(false, 0, 0, 2600);
+    ASSERT_TRUE(im.pollEvent(evt));
+    ASSERT_TRUE(evt.type == UserEventType::ResetOffsetTriggered);
+
+    // Tap on Cancel
+    im.injectTouch(true, 200, 360, 2800);
+    ASSERT_TRUE(im.pollEvent(evt));
+    ASSERT_TRUE(evt.type == UserEventType::ModalButtonDown);
+    ASSERT_TRUE(evt.buttonId == ModalButtonId::Cancel);
+    im.injectTouch(false, 0, 0, 2900);
+    ASSERT_TRUE(im.pollEvent(evt));
+    ASSERT_TRUE(evt.type == UserEventType::CancelModalTriggered);
+
+    // 4. Long Press Hold on Save Button
+    im.injectTouch(true, 200, 300, 4000);
+    im.injectTouch(true, 200, 300, 4750); // 750ms -> 50%
+    ASSERT_TRUE(im.pollEvent(evt));
+    ASSERT_TRUE(evt.type == UserEventType::HoldSaveButtonProgress);
+    ASSERT_NEAR(evt.progress, 0.5f, 0.05f);
+
+    im.injectTouch(true, 200, 300, 5500); // 1500ms -> Commit!
+    bool committed = false;
+    while (im.pollEvent(evt)) {
+        if (evt.type == UserEventType::SaveButtonCommitted) committed = true;
+    }
+    ASSERT_TRUE(committed);
+
+    // 5. Finger Drift Cancellation (>35px)
+    im.injectTouch(false, 0, 0, 5600);
+    im.injectTouch(true, 200, 300, 6000);
+    im.injectTouch(true, 200, 345, 6300); // 45px drift
+    bool canceled = false;
+    while (im.pollEvent(evt)) {
+        if (evt.type == UserEventType::HoldSaveButtonProgress && evt.progress == 0.0f) canceled = true;
+    }
+    ASSERT_TRUE(canceled);
+
+    PASS();
+}
+
+void test_ui_formatters_and_modal_geometry() {
+    TEST("CalModal and DisplayUi string formatters and layout presentation");
+
+    char buf[64];
+
+    // CalModal Formatters
+    CalModal::formatTargetBearing(245.8, buf, sizeof(buf));
+    ASSERT_STR_EQ(buf, "Target Bearing : 245.8");
+
+    CalModal::formatRawHeading(12.3, true, buf, sizeof(buf));
+    ASSERT_STR_EQ(buf, "Raw GNSS Hdg   :  12.3");
+
+    CalModal::formatRawHeading(0.0, false, buf, sizeof(buf));
+    ASSERT_STR_EQ(buf, "Raw GNSS Hdg   : ---.-");
+
+    CalModal::formatCurrentOffset(4.2f, buf, sizeof(buf));
+    ASSERT_STR_EQ(buf, "Current Offset :  +4.2");
+
+    CalModal::formatCurrentOffset(-10.5f, buf, sizeof(buf));
+    ASSERT_STR_EQ(buf, "Current Offset : -10.5");
+
+    CalModal::formatProposedOffset(0.0f, buf, sizeof(buf));
+    ASSERT_STR_EQ(buf, "Proposed Offset:  +0.0");
+
+    // DisplayUi Formatters
+    DisplayUi::formatTimeString(9, 3, true, buf, sizeof(buf));
+    ASSERT_STR_EQ(buf, "09:03Z");
+
+    DisplayUi::formatTimeString(0, 0, false, buf, sizeof(buf));
+    ASSERT_STR_EQ(buf, "--:--Z");
+
+    DisplayUi::formatReverseBearingAndDistance(65.4, 15400.0, buf, sizeof(buf));
+    ASSERT_STR_EQ(buf, " 65.4   15 k  ");
+
+    DisplayUi::formatArrlDistance(1.0, buf, sizeof(buf));
+    ASSERT_STR_EQ(buf, "ARRL    1.0 k  ");
+
+    DisplayUi::formatBearingString(180.0, true, buf, sizeof(buf));
+    ASSERT_STR_EQ(buf, "180.0");
+
+    DisplayUi::formatBearingString(0.0, false, buf, sizeof(buf));
+    ASSERT_STR_EQ(buf, "---.-");
+
+    DisplayUi::formatCalibrationPillText(0.0f, false, buf, sizeof(buf));
+    ASSERT_STR_EQ(buf, "OFF");
+
+    DisplayUi::formatCalibrationPillText(2.5f, true, buf, sizeof(buf));
+    ASSERT_STR_EQ(buf, "+2.5");
+
+    PASS();
+}
+
 int main() {
     std::cout << "========================================" << std::endl;
     std::cout << "  GNSS Compass Unit Test Suite" << std::endl;
@@ -845,6 +1053,9 @@ int main() {
     test_gps_simulator();
     test_gps_manager();
     test_serial_cli();
+    test_input_manager_hit_testing();
+    test_input_manager_gestures();
+    test_ui_formatters_and_modal_geometry();
 
     std::cout << "========================================" << std::endl;
     std::cout << "  All " << tests_passed << " / " << tests_run << " tests PASSED successfully!" << std::endl;
