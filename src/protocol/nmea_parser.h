@@ -39,6 +39,12 @@ bool parseKsxtLocation(const char *sentence, GeoPoint &pointOut);
 // Standard NMEA HDT / THS heading decoders
 bool parseHDT(const char *sentence, float *heading_out, BearingQuality *quality_out);
 bool parseTHS(const char *sentence, float *heading_out, BearingQuality *quality_out);
+inline bool parseHdtHeading(const char *sentence, float &headingOut, BearingQuality &qualityOut) {
+    return parseHDT(sentence, &headingOut, &qualityOut);
+}
+inline bool parseThsHeading(const char *sentence, float &headingOut, BearingQuality &qualityOut) {
+    return parseTHS(sentence, &headingOut, &qualityOut);
+}
 
 // Unified heading parser (KSXT, GNTHS/GPTHS, GNHDT/GPHDT)
 bool parseHeadingSentence(const char *sentence, float *heading_out, BearingQuality *quality_out);

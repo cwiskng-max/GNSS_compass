@@ -124,6 +124,12 @@ void test_wgs84_distance_and_bearing() {
     // True West: lat constant, lon decreases -> bearing 270 deg
     calculateWgs84(0.0, 1.0, 0.0, 0.0, dist, bearing);
     ASSERT_NEAR(bearing, 270.0, 1e-4);
+
+    // Antipodal point bounds check (ensures a is clamped and no NaN occurs)
+    calculateWgs84(0.0, 0.0, 0.0, 180.0, dist, bearing);
+    ASSERT_TRUE(!std::isnan(dist));
+    ASSERT_TRUE(!std::isnan(bearing));
+    ASSERT_NEAR(dist, 20037508.34, 1.0); // Half Earth circumference (pi * 6378137 m)
     PASS();
 }
 
@@ -360,6 +366,22 @@ void test_legacy_hdt_ths_parsing() {
     const char *ths_empty_v = "$GNTHS,,V*35";
     ASSERT_TRUE(!parseHeadingSentence(ths_empty_v, &heading, &quality));
     ASSERT_TRUE(quality == BEARING_LOST);
+
+    // Valid GNHDT via parseHdtHeading wrapper & scoped enum
+    float hdtHdg = 0.0f;
+    BearingQuality hdtQual = BearingQuality::None;
+    ASSERT_TRUE(parseHdtHeading(hdt_valid, hdtHdg, hdtQual));
+    ASSERT_NEAR(hdtHdg, 180.50, 1e-2);
+    ASSERT_TRUE(hdtQual == BearingQuality::Fixed);
+
+    // Valid GNTHS via parseThsHeading wrapper
+    float thsHdg = 0.0f;
+    BearingQuality thsQual = BearingQuality::None;
+    const char *ths_wrapper_test = "$GNTHS,312.4,A*18";
+    ASSERT_TRUE(parseThsHeading(ths_wrapper_test, thsHdg, thsQual));
+    ASSERT_NEAR(thsHdg, 312.4, 1e-2);
+    ASSERT_TRUE(thsQual == BearingQuality::Fixed);
+
     PASS();
 }
 
@@ -389,6 +411,13 @@ void test_current_bearing_calculation() {
 
 void test_antenna_calibration() {
     TEST("Antenna offset normalization, bearing offset application, and circular wrapping");
+
+    // 0. normalizeHeading
+    ASSERT_NEAR(normalizeHeading(370.5f), 10.5f, 1e-4);
+    ASSERT_NEAR(normalizeHeading(-10.0f), 350.0f, 1e-4);
+    ASSERT_NEAR(normalizeHeading(720.0f), 0.0f, 1e-4);
+    ASSERT_NEAR(normalizeHeading(0.0f), 0.0f, 1e-4);
+    ASSERT_NEAR(normalizeHeading(359.9f), 359.9f, 1e-4);
 
     // 1. normalizeOffset
     ASSERT_NEAR(normalizeOffset(0.0f), 0.0f, 1e-4);
@@ -744,6 +773,15 @@ void test_gps_manager() {
     // Stream health evaluation
     GpsLinkVerdict v = gm.evaluateStreamHealth(3000);
     ASSERT_TRUE(v == GPS_LINK_OK_FIXED);
+
+    // GLL sentence ingestion with standard South and West indicators
+    const char *gllStandard = "$GNGLL,3821.2472,S,11927.4926,W,193000.00,A*3C";
+    gm.feedSentence(gllStandard, 3100);
+    ASSERT_TRUE(gm.hasLocation());
+    ASSERT_NEAR(gm.getLocation().latitude, -38.35412, 1e-4);
+    ASSERT_NEAR(gm.getLocation().longitude, -119.45821, 1e-4);
+    ASSERT_TRUE(gm.getHours() == 19);
+    ASSERT_TRUE(gm.getMinutes() == 30);
 
     PASS();
 }

@@ -24,11 +24,13 @@ void parseLegacyLatLon(char *buf, double *lat, double *lon, char **rptr) {
     if (ptr[0] == '-') { neg = 1; ptr++; }
     *lat = (ptr[0] - '0') * 10.0 + (ptr[1] - '0');
     *lat += strtod(&ptr[2], &ptr) / 60.0;
+    if (ptr[1] == 'S' || ptr[1] == 's') neg = 1;
     if (neg) { neg = 0; *lat = -*lat; }
 
     if (ptr[3] == '-') { neg = 1; ptr++; }
     *lon = (ptr[3] - '0') * 100.0 + (ptr[4] - '0') * 10.0 + (ptr[5] - '0');
     *lon += strtod(&ptr[6], &ptr) / 60.0;
+    if (ptr[1] == 'W' || ptr[1] == 'w') neg = 1;
     if (neg) { neg = 0; *lon = -*lon; }
 
     if (rptr) {
@@ -194,7 +196,7 @@ GpsLinkVerdict evaluateGpsStream(
     bool hasHdg,
     BearingQuality quality)
 {
-    if (totalBytes == 0 || (now - lastByteTime > 3000)) {
+    if (totalBytes == 0 || (now >= lastByteTime && (now - lastByteTime > 3000))) {
         return GPS_LINK_DISCONNECTED;
     }
     if (gllCount == 0 && ksxtCount == 0 && hdtCount == 0) {

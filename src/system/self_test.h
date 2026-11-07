@@ -16,21 +16,19 @@ struct SelfTestContext {
     SerialCli &serialCli;
     InputManager &inputManager;
 
-    char *remote;
-    char *mygrid;
-    double &mylatitude;
-    double &mylongitude;
-    double &remlatitude;
-    double &remlongitude;
+    char *targetGrid;
+    char *myGrid;
+    GeoPoint &currentPosition;
+    GeoPoint &targetPosition;
     double &distance;
     double &bearing;
     double &revbearing;
     bool &hasHeading;
     BearingQuality &currentBearingQuality;
     unsigned long &lastHeadingUpdate;
-    bool &rovdist;
+    bool &isRoverAlertActive;
     bool &isEditing;
-    int &remotec;
+    int &cursorColumn;
     UiMode &currentUiMode;
     int &hours;
     int &minutes;

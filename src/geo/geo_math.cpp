@@ -23,6 +23,8 @@ void calculateWgs84(double lat1, double lon1, double lat2, double lon2, double &
     double a = sin(dLat / 2.0) * sin(dLat / 2.0) +
                cos(rLat1) * cos(rLat2) *
                sin(dLon / 2.0) * sin(dLon / 2.0);
+    if (a > 1.0) a = 1.0;
+    if (a < 0.0) a = 0.0;
     double c = 2.0 * atan2(sqrt(a), sqrt(1.0 - a));
     distance = R * c;
 
@@ -78,6 +80,12 @@ bool isRoverTransitInsideAlert(const GeoPoint &currentPos, const GeoPoint &origi
     calculateWgs84(originPos, currentPos, distMeters, bearingDeg);
     int distKm = (int)std::floor(distMeters / 1000.0);
     return (distKm < (int)thresholdKm);
+}
+
+float normalizeHeading(float headingDeg) {
+    float h = fmodf(headingDeg, 360.0f);
+    if (h < 0.0f) h += 360.0f;
+    return h;
 }
 
 float normalizeOffset(float deltaDeg) {

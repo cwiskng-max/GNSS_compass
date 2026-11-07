@@ -155,6 +155,9 @@ void GpsManager::setHeading(float headingDeg, BearingQuality quality, unsigned l
 }
 
 GpsLinkVerdict GpsManager::evaluateStreamHealth(unsigned long nowMs) const {
+#if defined(ARDUINO)
+    if (!nowMs) nowMs = millis();
+#endif
     return evaluateGpsStream(
         nowMs, totalBytesReceived_, lastByteMillis_,
         gllPacketCount_, ksxtPacketCount_, hdtPacketCount_,
@@ -217,7 +220,7 @@ void GpsManager::processSentence(char *sentence, unsigned long nowMs) {
                 setLocation(ksxtPt, nowMs);
             }
         }
-    } else if (strncmp(sentence, "$GNGLL", 6) == 0) {
+    } else if (strncmp(sentence, "$GNGLL", 6) == 0 || strncmp(sentence, "$GPGLL", 6) == 0) {
         gllPacketCount_++;
         lastGllMillis_ = nowMs;
         char *ptr = nullptr;

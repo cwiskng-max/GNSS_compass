@@ -15,8 +15,8 @@
 #include "src/ui/display_ui.h"
 
 // Active Station & Target State
-char remote[7] = "ZA00AA";
-char mygrid[9] = "JJ00AA00";
+char targetGrid[7] = "ZA00AA";
+char myGrid[9] = "JJ00AA00";
 bool hasLocation = false;
 bool hasTime = false;
 int hours = 0;
@@ -35,7 +35,7 @@ BearingFilter &bearingFilter = gpsManager.getBearingFilter();
 // UI & Editing State
 UiMode currentUiMode = UiMode::Normal;
 unsigned long calModalOpenedMillis = 0;
-int remotec = 0;
+int cursorColumn = 0;
 bool isEditing = true;
 unsigned long lastEditActivity = 0;
 
@@ -43,9 +43,9 @@ unsigned long lastEditActivity = 0;
 bool hasHeading = false;
 BearingQuality currentBearingQuality = BEARING_NONE;
 unsigned long lastHeadingUpdate = 0;
-bool rovdist = false;
-double mylongitude = 0.0, mylatitude = 0.0;
-double remlongitude = 0.0, remlatitude = 0.0;
+bool isRoverAlertActive = false;
+GeoPoint currentPosition;
+GeoPoint targetPosition;
 double distance = 0.0, bearing = 0.0, revbearing = 0.0;
 
 // Forward declarations
@@ -65,24 +65,24 @@ void drawCurrentBearing() {
 }
 
 void updateBearings() {
-  gridToGeoPoint(remote, &remlatitude, &remlongitude);
-  calculateWgs84(mylatitude, mylongitude, remlatitude, remlongitude, distance, bearing);
-  calculateWgs84(remlatitude, remlongitude, mylatitude, mylongitude, distance, revbearing);
+  gridToGeoPoint(targetGrid, targetPosition);
+  calculateWgs84(currentPosition, targetPosition, distance, bearing);
+  revbearing = calculateReverseBearing(currentPosition, targetPosition);
 
   if (currentUiMode == UiMode::Calibrating) {
     return;
   }
 
-  displayUi.renderReverseBearingAndDistance(revbearing, distance, rovdist);
+  displayUi.renderReverseBearingAndDistance(revbearing, distance, isRoverAlertActive);
   drawCurrentBearing();
   displayUi.renderCalibrationPill(calibration.getOffset(), calibration.isCalibrated());
   displayUi.renderTargetBearing(bearing);
-  displayUi.renderArrlDistance(mygrid, remote);
+  displayUi.renderArrlDistance(myGrid, targetGrid);
 }
 
 void redrawMainScreen() {
-  displayUi.redrawMainScreen(mygrid, remote, remotec, isEditing,
-                             bearing, revbearing, distance, rovdist,
+  displayUi.redrawMainScreen(myGrid, targetGrid, cursorColumn, isEditing,
+                             bearing, revbearing, distance, isRoverAlertActive,
                              bearingFilter.getCalibratedHeading(calibration.getOffset()),
                              currentBearingQuality, hasHeading,
                              calibration.getOffset(), calibration.isCalibrated(),
@@ -92,9 +92,9 @@ void redrawMainScreen() {
 void runVisualSelfTest() {
   SelfTestContext ctx{
     displayUi, gpsManager, calibration, serialCli, inputManager,
-    remote, mygrid, mylatitude, mylongitude, remlatitude, remlongitude,
+    targetGrid, myGrid, currentPosition, targetPosition,
     distance, bearing, revbearing, hasHeading, currentBearingQuality,
-    lastHeadingUpdate, rovdist, isEditing, remotec, currentUiMode,
+    lastHeadingUpdate, isRoverAlertActive, isEditing, cursorColumn, currentUiMode,
     hours, minutes, hasTime,
     redrawMainScreen, updateBearings, drawCurrentBearing
   };
@@ -124,12 +124,11 @@ void setup() {
 
   gpsManager.setOnLocationUpdated([](const GeoPoint &pos) {
     hasLocation = true;
-    mylatitude = pos.latitude;
-    mylongitude = pos.longitude;
-    geoPointToGrid(mylatitude, mylongitude, mygrid);
+    currentPosition = pos;
+    geoPointToGrid(currentPosition, myGrid);
 
     if (currentUiMode != UiMode::Calibrating) {
-      displayUi.renderMyGrid(mygrid);
+      displayUi.renderMyGrid(myGrid);
     }
     updateBearings();
   });
@@ -151,11 +150,10 @@ void setup() {
     lastHeadingUpdate = gpsManager.getLastHeadingUpdate();
     if (gpsManager.hasLocation()) {
       hasLocation = true;
-      mylatitude = gpsManager.getLocation().latitude;
-      mylongitude = gpsManager.getLocation().longitude;
-      geoPointToGrid(mylatitude, mylongitude, mygrid);
+      currentPosition = gpsManager.getLocation();
+      geoPointToGrid(currentPosition, myGrid);
       if (currentUiMode != UiMode::Calibrating) {
-        displayUi.renderMyGrid(mygrid);
+        displayUi.renderMyGrid(myGrid);
       }
     }
     if (gpsManager.hasTime()) {
@@ -171,33 +169,32 @@ void setup() {
   });
 
   serialCli.setRoverSimCallback([](const char *orig_grid, double dist_km) {
-    double orig_lat = mylatitude, orig_lon = mylongitude;
+    GeoPoint originPoint = currentPosition;
     if (orig_grid && strlen(orig_grid) >= 4) {
-      gridToGeoPoint(orig_grid, &orig_lat, &orig_lon);
-      strncpy(remote, orig_grid, 6);
-      remote[6] = '\0';
+      gridToGeoPoint(orig_grid, originPoint);
+      strncpy(targetGrid, orig_grid, 6);
+      targetGrid[6] = '\0';
     }
-    remlatitude = orig_lat;
-    remlongitude = orig_lon;
-    rovdist = true;
+    targetPosition = originPoint;
+    isRoverAlertActive = true;
 
-    GeoPoint originPoint(orig_lat, orig_lon, true);
     GeoPoint simulatedPoint = GpsSimulator::calculateRoverDisplacement(originPoint, dist_km, 45.0);
     gpsManager.setLocation(simulatedPoint);
-    displayUi.renderTargetGrid(remote, remotec, isEditing);
+    displayUi.renderTargetGrid(targetGrid, cursorColumn, isEditing);
     updateBearings();
     int rdist = (int)floor(distance / 1000.0);
     Serial.printf("[SIM ROVER] Origin: %s (%.5f, %.5f) | Current: %s (%.5f, %.5f)\r\n",
-                  remote, remlatitude, remlongitude, mygrid, mylatitude, mylongitude);
+                  targetGrid, targetPosition.latitude, targetPosition.longitude,
+                  myGrid, currentPosition.latitude, currentPosition.longitude);
     Serial.printf("[SIM ROVER] Distance: %5.1f km (%d km) | Alert: %s\r\n",
                   distance / 1000.0, rdist, (rdist < 16) ? "ACTIVE (RED on WHITE)" : "CLEAR (>= 16 km)");
   });
 
-  geoPointToGrid(mylatitude, mylongitude, mygrid);
-  displayUi.renderMyGrid(mygrid);
+  geoPointToGrid(currentPosition, myGrid);
+  displayUi.renderMyGrid(myGrid);
 
   lastEditActivity = millis();
-  displayUi.renderTargetGrid(remote, remotec, isEditing);
+  displayUi.renderTargetGrid(targetGrid, cursorColumn, isEditing);
   updateBearings();
 
   displayUi.renderUtcTime(0, 0, false);
@@ -213,9 +210,9 @@ void handleUserEvent(const UserEvent &event) {
         displayUi.getCalModal().drawProposedOffsetRow(calibration.getProposedOffset());
       } else if (isEditing) {
         lastEditActivity = millis();
-        rovdist = false;
-        INCG(remote[remotec]);
-        displayUi.renderTargetGrid(remote, remotec, isEditing);
+        isRoverAlertActive = false;
+        INCG(targetGrid[cursorColumn]);
+        displayUi.renderTargetGrid(targetGrid, cursorColumn, isEditing);
         updateBearings();
       }
       break;
@@ -227,9 +224,9 @@ void handleUserEvent(const UserEvent &event) {
         displayUi.getCalModal().drawProposedOffsetRow(calibration.getProposedOffset());
       } else if (isEditing) {
         lastEditActivity = millis();
-        rovdist = false;
-        DECG(remote[remotec]);
-        displayUi.renderTargetGrid(remote, remotec, isEditing);
+        isRoverAlertActive = false;
+        DECG(targetGrid[cursorColumn]);
+        displayUi.renderTargetGrid(targetGrid, cursorColumn, isEditing);
         updateBearings();
       }
       break;
@@ -249,19 +246,18 @@ void handleUserEvent(const UserEvent &event) {
       break;
 
     case UserEventType::TouchLocalGrid:
-      for (int i = 0; i < 6; i++) remote[i] = mygrid[i];
-      remlatitude = mylatitude;
-      remlongitude = mylongitude;
-      rovdist = true;
-      displayUi.renderTargetGrid(remote, remotec, isEditing);
+      for (int i = 0; i < 6; i++) targetGrid[i] = myGrid[i];
+      targetPosition = currentPosition;
+      isRoverAlertActive = true;
+      displayUi.renderTargetGrid(targetGrid, cursorColumn, isEditing);
       updateBearings();
       break;
 
     case UserEventType::TouchGridCharacter:
-      remotec = event.gridIndex;
+      cursorColumn = event.gridIndex;
       isEditing = true;
       lastEditActivity = millis();
-      displayUi.renderTargetGrid(remote, remotec, isEditing);
+      displayUi.renderTargetGrid(targetGrid, cursorColumn, isEditing);
       break;
 
     case UserEventType::TouchVersionFooter:
@@ -335,8 +331,8 @@ void loop() {
 
   // 2. Process USB host commands (SIM, CAL, GPS, TEST)
   serialCli.setTargetBearing(bearing);
-  serialCli.setTargetGrid(remote);
-  serialCli.setRoverAlertActive(rovdist);
+  serialCli.setTargetGrid(targetGrid);
+  serialCli.setRoverAlertActive(isRoverAlertActive);
   serialCli.setRoverDistance(distance);
   serialCli.update();
 
@@ -360,7 +356,7 @@ void loop() {
   if (isEditing && EDIT_TIMEOUT_MS > 0) {
     if (millis() - lastEditActivity >= EDIT_TIMEOUT_MS) {
       isEditing = false;
-      displayUi.renderTargetGrid(remote, remotec, isEditing);
+      displayUi.renderTargetGrid(targetGrid, cursorColumn, isEditing);
     }
   }
 

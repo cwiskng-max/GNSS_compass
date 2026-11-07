@@ -31,6 +31,7 @@ double calculateArrlContestDistance(const char *gridA, const char *gridB);
 bool isRoverTransitInsideAlert(const GeoPoint &currentPos, const GeoPoint &originPos, double thresholdKm = 16.0);
 
 // Compass Heading & Calibration Offset Math
+float normalizeHeading(float headingDeg);
 float normalizeOffset(float deltaDeg);
 double applyBearingOffset(double uncalibratedBearing, float offsetDeg);
 double calcCurrentBearing(float sinSum, float cosSum, float calOffset = 0.0f);

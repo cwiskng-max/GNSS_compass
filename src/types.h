@@ -17,7 +17,11 @@ enum BearingQuality : uint8_t {
     BEARING_NONE = 0,    // Fresh start, never acquired -> WHITE (---.-)
     BEARING_FIXED = 1,   // High precision (RTK Fixed) -> WHITE
     BEARING_FLOAT = 2,   // Reduced quality (RTK Float) -> RICH_YELLOW
-    BEARING_LOST = 3     // Signal lost / stale timeout -> RED
+    BEARING_LOST = 3,    // Signal lost / stale timeout -> RED
+    None = BEARING_NONE,
+    Fixed = BEARING_FIXED,
+    Float = BEARING_FLOAT,
+    Lost = BEARING_LOST
 };
 
 // GPS Link Diagnostic Health State
@@ -27,6 +31,12 @@ enum GpsLinkVerdict : uint8_t {
     GPS_LINK_ACQUIRING = 2,      // Valid sentences streaming, waiting for satellites
     GPS_LINK_POSITION_ONLY = 3,  // Position valid, waiting for dual-antenna heading
     GPS_LINK_HEADING_FLOAT = 4,  // Dual-antenna heading active in Float mode (Yellow)
-    GPS_LINK_OK_FIXED = 5        // Dual-antenna heading active in Fixed mode (White)
+    GPS_LINK_OK_FIXED = 5,       // Dual-antenna heading active in Fixed mode (White)
+    Disconnected = GPS_LINK_DISCONNECTED,
+    NoisyCorrupt = GPS_LINK_NOISY_CORRUPT,
+    Acquiring = GPS_LINK_ACQUIRING,
+    PositionOnly = GPS_LINK_POSITION_ONLY,
+    HeadingFloat = GPS_LINK_HEADING_FLOAT,
+    HeadingFixed = GPS_LINK_OK_FIXED
 };
 

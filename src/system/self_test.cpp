@@ -14,13 +14,14 @@ void SelfTest::run(SelfTestContext &ctx) {
     Serial.println(F("\n=== Starting Visual Display Self-Test Demo ==="));
 
     // 1. Snapshot live operating state
-    char saved_remote[7];
-    char saved_mygrid[9];
-    memcpy(saved_remote, ctx.remote, sizeof(saved_remote));
-    memcpy(saved_mygrid, ctx.mygrid, sizeof(saved_mygrid));
-    double saved_mylat = ctx.mylatitude, saved_mylon = ctx.mylongitude;
+    char saved_targetGrid[7];
+    char saved_myGrid[9];
+    memcpy(saved_targetGrid, ctx.targetGrid, sizeof(saved_targetGrid));
+    memcpy(saved_myGrid, ctx.myGrid, sizeof(saved_myGrid));
+    GeoPoint saved_currentPos = ctx.currentPosition;
+    GeoPoint saved_targetPos = ctx.targetPosition;
     bool saved_hasHeading = ctx.hasHeading;
-    bool saved_rovdist = ctx.rovdist;
+    bool saved_isRoverAlertActive = ctx.isRoverAlertActive;
     bool saved_isEditing = ctx.isEditing;
     BearingQuality saved_quality = ctx.currentBearingQuality;
     unsigned long saved_lastHeading = ctx.lastHeadingUpdate;
@@ -31,58 +32,58 @@ void SelfTest::run(SelfTestContext &ctx) {
     // Test 1: Same Grid (ARRL 1.0 km minimum rule)
     Serial.println(F("[Test 1/7] Same Grid (ARRL 1.0 km rule)"));
     ctx.displayUi.showFooterText("TEST 1: SAME GRID", CYAN);
-    strcpy(ctx.mygrid, "CM87wa00");
-    strcpy(ctx.remote, "CM87wa");
-    gridToGeoPoint("CM87wa", &ctx.mylatitude, &ctx.mylongitude);
+    strcpy(ctx.myGrid, "CM87wa00");
+    strcpy(ctx.targetGrid, "CM87wa");
+    gridToGeoPoint("CM87wa", ctx.currentPosition);
     ctx.hasHeading = true;
     ctx.currentBearingQuality = BEARING_FIXED;
     ctx.gpsManager.getBearingFilter().seed(180.0f);
-    ctx.rovdist = false;
-    ctx.displayUi.renderMyGrid(ctx.mygrid);
-    ctx.displayUi.renderTargetGrid(ctx.remote, ctx.remotec, ctx.isEditing);
+    ctx.isRoverAlertActive = false;
+    ctx.displayUi.renderMyGrid(ctx.myGrid);
+    ctx.displayUi.renderTargetGrid(ctx.targetGrid, ctx.cursorColumn, ctx.isEditing);
     if (ctx.updateBearings) ctx.updateBearings();
     delay(3000);
 
     // Test 2: Rover Transit Alert (< 16 km, highlighted RED on WHITE)
     Serial.println(F("[Test 2/7] Rover Transit Alert (< 16 km, highlighted RED on WHITE)"));
     ctx.displayUi.showFooterText("TEST 2: ROVER < 16K", RICH_YELLOW);
-    strcpy(ctx.remote, "CM87wb");
+    strcpy(ctx.targetGrid, "CM87wb");
     ctx.currentBearingQuality = BEARING_FIXED;
-    ctx.rovdist = true;
-    ctx.displayUi.renderTargetGrid(ctx.remote, ctx.remotec, ctx.isEditing);
+    ctx.isRoverAlertActive = true;
+    ctx.displayUi.renderTargetGrid(ctx.targetGrid, ctx.cursorColumn, ctx.isEditing);
     if (ctx.updateBearings) ctx.updateBearings();
     delay(3000);
 
     // Test 3: Distance Under 1,000 km (~600 km)
     Serial.println(F("[Test 3/7] Under 1,000 km formatting (~600 km)"));
     ctx.displayUi.showFooterText("TEST 3: DIST < 1000K", CYAN);
-    strcpy(ctx.remote, "DN13ab");
+    strcpy(ctx.targetGrid, "DN13ab");
     ctx.currentBearingQuality = BEARING_FIXED;
-    ctx.rovdist = false;
-    ctx.displayUi.renderTargetGrid(ctx.remote, ctx.remotec, ctx.isEditing);
+    ctx.isRoverAlertActive = false;
+    ctx.displayUi.renderTargetGrid(ctx.targetGrid, ctx.cursorColumn, ctx.isEditing);
     if (ctx.updateBearings) ctx.updateBearings();
     delay(3000);
 
     // Test 4: Distance Over 1,000 km (~2,500 km)
     Serial.println(F("[Test 4/7] Over 1,000 km formatting (~2,500 km)"));
     ctx.displayUi.showFooterText("TEST 4: DIST > 1000K", CYAN);
-    strcpy(ctx.remote, "EL29ja");
+    strcpy(ctx.targetGrid, "EL29ja");
     ctx.currentBearingQuality = BEARING_FIXED;
-    ctx.displayUi.renderTargetGrid(ctx.remote, ctx.remotec, ctx.isEditing);
+    ctx.displayUi.renderTargetGrid(ctx.targetGrid, ctx.cursorColumn, ctx.isEditing);
     if (ctx.updateBearings) ctx.updateBearings();
     delay(3000);
 
     // Test 5: Extreme Distance (> 10,000 km) and Recovery to 1.0 km
     Serial.println(F("[Test 5/7] Extreme distance (> 10,000 km)"));
     ctx.displayUi.showFooterText("TEST 5: GHOST RECOVERY", CYAN);
-    strcpy(ctx.remote, "ZA00AA");
-    ctx.displayUi.renderTargetGrid(ctx.remote, ctx.remotec, ctx.isEditing);
+    strcpy(ctx.targetGrid, "ZA00AA");
+    ctx.displayUi.renderTargetGrid(ctx.targetGrid, ctx.cursorColumn, ctx.isEditing);
     if (ctx.updateBearings) ctx.updateBearings();
     delay(2000);
 
     Serial.println(F("  -> Dropping back to 1.0 km (verifying no ghost characters)"));
-    strcpy(ctx.remote, "CM87wa");
-    ctx.displayUi.renderTargetGrid(ctx.remote, ctx.remotec, ctx.isEditing);
+    strcpy(ctx.targetGrid, "CM87wa");
+    ctx.displayUi.renderTargetGrid(ctx.targetGrid, ctx.cursorColumn, ctx.isEditing);
     if (ctx.updateBearings) ctx.updateBearings();
     delay(2000);
 
@@ -230,14 +231,14 @@ void SelfTest::run(SelfTestContext &ctx) {
     ctx.displayUi.getGfx()->fillRect(40, 215, 400, 52, BLACK);
 
     // Restore live state and firmware version footer
-    memcpy(ctx.remote, saved_remote, sizeof(saved_remote));
-    memcpy(ctx.mygrid, saved_mygrid, sizeof(saved_mygrid));
-    ctx.mylatitude = saved_mylat;
-    ctx.mylongitude = saved_mylon;
+    memcpy(ctx.targetGrid, saved_targetGrid, sizeof(saved_targetGrid));
+    memcpy(ctx.myGrid, saved_myGrid, sizeof(saved_myGrid));
+    ctx.currentPosition = saved_currentPos;
+    ctx.targetPosition = saved_targetPos;
     ctx.hasHeading = saved_hasHeading;
     ctx.currentBearingQuality = saved_quality;
     ctx.lastHeadingUpdate = saved_lastHeading;
-    ctx.rovdist = saved_rovdist;
+    ctx.isRoverAlertActive = saved_isRoverAlertActive;
     ctx.isEditing = saved_isEditing;
     ctx.calibration.setOffset(savedOffset, false);
     ctx.currentUiMode = saved_uiMode;
