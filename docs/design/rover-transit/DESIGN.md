@@ -1,9 +1,9 @@
 # Rover Mode, Transit Tracking, Location History & Modular Geodesics — Technical Design
 
-* **Feature:** Dual Operational Modes (Bearing vs. Rover), Dynamic 16 km Displacement Tracking, Grid Traversal Detection, Multi-Stop Location History, and Modular Geodesic Integration
+* **Feature:** Dual Operational Modes (Bearing vs. Rover), Dynamic 16 km Displacement Tracking, Visited Grid History & Duplicate Contact Avoidance, and Modular Geodesic Integration
 * **Status:** Proposed / Ready for Review
 * **Target Hardware:** ESP32-S3 (16 MB Flash, 8 MB OPI PSRAM), 480×480 Round Touch Display (ST7701S RGB + CST8XX I2C Touch), Rotary Encoder with Push-Button (CLK, DT, SW)
-* **Architecture Base:** Post-Modularization (`src/geo/`, `src/ui/`, `src/gnss/`, `src/protocol/`)
+* **Architecture Base:** Implemented Modular C++ Architecture (`src/geo/`, `src/ui/`, `src/gnss/`, `src/protocol/`)
 * **Supersedes:** Earlier v0.2 single-alert design
 
 ---
@@ -25,13 +25,14 @@ stateDiagram-v2
 
     state RoverMode {
         direction TB
-        RM_Tracking : Packing up and driving along mountain roads
+        RM_Tracking : Packing up and driving to next operating site
         RM_Distance : High-precision lat/lon geodesic tracking from origin
-        RM_Rules : Continuous evaluation of 16 km rule & grid traversal
+        RM_Rules : Continuous evaluation of 16 km rule
         RM_Backtrack : Dynamic monitoring of backtracks or canyon turns
+        RM_History : Cross-referencing visited grids to avoid duplicate QSOs
     }
 
-    BearingMode --> RoverMode : 1-Tap Origin Snapshot (Row 1 Local Grid)
+    BearingMode --> RoverMode : 1-Tap Origin Snapshot (Row 1 My Grid)
     RoverMode --> ExitPrompt : Tap/Turn Target Grid (Row 2)
     ExitPrompt --> BearingMode : Click Rotary Push-Button (Confirmed Arrival)
     ExitPrompt --> RoverMode : Screen Tap / 8s Timeout (Keep tracking)
@@ -41,63 +42,96 @@ stateDiagram-v2
 1. **Bearing Mode (Stationary Operation):**
    The station is stationary at an operating location. The operator rotates the mast to aim high-gain antennas/dishes at distant targets, monitoring live antenna heading, target azimuth, and target distance.
 2. **Rover Mode (In-Transit Relocation):**
-   The station has torn down equipment and is driving along mountain roads, fire roads, or highways to the next operating site. Bearing to distant targets is irrelevant; the critical tasks are:
-   - Tracking exact displacement from the last operating location against the **ARRL 16 km legal rule**.
-   - Monitoring physical traversal across Maidenhead grid square boundaries.
+   The station has torn down equipment and is driving along roads or highways to the next operating site. Bearing to distant targets is irrelevant; the critical tasks are:
+   - Tracking exact straight-line displacement from the last operating location against the **ARRL 16 km legal rule**.
    - Dynamic awareness of backtracking (e.g., switchbacks, missed turns, dead-ends).
-   - Logging visited locations across the contest weekend.
+   - Logging visited operating locations and grids across the contest weekend to **prevent duplicate contacts**.
 
 ---
 
 ## 2. Rover Mode: User Experience & Transit Tracking
 
 ### 2.1 Entering Rover Mode: One-Tap Origin Snapshot
-Rover Mode is triggered deliberately when packing up from a site:
+Rover Mode is triggered deliberately when packing up from an operating location:
 
 ```text
-[Row 1 Tap] -> Local Grid "CM87wa22" (Tap hit zone: X: 100-340, Y: 0-75)
+[Row 1 Tap] -> My Grid "CM87wa22" (Tap hit zone: X: 100-340, Y: 0-75)
 ```
 
 1. **Snapshot Coordinates (`GeoPoint`):** Captures current live GPS decimal coordinates as `GeoPoint originPoint_` to full double precision (derived directly from `$GNGLL` / `$KSXT` via `GpsManager`). It **never snaps to grid center**, preventing up to $\sim 2.5\text{ km}$ of artificial quantization error.
-2. **Snapshot Grid (`GridSquare`):** Copies current `localGrid_` into the origin reference buffer `originGrid_`.
+2. **Snapshot Grid (`GridSquare`):** Copies current `myGrid_` into the origin reference buffer `originGrid_`.
 3. **Bezel / Knob Lockout:** Automatically disarms edit mode (`gridEditor_.setEditing(false)`) and hides the editing cursor (`^`). This guarantees that road vibration bumps or accidental turns of the rotary bezel during transit cannot mutate the origin grid or drop out of Rover Mode.
 4. **Timestamp:** Records UNIX/GPS epoch departure timestamp.
 5. **Mode Engagement:** Firmware transitions `AppController` into `operationalMode = MODE_ROVER`.
 
 ---
 
-### 2.2 Continuous Dynamic Tracking & Dual Qualification Criteria
+### 2.2 Continuous Dynamic Tracking & The 16 km Rule
 
-In contest roving, site validity depends on two independent geodetic criteria:
+In contest roving, the legal site qualification criterion is strictly **straight-line displacement**:
 
-$$\text{Criterion 1: Straight-Line Displacement } \Delta D \ge 16.0\text{ km}$$
-$$\text{Criterion 2: Grid Boundary Traversal } \text{current\_grid}[0..5] \neq \text{origin\_grid}[0..5]$$
+$$\text{Legal Requirement: Straight-Line Displacement } \Delta D \ge 16.0\text{ km}$$
 
-#### Displacement Calculation (`src/geo/geo_math.h`)
+#### Grid Geometry vs. The 16 km Rule
+A 6-character Maidenhead subsquare (e.g., `CM87wa`) spans $5' \text{ longitude} \times 2.5' \text{ latitude}$ ($\approx 7.3\text{ km} \times 4.63\text{ km}$ at mid-latitudes, with a maximum diagonal of $\approx 8.6\text{ km}$). Because the entire span of a 6-character grid is under $9\text{ km}$, **any valid move of $\ge 16.0\text{ km}$ has already traversed into a new grid square by mathematical definition**.
+
+#### Purpose of Visited Grid Tracking: Avoiding Duplicate Contacts
+While grid traversal occurs naturally when moving $\ge 16\text{ km}$, tracking visited grids serves a critical contest purpose: **avoiding duplicate contacts**. 
+- In microwave contesting, an operator may legally return to a previously activated grid square later in the contest weekend (e.g., driving a loop course).
+- However, contest rules prohibit claiming QSO points with the same station on the same band from the same grid square twice.
+- Therefore, the system tracks visited grids to alert the operator upon arrival if a grid was activated earlier in the weekend, advising them to check their band log for prior contacts.
+
+#### Continuous Displacement Resolution (`src/geo/geo_math.h`)
 Calculates the exact **WGS-84 geodesic distance** between `originPoint_` and the live GPS antenna coordinates `currentPoint_`:
 
 $$\Delta D = \text{distanceWGS84}(\text{originPoint\_}, \text{currentPoint\_})$$
 
-Formatted with decimal precision when close:
-- $\Delta D < 10.0\text{ km}$: displayed as `%4.1f km` (e.g., ` 4.2 km`, ` 9.8 km`).
-- $\Delta D \ge 10.0\text{ km}$: displayed as `%4.1f km` (e.g., `15.8 km`, `16.4 km`, `22.1 km`).
+**Mandatory 0.1 km Decimal Precision (`%5.1f k`):**
+Displacement is continuously rendered with tenths-of-a-kilometer decimal precision (e.g., ` 6.4 k`, ` 18.2 k`, ` 22.4 k`). At typical driving speeds (e.g., 50 km/h), integer kilometers take over 70 seconds to increment, giving the driver the false impression that tracking is frozen. Tenths of a kilometer increment every ~7 seconds, providing immediate visual feedback that the vehicle is in motion and distance is actively accumulating.
 
-#### Grid Boundary Traversal Check
-The firmware evaluates `strncmp(currentGrid_.data(), originGrid_.data(), 6)` continuously. When the rover physically crosses the boundary of the 6-character subsquare (or 4-character field), the UI signals the transition immediately.
+#### Dynamic Qualification Matrix (4 States)
 
-#### Dynamic Qualification Matrix
-
-| State | Displacement $\Delta D$ | Grid vs. Origin | Visual Indication | Operating Legality |
+| State | Displacement $\Delta D$ | Grid History Context | Visual Indication | Operating Legality |
 | :--- | :--- | :--- | :--- | :--- |
-| **A: Same Grid Under 16k** | $< 16.0\text{ km}$ | Identical (`CM87wa`) | **Solid Red background, White text** | **ILLEGAL** (Keep driving) |
-| **B: New Grid Under 16k** | $< 16.0\text{ km}$ | Traversed (`CM87wb`) | **Warm Amber / Yellow alert** | **WARN** (New grid, but $< 16\text{ km}$) |
-| **C: Same Grid Over 16k** | $\ge 16.0\text{ km}$ | Identical (`CM87wa`) | **Cyan / Amber alert** | **WARN** ($\ge 16\text{ km}$, but still in same grid) |
-| **D: Qualified New Site** | $\ge 16.0\text{ km}$ | Traversed (`CM87wb`) | **Vibrant Green banner, White text** | **QUALIFIED** (Legal operating location) |
-| **E: Qualified, Prior Grid**| $\ge 16.0\text{ km}$ | Visited Earlier | **Qualified Green + Amber Badge** | **QUALIFIED** (`[NOTE: CM87wa ACTIVATED 14:22Z]`) |
+| **A: In-Transit Under 16k** | $< 16.0\text{ km}$ | Any grid | **Red text on White** (`0xF800` on `0xFFFF`) | **ILLEGAL** (Keep driving; under 16 km) |
+| **B: Qualified New Location** | $\ge 16.0\text{ km}$ | New grid (unvisited) | **Forest Green on White** (`0x03E0` on `0xFFFF`) | **QUALIFIED** (Legal site; all bands open) |
+| **C: Qualified Revisited Grid** | $\ge 16.0\text{ km}$ | Visited earlier in log | **Royal Blue on White** (`0x011C` on `0xFFFF`) | **QUALIFIED** (Legal site; check band log for duplicate QSOs) |
+| **D: GPS Signal Lost / Stale** | Any / Stale | Stale GPS fix (> 3s) | **Deep Amber on White** (`0xDC00` on `0xFFFF`) | **WAIT GPS** (Signal lost in tunnel/trees; hold last known) |
 
 ---
 
-### 2.3 Dynamic Backtrack & Hysteresis Handling
+### 2.3 Left Slot Exploration: Back-Azimuth vs. Textual State Label
+
+In stationary Bearing Mode, Row 5 renders reverse bearing on the left and target distance on the right: `"%5.1f %4i k  "`.
+
+In Rover Mode, the left-hand slot currently continues to display the back-azimuth pointing back to the departure site (e.g. ` 184.2   6.4 k `).
+
+> [!NOTE]
+> **Open Design Question:** During road transit, does a driver actually benefit from seeing the back-azimuth to their previous site, or would this space be more valuable displaying an explicit textual status label?
+> * **Option A (Back-Azimuth):** ` 184.2   6.4 k ` / ` 184.2  18.2 k ` / ` 184.2  22.4 k `
+> * **Option B (Status Word):** `TRANSIT  6.4 k ` / `QUALIFIED 18.2 k` / `REVISIT 22.4 k ` / `NO GPS  --.- k `
+>
+> Option B provides instant clarity for drivers, eliminating any ambiguity between states (especially between New Grid and Revisited Grid) without relying solely on color recognition.
+
+---
+
+### 2.4 Visual Preview: On-Screen Color Examples (Row 5)
+
+Below are exact visual simulations of the 4 states rendered on the solid white background card:
+
+#### Option A: Back-Azimuth + Continuous Decimal Distance
+
+![Rover Mode Option A: Bearing and Decimal Distance](images/rover_option_a.svg)
+
+---
+
+#### Option B: Textual Status Label + Continuous Decimal Distance
+
+![Rover Mode Option B: Status Word and Decimal Distance](images/rover_option_b.svg)
+
+---
+
+### 2.5 Dynamic Backtrack & Hysteresis Handling
 
 Mountain transit rarely occurs in a straight line. An operator driving through canyons or climbing mountain roads may:
 1. Reach $16.2\text{ km}$ straight-line displacement on a ridge.
@@ -137,10 +171,10 @@ While driving over rough terrain, vibrations or stray objects (cables, coats) co
 
 ## 3. Multi-Stop Rover Location History & Contest Log
 
-As rovers travel between multiple summits across a contest weekend, the device maintains a persistent chronological history of operating locations.
+As rovers travel between multiple operating locations across a contest weekend, the device maintains a persistent chronological history of operating locations.
 
 ```text
-[Stop 1: CM87wa (Home QTH)] ──(24.2 km)──> [Stop 2: CM87wb (Mt. Diablo)] ──(38.5 km)──> [Stop 3: CM88ec (Mt. Saint Helena)]
+[Stop 1: CM87wa (Site 1)] ──(24.2 km)──> [Stop 2: CM87wb (Site 2)] ──(38.5 km)──> [Stop 3: CM88ec (Site 3)]
 ```
 
 ### 3.1 Data Model (`RoverStop`)
@@ -165,12 +199,12 @@ Stored in ESP32 Non-Volatile Storage (`Preferences.h`) under namespace `"rover_l
 
 ### 3.2 "Undo / Discard Last Entry" & Automatic Rover Re-Arm
 
-In real field operations, rovers frequently encounter unviable summits:
-- The gate to a radio site is locked.
-- Dense fog, freezing rain, or 50 mph winds prevent raising the dish mast.
-- Extreme RF noise or trees block microwave line-of-sight.
+In real field operations, rovers occasionally encounter unviable operating locations:
+- The gate to a road, turnout, or hilltop is locked.
+- Dense fog, freezing rain, or high winds prevent raising antennas.
+- Extreme RF noise, trees, or terrain obstructions block microwave line-of-sight.
 
-If the operator had already clicked the knob to end rover transit at that summit, that unviable site would be recorded as the latest stop. If they then pack up and move to a third site, the displacement would incorrectly calculate relative to the *unviable* stop rather than the *previous legitimate operating site*.
+If the operator had already clicked the knob to end rover transit at that location, that unviable site would be recorded as the latest stop. If they then pack up and move to an alternative site, the displacement would incorrectly calculate relative to the *unviable* stop rather than the *previous legitimate operating site*.
 
 **The "Discard Last Stop" Action & Automatic State Transition:**
 - The operator opens the History menu and selects **"Discard Last Stop"** (via serial CLI `rover undo` or on-screen history menu).
@@ -196,41 +230,28 @@ When the rover arrives at a site with $\ge 16.0\text{ km}$ displacement, but the
 
 ## 4. Modular Geodesics & Domain Model Integration
 
-The modularized codebase organizes math cleanly under [`src/geo/`](../../src/geo/):
+The modular geodesic and coordinate engine was formally adopted in PR #10 under [`src/geo/`](../../src/geo/):
 
 ```text
 src/geo/
 ├── geo_point.h        # Struct GeoPoint (lat, lon)
 ├── grid_square.h      # Class GridSquare (4, 6, 8-char Maidenhead)
-├── geo_math.h         # distanceWGS84, greatCircleBearing, normalizeBearing
+├── geo_math.h         # calculateWgs84, isRoverTransitInsideAlert, calculateReverseBearing
 ├── maidenhead.h       # gridToGeoPoint, geoPointToGrid
 └── bearing_filter.h   # Vector circular mean smoothing
 ```
 
-### 4.1 Separation of Distance Calculations
+### 4.1 Integration with Existing Geodesic Functions
 
-```mermaid
-classDiagram
-    class GeoMath {
-        +distanceWGS84(p1: GeoPoint, p2: GeoPoint) double
-        +greatCircleBearing(p1: GeoPoint, p2: GeoPoint) double
-        +calculateGridToGridDistance(g1: GridSquare, g2: GridSquare) double
-        +calculateLiveToGridDistance(live: GeoPoint, target: GridSquare) double
-    }
-```
+Rover Mode directly consumes the existing, unit-tested functions in `src/geo/geo_math.h` and `src/geo/maidenhead.h`:
 
-1. **Grid-to-Grid Spherical Distance:**
-   - Evaluated between `g1.center()` and `g2.center()`.
-   - Spherical Earth model ($R = 6371.2\text{ km}$).
-   - Returns **`0.0 km`** when `g1 == g2`.
-   - Used for stationary target distance in Bearing Mode.
-2. **Live GPS to Target Grid Geodesic:**
-   - Evaluated between `livePoint` and `targetGrid.center()`.
-   - WGS-84 geodesic model (`distanceWGS84`).
-   - Used for stationary target distance when configured via `dist latlon`.
-3. **Point-to-Point Geodesic (Rover Transit):**
-   - Evaluated between `originPoint_` and `currentPoint_`.
-   - Exact WGS-84 geodesic in meters, rendered with $0.1\text{ km}$ decimal resolution.
+1. **Rover Transit Displacement (`calculateWgs84` & `isRoverTransitInsideAlert`):**
+   - Evaluated directly between `originPoint_` and `currentPoint_` (`GeoPoint`).
+   - Uses WGS-84 ellipsoidal model in true meters.
+   - Evaluates `isRoverTransitInsideAlert(currentPoint_, originPoint_, 16.0)` to drive the qualification state.
+2. **Stationary Target Distance (Bearing Mode):**
+   - Evaluates either `calculateArrlContestDistance(myGrid_, targetGrid_)` (Grid-to-Grid spherical Earth, 0 km same-grid) or `calculateWgs84(currentPoint_, targetCenter)` depending on distance display mode.
+   - Grid centers are converted via `gridToGeoPoint()`.
 
 ---
 
@@ -243,7 +264,7 @@ classDiagram
                       (Y = 0)                                                   (Y = 0)
                    .-----------.                                             .-----------.
                 .-'   Row 1     '-.                                       .-'   Row 1     '-.
-              .'  Local Grid:     '.  Y=35                              .'  Local Grid:     '.  Y=35
+              .'   My Grid:       '.  Y=35                              .'   My Grid:       '.  Y=35
              /     CM87wa22         \                                  /     CM87wb44         \
             |        Row 2           | Y=95                           |        Row 2           | Y=95
             |   Target: CM97be       |                                |  Origin: CM87wa        |

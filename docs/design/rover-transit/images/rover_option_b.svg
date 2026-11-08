@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 460 300" width="100%" height="auto">
+  <defs>
+    <style>
+      .label { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; }
+      .row-text { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 24px; font-weight: 800; letter-spacing: 2px; }
+    </style>
+    <filter id="shadow" x="-5%" y="-10%" width="110%" height="130%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-opacity="0.25"/>
+    </filter>
+  </defs>
+
+  <!-- State 1: Under 16 km -->
+  <g transform="translate(10, 10)">
+    <text x="5" y="12" fill="#888888" class="label">1. In-Transit (&lt; 16 km) — Red (0xF800) on White</text>
+    <rect x="0" y="20" width="440" height="46" rx="8" fill="#FFFFFF" stroke="#D32F2F" stroke-width="2" filter="url(#shadow)"/>
+    <text x="220" y="52" fill="#D32F2F" text-anchor="middle" class="row-text">TRANSIT&#160;&#160;&#160;6.4&#160;k&#160;&#160;</text>
+  </g>
+
+  <!-- State 2: Over 16 km, New Grid -->
+  <g transform="translate(10, 82)">
+    <text x="5" y="12" fill="#888888" class="label">2. Qualified (&ge; 16 km, New Grid) — Forest Green (0x03E0) on White</text>
+    <rect x="0" y="20" width="440" height="46" rx="8" fill="#FFFFFF" stroke="#1B5E20" stroke-width="2" filter="url(#shadow)"/>
+    <text x="220" y="52" fill="#1B5E20" text-anchor="middle" class="row-text">QUAL&#160;&#160;&#160;&#160;&#160;18.2&#160;k&#160;&#160;</text>
+  </g>
+
+  <!-- State 3: Over 16 km, Duplicate Grid -->
+  <g transform="translate(10, 154)">
+    <text x="5" y="12" fill="#888888" class="label">3. Qualified (&ge; 16 km, Duplicate Grid) — Royal Blue (0x011C) on White</text>
+    <rect x="0" y="20" width="440" height="46" rx="8" fill="#FFFFFF" stroke="#0D47A1" stroke-width="2" filter="url(#shadow)"/>
+    <text x="220" y="52" fill="#0D47A1" text-anchor="middle" class="row-text">REVISIT&#160;&#160;22.4&#160;k&#160;&#160;</text>
+  </g>
+
+  <!-- State 4: GPS Lost / Stale -->
+  <g transform="translate(10, 226)">
+    <text x="5" y="12" fill="#888888" class="label">4. GPS Signal Lost / Stale — Deep Amber (0xDC00) on White</text>
+    <rect x="0" y="20" width="440" height="46" rx="8" fill="#FFFFFF" stroke="#E65100" stroke-width="2" filter="url(#shadow)"/>
+    <text x="220" y="52" fill="#E65100" text-anchor="middle" class="row-text">NO&#160;GPS&#160;&#160;&#160;--.-&#160;k&#160;&#160;</text>
+  </g>
+</svg>
+
