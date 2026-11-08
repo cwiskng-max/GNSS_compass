@@ -197,6 +197,9 @@ Stored in ESP32 Non-Volatile Storage (`Preferences.h`) under namespace `"rover_l
 - **Storage Footprint:** At 100 stops, $100 \times 32\text{ bytes} \approx 3.2\text{ KB}$, entirely negligible within the 16 MB NOR flash partition and 8 MB PSRAM.
 - **Log Management:** Operates as a persistent chronological log. If the log reaches capacity, the oldest unpinned entries roll over, or capacity can be expanded dynamically via CLI/UI without data loss.
 
+#### Viewing Rover History
+Because the compact 480×480 circular display prioritizes live driving and dish-aiming metrics without cluttering the screen with multi-column tabular logs, full contest history is retrieved via the USB Serial CLI using `rover history` (or `rover log`). The on-screen modal focuses exclusively on showing the latest stop and providing the quick-action "Discard Last Stop" undo.
+
 ---
 
 ### 3.2 "Undo / Discard Last Entry" & Automatic Rover Re-Arm
@@ -360,10 +363,21 @@ Integrating with [`src/protocol/serial_cli.h`](../../src/protocol/serial_cli.h) 
 | `rover` / `rover status` | Displays active rover transit status | Origin coords, live displacement, grid boundary status, qualification state (A–D), and GPS fix health |
 | `rover start` | Emulates Row 1 tap | Captures current location as origin and arms Rover Mode |
 | `rover stop` | Emulates natural target tuning exit | Commits location to history log and returns to Bearing Mode (primarily for scripts/testing) |
-| `rover log` | Prints contest history | Formatted table of all visited stops, timestamps, coordinates, grids, and displacements |
+| `rover history` / `rover log` | Prints full rover history to serial | Formatted ASCII table of all recorded stops, timestamps, coordinates, grids, displacements, and 16 km qualification status |
 | `rover undo` | Discards last stop | Discards most recent entry, restores origin baseline, and auto-rearms Rover Mode |
 | `rover max [n]` | Gets / sets max capacity | Reports current limit, or sets and persists new NVS capacity (default 100, range 10–500) |
-| `rover clear` | Clears history | Resets contest log (with confirmation prompt) |
+| `rover clear` | Clears rover history | Resets the rover location history log in NVS (with confirmation prompt; does not affect calibration, target presets, or other device configuration) |
+
+#### Example Serial Output (`rover history`)
+```text
+=== ROVER LOCATION HISTORY (3 stops / max 100) ===
+# | UTC Timestamp       | Latitude   | Longitude    | Grid     | Disp (km) | Status
+--+---------------------+------------+--------------+----------+-----------+-----------
+1 | 2026-10-14 14:15:22 |  37.421998 | -122.084000  | CM87wa22 |     0.0 k | ORIGIN
+2 | 2026-10-14 16:32:04 |  37.581204 | -122.215401  | CM87wb44 |    24.2 k | QUALIFIED
+3 | 2026-10-14 18:42:15 |  37.774929 | -122.419418  | CM88ec12 |    28.5 k | QUALIFIED
+==================================================
+```
 
 ### 6.2 Simulation Verification with `gps_sim.py`
 
