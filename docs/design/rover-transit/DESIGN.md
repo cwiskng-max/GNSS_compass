@@ -279,7 +279,7 @@ Rover Mode directly consumes the existing, unit-tested functions in `src/geo/geo
 
 ### 5.1 Bearing Mode vs. Rover Mode UI Budget
 
-In stationary Bearing Mode, Row 5 renders reverse bearing on the left and contest distance to target on the right, with Row 6 rendering ARRL contest distance. In Rover Mode, Row 5 seamlessly transforms into the dedicated **Rover Qualification Card** on a solid white background, with Row 6 blanked to keep driver focus entirely on the qualification card:
+Following the layout rebalancing in PR #12 (`ENABLE_ARRL_DIST = 0`), Row 6 has been eliminated, rebalancing vertical spacing across the circular screen. In stationary Bearing Mode, Row 5 renders reverse bearing on the left and ARRL contest distance to target on the right. In Rover Mode, Row 5 seamlessly transforms into the dedicated **Rover Qualification Card** on a solid white background:
 
 ```text
            --- BEARING MODE (Stationary) ---                          --- ROVER MODE (In-Transit) ---
@@ -294,17 +294,16 @@ In stationary Bearing Mode, Row 5 renders reverse bearing on the left and contes
             |  Hdg: 142  Tgt: 142    |                                |  Hdg: 142  Tgt: 142    |
             |        Row 4           | Y=300                          |        Row 4           | Y=300
              \   UTC: 18:42:15 Z    /                                  \   UTC: 18:42:15 Z    /
-              '.     Row 5        .'   Y=352                            '.     Row 5        .'   Y=352
+              '.     Row 5        .'   Y=376                            '.     Row 5        .'   Y=376
                 '-. 184.2   42 k  .-'                                     '-.[QUALIFIED 18.2 k]-'  <-- White Card Slot
-                  '-- Row 6: ARRL --'  Y=408                                '-- (Row 6 Blank) --'  Y=408
-                      (Y = 480)                                                 (Y = 480)
+                     (Y = 480)                                                 (Y = 480)
 ```
 
 #### Geometry Budget & Typography (`src/config.h`)
-- **Card Geometry:** Padded white card ($X=20, Y=352, W=440, H=46$) with $8\text{ px}$ corner radius, centered horizontally.
-- **Chord Clearance:** On a $480\text{ px}$ circular display, the horizontal chord at $Y=352\text{--}398$ exceeds $403\text{ px}$, comfortably fitting within the circular viewport.
-- **Text Sizing (`REVBEAR_SZ = 4`):** Fixed-width monospace at $24\text{ px}$ per character. Up to 16 characters occupy $384\text{ px}$, leaving $28\text{ px}$ horizontal padding on each side of the card.
-- **Row 6 Suppression:** In Rover Mode, ARRL target distance is suppressed (`renderArrlDistance()` early returns), preventing visual clutter.
+- **Card Geometry:** Padded white card ($X=40, Y=372, W=400, H=44$) with $8\text{ px}$ corner radius, centered horizontally at $Y=376$.
+- **Chord Clearance:** On a $480\text{ px}$ circular display, the horizontal chord at $Y=372\text{--}416$ provides ample clearance for the $400\text{ px}$ card width, fitting comfortably above the version footer ($Y=444$).
+- **Text Sizing (`REVBEAR_SZ = 4`):** Fixed-width monospace at $24\text{ px}$ per character. 16 characters occupy $384\text{ px}$, centered inside the card.
+- **Unified 5-Row Architecture:** Eliminating Row 6 prevents information overload while driving and gives the Rover Qualification Card dedicated prominence.
 
 ---
 
@@ -337,7 +336,7 @@ The Rover Qualification Card renders on a solid white background card (`0xFFFF`)
 ### 5.3 Rendering Pipeline & Flicker-Free Partial Refresh
 
 The display architecture in `DisplayUi` is optimized for high readability and zero flicker:
-- **Card Drawing:** Background card drawn via `gfx_->fillRoundRect(20, 352, 440, 46, 8, 0xFFFF)`.
+- **Card Drawing:** Background card drawn via `gfx_->fillRoundRect(40, 372, 400, 44, 8, 0xFFFF)`.
 - **Text Drawing:** Foreground text rendered with transparent or white background `gfx_->setTextColor(stateColor, 0xFFFF)`.
 - **Selective Redraw:** Row 5 redraws only when displacement changes by $\ge 0.1\text{ km}$, qualification state transitions, or the 1 Hz GPS watchdog detects a signal loss/recovery event.
 
