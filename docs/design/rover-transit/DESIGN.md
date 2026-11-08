@@ -206,13 +206,35 @@ In real field operations, rovers occasionally encounter unviable operating locat
 - Dense fog, freezing rain, or high winds prevent raising antennas.
 - Extreme RF noise, trees, or terrain obstructions block microwave line-of-sight.
 
-If the operator had already clicked the knob to end rover transit at that location, that unviable site would be recorded as the latest stop. If they then pack up and move to an alternative site, the displacement would incorrectly calculate relative to the *unviable* stop rather than the *previous legitimate operating site*.
+If the operator had already tuned a target grid (exiting Rover Mode) at that location, that unviable site would be committed as the latest stop in NVS. If they pack up and move to an alternative site, displacement would calculate relative to the *unviable* stop rather than the *previous legitimate operating site*.
 
-**The "Discard Last Stop" Action & Automatic State Transition:**
-- The operator opens the History menu and selects **"Discard Last Stop"** (via serial CLI `rover undo` or on-screen history menu).
-- The unviable stop is removed from the NVS log.
-- The active origin reference immediately **falls back to the previous legitimate stop's coordinates and grid**.
-- **Automatic Re-Entry into Rover Mode:** The system automatically re-arms **Rover Mode** with respect to that restored prior stop! As the rover resumes driving toward an alternative location, continuous displacement $\Delta D$ instantly recalculates relative to the original valid site without requiring the operator to manually re-snapshot or configure anything.
+#### Access Gesture: Long-Press Row 1 (My Grid)
+To access history and undo on the physical touchscreen without cluttering the driving interface:
+- **Short Tap on Row 1 ($< 1.5\text{s}$):** Snapshots origin and arms Rover Mode.
+- **Long Press on Row 1 ($\ge 1.5\text{s}$):** Opens the **Rover History & Undo Modal** (matches `#define LONG_PRESS_MS 1500`). Accessible in both Bearing Mode and Rover Mode.
+
+```text
++-------------------------------------------------+
+|              ROVER CONTEST HISTORY              |
+|                                                 |
+|  Last Stop: Stop #4 — CM88ec  (18:42Z)          |
+|  Displacement: 24.2 km (QUALIFIED)              |
+|  Total Logged Stops: 4                          |
+|                                                 |
+|       [ DISCARD LAST STOP ]   (Red 0xF800)      |
+|       [      CANCEL       ]   (Gray 0x2945)     |
++-------------------------------------------------+
+```
+
+#### One-Shot Discard Action & Automatic Rover Re-Arm
+To keep field operations completely foolproof with zero modal confusion:
+- **Tapping [ CANCEL ]:** (or 15-second modal timeout `CAL_MODAL_TIMEOUT_MS`) immediately closes the dialog with zero changes, returning to the prior operational state.
+- **Tapping [ DISCARD LAST STOP ]:**
+  1. Immediately pops the topmost stop from the NVS history stack (`RoverLogManager`).
+  2. Restores the active origin reference (`originPoint_`, `originGrid_`) to the previous legitimate stop.
+  3. **Auto-Closes & Auto-Re-Arms:** The modal immediately closes and returns directly to the main screen, automatically re-arming **Rover Mode** relative to that restored prior stop! As the rover pulls out and drives away, live displacement $\Delta D$ instantly recalculates relative to the earlier valid site.
+- **Sequential Multi-Stop Discard:** In the rare event that an operator accidentally logged multiple unviable stops in succession, they simply long-press Row 1 again on the main screen to discard the next stop.
+- **Serial CLI Equivalence:** The `rover undo` command also pops the top of the history stack over USB.
 
 ---
 
@@ -376,7 +398,7 @@ Executed locally via `./tests/run_tests.sh` with zero hardware dependencies:
    - Inactivity auto-lock timeout (`EDIT_TIME_OUT_MS = 5000`) disarms accidental touch selections without exiting Rover Mode.
 5. **History Log Stack Operations (`RoverLogManager`):**
    - Appending stops, chronological query, and duplicate grid search.
-   - "Discard Last Entry" undo fallback and automatic Rover Mode re-arm relative to prior site.
+   - "Discard Last Entry" undo fallback, multi-level sequential popping, empty stack bounds, and automatic Rover Mode re-arm relative to prior site.
 6. **Non-Volatile Configuration Persistence:**
    - Storing and loading `max_stops` in NVS (`Preferences.h` under namespace `"rover_cfg"`), asserting factory default of 100 stops and bounds clamping (10 to 500).
 
