@@ -6,6 +6,7 @@
 #include "../config.h"
 #include "../types.h"
 #include "cal_modal.h"
+#include "rover_card.h"
 
 #if defined(ARDUINO)
 #include <Arduino_GFX_Library.h>
@@ -48,6 +49,7 @@ public:
     void renderCalibrationPill(float offset, bool isCalibrated);
     void renderTargetBearing(double targetBearing);
     void renderReverseBearingAndDistance(double revBearing, double distanceMeters, bool isRoverAlertActive);
+    void renderRoverCard(RoverState state, double displacementKm);
     void renderArrlDistance(const char *myGrid, const char *targetGrid);
     void renderUtcTime(int hours, int minutes, bool hasTime);
     void showFooterText(const char *msg, uint16_t color = 0x7BEF);

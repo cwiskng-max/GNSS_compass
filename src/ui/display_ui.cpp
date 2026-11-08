@@ -207,6 +207,22 @@ void DisplayUi::renderReverseBearingAndDistance(double revBearing, double distan
     gfx_->setTextColor(WHITE, BLACK);
 }
 
+void DisplayUi::renderRoverCard(RoverState state, double displacementKm) {
+    if (!gfx_) return;
+
+    gfx_->fillRoundRect(ROVER_CARD_X, ROVER_CARD_Y, ROVER_CARD_W, ROVER_CARD_H, ROVER_CARD_R, WHITE);
+
+    char buf[20];
+    formatRoverCard(state, displacementKm, buf, sizeof(buf));
+
+    uint16_t textColor = getRoverStateTextColor(state);
+    gfx_->setTextColor(textColor, WHITE);
+    gfx_->setTextSize(REVBEAR_SZ);
+    gfx_->setCursor(ROVER_CARD_X + 8, ROVER_CARD_Y + 6);
+    gfx_->print(buf);
+    gfx_->setTextColor(WHITE, BLACK);
+}
+
 void DisplayUi::renderArrlDistance(const char *myGrid, const char *targetGrid) {
 #if ENABLE_ARRL_DIST
     if (!gfx_ || !myGrid || !targetGrid) return;
@@ -284,6 +300,7 @@ void DisplayUi::renderCurrentBearing(double, BearingQuality, bool) {}
 void DisplayUi::renderCalibrationPill(float, bool) {}
 void DisplayUi::renderTargetBearing(double) {}
 void DisplayUi::renderReverseBearingAndDistance(double, double, bool) {}
+void DisplayUi::renderRoverCard(RoverState, double) {}
 void DisplayUi::renderArrlDistance(const char *, const char *) {}
 void DisplayUi::renderUtcTime(int, int, bool) {}
 void DisplayUi::showFooterText(const char *, uint16_t) {}

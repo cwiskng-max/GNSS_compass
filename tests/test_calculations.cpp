@@ -14,6 +14,7 @@
 #include "../src/ui/input_manager.h"
 #include "../src/ui/cal_modal.h"
 #include "../src/ui/display_ui.h"
+#include "../src/ui/rover_card.h"
 #include "../src/ui/grid_editor.h"
 #include "../src/system/board.h"
 #include "../src/system/app_controller.h"
@@ -1613,6 +1614,108 @@ void test_rover_log_manager_capacity_and_nvs() {
     PASS();
 }
 
+void test_rover_card_evaluator() {
+    TEST("RoverCard 4-state qualification evaluator and backtrack reversibility");
+
+    // State A: In-Transit Under 16 km (Displacement < 16.0 km, GPS fresh)
+    ASSERT_TRUE(evaluateRoverState(0.0, false, true) == RoverState::InTransitUnder16k);
+    ASSERT_TRUE(evaluateRoverState(5.5, false, true) == RoverState::InTransitUnder16k);
+    ASSERT_TRUE(evaluateRoverState(15.9, false, true) == RoverState::InTransitUnder16k);
+    ASSERT_TRUE(evaluateRoverState(15.99, true, true) == RoverState::InTransitUnder16k); // revisit under 16km is still State A
+
+    // State B: Qualified New Location (Displacement >= 16.0 km, unvisited, GPS fresh)
+    ASSERT_TRUE(evaluateRoverState(16.0, false, true) == RoverState::QualifiedNewGrid);
+    ASSERT_TRUE(evaluateRoverState(18.2, false, true) == RoverState::QualifiedNewGrid);
+    ASSERT_TRUE(evaluateRoverState(45.0, false, true) == RoverState::QualifiedNewGrid);
+
+    // State C: Qualified Revisited Grid (Displacement >= 16.0 km, visited earlier, GPS fresh)
+    ASSERT_TRUE(evaluateRoverState(16.0, true, true) == RoverState::QualifiedRevisitedGrid);
+    ASSERT_TRUE(evaluateRoverState(22.4, true, true) == RoverState::QualifiedRevisitedGrid);
+    ASSERT_TRUE(evaluateRoverState(60.0, true, true) == RoverState::QualifiedRevisitedGrid);
+
+    // State D: GPS Signal Lost / Stale (GPS not fresh, holds last valid value)
+    ASSERT_TRUE(evaluateRoverState(5.0, false, false) == RoverState::GpsLostStale);
+    ASSERT_TRUE(evaluateRoverState(18.2, false, false) == RoverState::GpsLostStale);
+    ASSERT_TRUE(evaluateRoverState(22.4, true, false) == RoverState::GpsLostStale);
+
+    // Dynamic Backtrack: Instantaneous, hysteresis-free reversibility
+    // Forward drive
+    ASSERT_TRUE(evaluateRoverState(15.9, false, true) == RoverState::InTransitUnder16k);
+    ASSERT_TRUE(evaluateRoverState(16.0, false, true) == RoverState::QualifiedNewGrid);
+    ASSERT_TRUE(evaluateRoverState(16.2, false, true) == RoverState::QualifiedNewGrid);
+
+    // Canyon switchback retreat: instantaneous drop from Green (State B) to Red (State A)
+    ASSERT_TRUE(evaluateRoverState(15.8, false, true) == RoverState::InTransitUnder16k);
+    ASSERT_TRUE(evaluateRoverState(14.2, false, true) == RoverState::InTransitUnder16k);
+
+    PASS();
+}
+
+void test_rover_card_formatting_and_colors() {
+    TEST("RoverCard exact 16-char formatting, buffer safety, and theme colors");
+
+    // Colors
+    ASSERT_TRUE(getRoverStateTextColor(RoverState::InTransitUnder16k) == 0xF800);
+    ASSERT_TRUE(getRoverStateTextColor(RoverState::QualifiedNewGrid) == 0x03E0);
+    ASSERT_TRUE(getRoverStateTextColor(RoverState::QualifiedRevisitedGrid) == 0x011C);
+    ASSERT_TRUE(getRoverStateTextColor(RoverState::GpsLostStale) == 0xDC00);
+
+    // Status Words (9 characters)
+    ASSERT_STR_EQ(getRoverStateStatusWord(RoverState::InTransitUnder16k), "TRANSIT  ");
+    ASSERT_STR_EQ(getRoverStateStatusWord(RoverState::QualifiedNewGrid), "QUALIFIED");
+    ASSERT_STR_EQ(getRoverStateStatusWord(RoverState::QualifiedRevisitedGrid), "REVISIT  ");
+    ASSERT_STR_EQ(getRoverStateStatusWord(RoverState::GpsLostStale), "NO GPS   ");
+
+    char buf[32];
+
+    // State A: "TRANSIT    6.4 k"
+    ASSERT_TRUE(formatRoverCard(RoverState::InTransitUnder16k, 6.4, buf, sizeof(buf)));
+    ASSERT_TRUE(std::strlen(buf) == 16);
+    ASSERT_STR_EQ(buf, "TRANSIT    6.4 k");
+
+    // State B: "QUALIFIED 18.2 k"
+    ASSERT_TRUE(formatRoverCard(RoverState::QualifiedNewGrid, 18.2, buf, sizeof(buf)));
+    ASSERT_TRUE(std::strlen(buf) == 16);
+    ASSERT_STR_EQ(buf, "QUALIFIED 18.2 k");
+
+    // State C: "REVISIT   22.4 k"
+    ASSERT_TRUE(formatRoverCard(RoverState::QualifiedRevisitedGrid, 22.4, buf, sizeof(buf)));
+    ASSERT_TRUE(std::strlen(buf) == 16);
+    ASSERT_STR_EQ(buf, "REVISIT   22.4 k");
+
+    // State D: "NO GPS    11.2 k"
+    ASSERT_TRUE(formatRoverCard(RoverState::GpsLostStale, 11.2, buf, sizeof(buf)));
+    ASSERT_TRUE(std::strlen(buf) == 16);
+    ASSERT_STR_EQ(buf, "NO GPS    11.2 k");
+
+    // Boundary cases: 0.0 km
+    ASSERT_TRUE(formatRoverCard(RoverState::InTransitUnder16k, 0.0, buf, sizeof(buf)));
+    ASSERT_TRUE(std::strlen(buf) == 16);
+    ASSERT_STR_EQ(buf, "TRANSIT    0.0 k");
+
+    // Negative clamping to 0.0 km
+    ASSERT_TRUE(formatRoverCard(RoverState::InTransitUnder16k, -5.0, buf, sizeof(buf)));
+    ASSERT_TRUE(std::strlen(buf) == 16);
+    ASSERT_STR_EQ(buf, "TRANSIT    0.0 k");
+
+    // Max 3-digit distance (999.9 km)
+    ASSERT_TRUE(formatRoverCard(RoverState::QualifiedNewGrid, 999.9, buf, sizeof(buf)));
+    ASSERT_TRUE(std::strlen(buf) == 16);
+    ASSERT_STR_EQ(buf, "QUALIFIED999.9 k");
+
+    // Overflow clamping to 999.9 km
+    ASSERT_TRUE(formatRoverCard(RoverState::QualifiedNewGrid, 1250.0, buf, sizeof(buf)));
+    ASSERT_TRUE(std::strlen(buf) == 16);
+    ASSERT_STR_EQ(buf, "QUALIFIED999.9 k");
+
+    // Buffer safety checks
+    char smallBuf[16]; // Too small (needs 17 for 16 chars + null terminator)
+    ASSERT_TRUE(!formatRoverCard(RoverState::InTransitUnder16k, 6.4, smallBuf, sizeof(smallBuf)));
+    ASSERT_TRUE(!formatRoverCard(RoverState::InTransitUnder16k, 6.4, nullptr, 32));
+
+    PASS();
+}
+
 int main() {
     std::cout << "========================================" << std::endl;
     std::cout << "  GNSS Compass Unit Test Suite" << std::endl;
@@ -1650,6 +1753,8 @@ int main() {
     test_rover_log_manager_stack_ops();
     test_rover_log_manager_duplicate_grid_search();
     test_rover_log_manager_capacity_and_nvs();
+    test_rover_card_evaluator();
+    test_rover_card_formatting_and_colors();
 
     std::cout << "========================================" << std::endl;
     std::cout << "  All " << tests_passed << " / " << tests_run << " tests PASSED successfully!" << std::endl;
