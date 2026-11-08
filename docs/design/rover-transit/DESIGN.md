@@ -84,7 +84,7 @@ While grid traversal occurs naturally when moving $\ge 16\text{ km}$, tracking v
 #### Continuous Displacement Resolution (`src/geo/geo_math.h`)
 Calculates the exact **WGS-84 geodesic distance** between `originPoint_` and the live GPS antenna coordinates `currentPoint_`:
 
-$$\Delta D = \text{distanceWGS84}(\text{originPoint\_}, \text{currentPoint\_})$$
+$$\Delta D = \text{distanceWGS84}(\text{originPoint}, \text{currentPoint})$$
 
 **Mandatory 0.1 km Decimal Precision (`%5.1f k`):**
 Displacement is continuously rendered with tenths-of-a-kilometer decimal precision (e.g., ` 6.4 k`, ` 18.2 k`, ` 22.4 k`). At typical driving speeds (e.g., 50 km/h), integer kilometers take over 70 seconds to increment, giving the driver the false impression that tracking is frozen. Tenths of a kilometer increment every ~7 seconds, providing immediate visual feedback that the vehicle is in motion and distance is actively accumulating.
