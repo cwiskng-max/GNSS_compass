@@ -84,8 +84,8 @@ jobs:
           TAG="${{ inputs.tag_name || github.ref_name }}"
           echo "Building firmware for release: $TAG"
           mkdir -p build/gps_compass
-          cp gps_compass.ino build/gps_compass/
-          sed -i "s/#define FW_VERSION .*/#define FW_VERSION           \"$TAG\"/" build/gps_compass/gps_compass.ino
+          cp -r gps_compass.ino src build/gps_compass/
+          sed -i "s/#define FW_VERSION .*/#define FW_VERSION           \"$TAG\"/" build/gps_compass/src/config.h
           arduino-cli compile --fqbn esp32:esp32:esp32s3:FlashSize=16M,PSRAM=opi,CDCOnBoot=cdc --export-binaries build/gps_compass
           mkdir -p dist
           cp build/gps_compass/build/esp32.esp32.esp32s3/gps_compass.ino.bin ./dist/gps_compass.ino.esp32s3.bin

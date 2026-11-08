@@ -5,6 +5,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT"
 
+# Ensure ~/.local/bin is in PATH if arduino-cli is installed there
+if [ -d "$HOME/.local/bin" ] && [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
+    export PATH="$HOME/.local/bin:$PATH"
+fi
+
 BUILD_DIR="$REPO_ROOT/build"
 SCRATCH_DIR="$BUILD_DIR/tmp/gps_compass"
 OUTPUT_BIN="$REPO_ROOT/gps_compass.ino.esp32s3.bin"
@@ -14,8 +19,9 @@ echo "Building the binary..."
 echo
 
 # Prepare scratch folder for arduino-cli
+rm -rf "$SCRATCH_DIR"
 mkdir -p "$SCRATCH_DIR"
-cp "$REPO_ROOT/gps_compass.ino" "$SCRATCH_DIR/"
+cp -r "$REPO_ROOT/gps_compass.ino" "$REPO_ROOT/src" "$SCRATCH_DIR/"
 
 # Compile using modern --output-dir (replaces deprecated --export-binaries)
 arduino-cli compile \

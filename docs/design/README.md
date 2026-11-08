@@ -18,6 +18,7 @@ Each major subsystem or feature design is organized into its own subfolder to ke
 | **Maidenhead Geodetics & ARRL Rules** | [`maidenhead-geodetics/`](maidenhead-geodetics/DESIGN.md) | **Implemented** | Double-precision Maidenhead subsquare center calculation, great-circle azimuths, ARRL 1.0 km contest clamp, and host C++ unit testing. |
 | **Circular Display Touch Interface** | [`circular-touch-ui/`](circular-touch-ui/DESIGN.md) | **Implemented** | 480x480 circular layout budget, 6-character touch Maidenhead editor with field rules, 5-second auto-lock, and rotary encoder input. |
 | **Target Grid Presets & History** | [`target-grid-history/`](target-grid-history/DESIGN.md) | **Proposed** | Non-volatile target Maidenhead grid history, multi-summit preset manager for rover operations, live bearing/distance preview, rotary/touch selection, and protected hold-to-clear. |
+| **Firmware Architecture & Modularization** | [`firmware-modularization/`](firmware-modularization/DESIGN.md) | **Implemented** | Modular C++ firmware architecture under `src/`, explicit `GeoPoint` lat/lon source of truth vs UI grid abstractions, test decoupling, and simplified loop. |
 | **CI Build & Release Pipeline** | [`ci-firmware-pipeline/`](ci-firmware-pipeline/DESIGN.md) | **Implemented** | Headless `arduino-cli` ESP32-S3 CI builds, dynamic git version injection (`FW_VERSION`), release tag validation, and binary checksums. |
 
 ---

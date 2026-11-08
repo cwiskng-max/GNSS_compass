@@ -2,7 +2,21 @@
 #include <cmath>
 #include <cstring>
 #include <string>
-#include "extracted_math.h"
+#include "../src/types.h"
+#include "../src/config.h"
+#include "../src/geo/geo_math.h"
+#include "../src/geo/maidenhead.h"
+#include "../src/protocol/nmea_parser.h"
+#include "../src/system/calibration.h"
+#include "../src/gnss/simulator.h"
+#include "../src/gnss/gps_manager.h"
+#include "../src/protocol/serial_cli.h"
+#include "../src/ui/input_manager.h"
+#include "../src/ui/cal_modal.h"
+#include "../src/ui/display_ui.h"
+#include "../src/ui/grid_editor.h"
+#include "../src/system/board.h"
+#include "../src/system/app_controller.h"
 
 int tests_run = 0;
 int tests_passed = 0;
@@ -34,24 +48,31 @@ void test_trig_helpers() {
     PASS();
 }
 
-void test_calc_lat_lon() {
-    TEST("calcLatLon center coordinates");
+void test_grid_to_geopoint() {
+    TEST("gridToGeoPoint center coordinates");
     double lat = 0.0, lon = 0.0;
 
     // JJ00AA: Origin grid center (Equator and Prime Meridian)
-    calcLatLon("JJ00AA", &lat, &lon);
+    ASSERT_TRUE(gridToGeoPoint("JJ00AA", &lat, &lon));
     ASSERT_NEAR(lat, 1.25 / 60.0, 1e-6); // +0.020833 deg
     ASSERT_NEAR(lon, 2.5 / 60.0, 1e-6);  // +0.041667 deg
 
     // 4-character grid: EN40 defaults to center of 2 deg x 1 deg square
-    calcLatLon("EN40", &lat, &lon);
+    ASSERT_TRUE(gridToGeoPoint("EN40", &lat, &lon));
     ASSERT_NEAR(lat, 40.5, 1e-5);
     ASSERT_NEAR(lon, -91.0, 1e-5);
 
     // 8-character grid: EN40ab56 preserves extended precision
-    calcLatLon("EN40ab56", &lat, &lon);
+    ASSERT_TRUE(gridToGeoPoint("EN40ab56", &lat, &lon));
     ASSERT_NEAR(lat, 40.06875, 1e-5);
     ASSERT_NEAR(lon, -91.954167, 1e-5);
+
+    // Partial/odd-length grids must parse safely without buffer overrun
+    GeoPoint ptSafe;
+    ASSERT_TRUE(gridToGeoPoint("EN40a", ptSafe));
+    ASSERT_NEAR(ptSafe.latitude, 40.5, 1e-5);
+    ASSERT_TRUE(gridToGeoPoint("EN40ab5", ptSafe));
+    ASSERT_NEAR(ptSafe.latitude, 40.0625, 1e-4);
 
     // Coordinates should stay within valid geographic bounds
     ASSERT_TRUE(lat >= -90.0 && lat <= 90.0);
@@ -61,13 +82,13 @@ void test_calc_lat_lon() {
 void test_arrl_1km_rule() {
     TEST("ARRL 1 km minimum distance rule");
     // Same 6-character grid must return exactly 1.0 km
-    ASSERT_NEAR(calculateARRLDistance("CM87wa", "CM87wa"), 1.0, 1e-9);
-    ASSERT_NEAR(calculateARRLDistance("FN31AA", "FN31AA"), 1.0, 1e-9);
-    ASSERT_NEAR(calculateARRLDistance("JJ00AA", "JJ00AA"), 1.0, 1e-9);
-    ASSERT_NEAR(calculateARRLDistance("ZA00AA", "ZA00AA"), 1.0, 1e-9);
+    ASSERT_NEAR(calculateArrlContestDistance("CM87wa", "CM87wa"), 1.0, 1e-9);
+    ASSERT_NEAR(calculateArrlContestDistance("FN31AA", "FN31AA"), 1.0, 1e-9);
+    ASSERT_NEAR(calculateArrlContestDistance("JJ00AA", "JJ00AA"), 1.0, 1e-9);
+    ASSERT_NEAR(calculateArrlContestDistance("ZA00AA", "ZA00AA"), 1.0, 1e-9);
 
     // Adjacent subsquares (2.5' lat step ~ 4.63 km) must exceed 1.0 km
-    double adj = calculateARRLDistance("CM87AA", "CM87AB");
+    double adj = calculateArrlContestDistance("CM87AA", "CM87AB");
     ASSERT_TRUE(adj > 1.0);
     ASSERT_NEAR(adj, 4.63, 0.1);
     PASS();
@@ -76,63 +97,69 @@ void test_arrl_1km_rule() {
 void test_arrl_symmetry_and_known_paths() {
     TEST("ARRL distance symmetry and known distance ranges");
     // Symmetry: distance(A, B) == distance(B, A)
-    double d1 = calculateARRLDistance("CM87wa", "DM04ms");
-    double d2 = calculateARRLDistance("DM04ms", "CM87wa");
+    double d1 = calculateArrlContestDistance("CM87wa", "DM04ms");
+    double d2 = calculateArrlContestDistance("DM04ms", "CM87wa");
     ASSERT_NEAR(d1, d2, 1e-9);
 
     // CM87wa to DM04ms center-to-center is ~379.37 km
     ASSERT_NEAR(d1, 379.37, 0.5);
 
     // Boot default distance: JJ00AA to ZA00AA is > 10,000 km
-    double boot_dist = calculateARRLDistance("JJ00AA", "ZA00AA");
+    double boot_dist = calculateArrlContestDistance("JJ00AA", "ZA00AA");
     ASSERT_TRUE(boot_dist > 10000.0);
     PASS();
 }
 
 void test_wgs84_distance_and_bearing() {
-    TEST("calculateWGS84 distance and cardinal bearings");
+    TEST("calculateWgs84 distance and cardinal bearings");
     double dist = 0.0, bearing = 0.0;
 
     // Same coordinates
-    calculateWGS84(37.5, -122.0, 37.5, -122.0, dist, bearing);
+    calculateWgs84(37.5, -122.0, 37.5, -122.0, dist, bearing);
     ASSERT_NEAR(dist, 0.0, 1e-6);
 
     // True North: lat increases, lon constant -> bearing 0 deg
-    calculateWGS84(0.0, 0.0, 1.0, 0.0, dist, bearing);
+    calculateWgs84(0.0, 0.0, 1.0, 0.0, dist, bearing);
     ASSERT_NEAR(bearing, 0.0, 1e-4);
     ASSERT_NEAR(dist, 111319.5, 1000.0);
 
     // True East: lat constant, lon increases -> bearing 90 deg
-    calculateWGS84(0.0, 0.0, 0.0, 1.0, dist, bearing);
+    calculateWgs84(0.0, 0.0, 0.0, 1.0, dist, bearing);
     ASSERT_NEAR(bearing, 90.0, 1e-4);
 
     // True South: lat decreases, lon constant -> bearing 180 deg
-    calculateWGS84(1.0, 0.0, 0.0, 0.0, dist, bearing);
+    calculateWgs84(1.0, 0.0, 0.0, 0.0, dist, bearing);
     ASSERT_NEAR(bearing, 180.0, 1e-4);
 
     // True West: lat constant, lon decreases -> bearing 270 deg
-    calculateWGS84(0.0, 1.0, 0.0, 0.0, dist, bearing);
+    calculateWgs84(0.0, 1.0, 0.0, 0.0, dist, bearing);
     ASSERT_NEAR(bearing, 270.0, 1e-4);
+
+    // Antipodal point bounds check (ensures a is clamped and no NaN occurs)
+    calculateWgs84(0.0, 0.0, 0.0, 180.0, dist, bearing);
+    ASSERT_TRUE(!std::isnan(dist));
+    ASSERT_TRUE(!std::isnan(bearing));
+    ASSERT_NEAR(dist, 20037508.34, 1.0); // Half Earth circumference (pi * 6378137 m)
     PASS();
 }
 
 void test_locator_round_trip() {
-    TEST("calcLocator round-trip consistency");
+    TEST("geoPointToGrid and gridToGeoPoint round-trip consistency");
     const char *grids[] = {"CM87AA", "FN31AA", "JJ00AA", "IO91AA"};
     for (const char *expected : grids) {
         double lat = 0.0, lon = 0.0;
-        calcLatLon(expected, &lat, &lon);
+        ASSERT_TRUE(gridToGeoPoint(expected, &lat, &lon));
 
         char result[9];
-        calcLocator(result, (float)lat, (float)lon);
+        ASSERT_TRUE(geoPointToGrid(lat, lon, result, 8));
         ASSERT_TRUE(std::strncmp(result, expected, 6) == 0);
     }
 
     // 8-character full precision round-trip
     double lat8 = 0.0, lon8 = 0.0;
-    calcLatLon("EN40ab56", &lat8, &lon8);
+    ASSERT_TRUE(gridToGeoPoint("EN40ab56", &lat8, &lon8));
     char result8[9];
-    calcLocator(result8, (float)lat8, (float)lon8);
+    ASSERT_TRUE(geoPointToGrid(lat8, lon8, result8, 8));
     ASSERT_TRUE(std::strcmp(result8, "EN40AB56") == 0);
 
     PASS();
@@ -289,17 +316,17 @@ void test_ksxt_time_and_location() {
     const char *ksxt_empty_time = "$KSXT,,116.23662400,40.07897925,68.3830,299.22,-67.03,190.28,0.022,,1,3,46,28*27";
     ASSERT_TRUE(!parseKSXTTime(ksxt_empty_time, &h, &m));
 
-    // 5. Valid Location extraction (Pos qual == 1, Single)
-    float lat = 0.0f, lon = 0.0f;
+    // 5. Valid Location extraction (Pos qual == 1, Single, full 8-decimal double precision)
+    double lat = 0.0, lon = 0.0;
     ASSERT_TRUE(parseKSXTLocation(ksxt_full, &lat, &lon));
-    ASSERT_NEAR(lat, 40.07897925, 1e-4);
-    ASSERT_NEAR(lon, 116.23662400, 1e-4);
+    ASSERT_NEAR(lat, 40.07897925, 1e-8);
+    ASSERT_NEAR(lon, 116.23662400, 1e-8);
 
     // 6. Western / Southern hemisphere coordinates
     const char *ksxt_west = "$KSXT,20261024185730.00,-122.12345678,37.45678901,68.3830,299.22,-67.03,190.28,0.022,,1,3,46,28*27";
     ASSERT_TRUE(parseKSXTLocation(ksxt_west, &lat, &lon));
-    ASSERT_NEAR(lat, 37.45678901, 1e-4);
-    ASSERT_NEAR(lon, -122.12345678, 1e-4);
+    ASSERT_NEAR(lat, 37.45678901, 1e-8);
+    ASSERT_NEAR(lon, -122.12345678, 1e-8);
 
     // 7. Invalid Location (Pos qual == 0)
     const char *ksxt_no_pos = "$KSXT,20261024185730.00,116.23662400,40.07897925,68.3830,299.22,-67.03,190.28,0.022,,0,0,0,0*27";
@@ -349,6 +376,22 @@ void test_legacy_hdt_ths_parsing() {
     const char *ths_empty_v = "$GNTHS,,V*35";
     ASSERT_TRUE(!parseHeadingSentence(ths_empty_v, &heading, &quality));
     ASSERT_TRUE(quality == BEARING_LOST);
+
+    // Valid GNHDT via parseHdtHeading wrapper & scoped enum
+    float hdtHdg = 0.0f;
+    BearingQuality hdtQual = BearingQuality::None;
+    ASSERT_TRUE(parseHdtHeading(hdt_valid, hdtHdg, hdtQual));
+    ASSERT_NEAR(hdtHdg, 180.50, 1e-2);
+    ASSERT_TRUE(hdtQual == BearingQuality::Fixed);
+
+    // Valid GNTHS via parseThsHeading wrapper
+    float thsHdg = 0.0f;
+    BearingQuality thsQual = BearingQuality::None;
+    const char *ths_wrapper_test = "$GNTHS,312.4,A*18";
+    ASSERT_TRUE(parseThsHeading(ths_wrapper_test, thsHdg, thsQual));
+    ASSERT_NEAR(thsHdg, 312.4, 1e-2);
+    ASSERT_TRUE(thsQual == BearingQuality::Fixed);
+
     PASS();
 }
 
@@ -378,6 +421,13 @@ void test_current_bearing_calculation() {
 
 void test_antenna_calibration() {
     TEST("Antenna offset normalization, bearing offset application, and circular wrapping");
+
+    // 0. normalizeHeading
+    ASSERT_NEAR(normalizeHeading(370.5f), 10.5f, 1e-4);
+    ASSERT_NEAR(normalizeHeading(-10.0f), 350.0f, 1e-4);
+    ASSERT_NEAR(normalizeHeading(720.0f), 0.0f, 1e-4);
+    ASSERT_NEAR(normalizeHeading(0.0f), 0.0f, 1e-4);
+    ASSERT_NEAR(normalizeHeading(359.9f), 359.9f, 1e-4);
 
     // 1. normalizeOffset
     ASSERT_NEAR(normalizeOffset(0.0f), 0.0f, 1e-4);
@@ -416,6 +466,42 @@ void test_antenna_calibration() {
     PASS();
 }
 
+void test_bearing_filter_class() {
+    TEST("BearingFilter vector smoothing, seed, and 360 wrap-around");
+    BearingFilter filter;
+    ASSERT_TRUE(!filter.hasSamples());
+    ASSERT_TRUE(filter.sampleCount() == 0);
+
+    // Baseline pointing North (0 deg): (0 + 270) % 360 = 270 deg
+    filter.seed(0.0f);
+    ASSERT_TRUE(filter.hasSamples());
+    ASSERT_TRUE(filter.sampleCount() == 5);
+    ASSERT_NEAR(filter.getRawHeading(), 270.0, 1e-3);
+
+    // With +10 deg calibration offset -> 280 deg
+    ASSERT_NEAR(filter.getCalibratedHeading(10.0f), 280.0, 1e-3);
+    // With -10 deg calibration offset -> 260 deg
+    ASSERT_NEAR(filter.getCalibratedHeading(-10.0f), 260.0, 1e-3);
+
+    // Baseline pointing East (90 deg): (90 + 270) % 360 = 0 deg
+    filter.seed(90.0f);
+    ASSERT_NEAR(filter.getRawHeading(), 0.0, 1e-3);
+
+    // Push samples across 0/360 wrap-around: alternate 359 deg and 1 deg
+    // True circular average of 359 and 1 is 0 deg (or 360 deg)
+    // Raw heading = (0 + 270) = 270 deg
+    filter.reset();
+    filter.push(359.0f);
+    filter.push(1.0f);
+    filter.push(359.0f);
+    filter.push(1.0f);
+    filter.push(0.0f);
+    ASSERT_TRUE(filter.sampleCount() == 5);
+    ASSERT_NEAR(filter.getRawHeading(), 270.0, 0.5);
+
+    PASS();
+}
+
 void test_gps_stream_evaluation() {
     TEST("evaluateGpsStream link verdicts (Disconnected, Corrupt, Acquiring, Float, Fixed)");
 
@@ -449,13 +535,769 @@ void test_gps_stream_evaluation() {
     PASS();
 }
 
+void test_geopoint_and_modern_domain() {
+    TEST("GeoPoint domain model, grid projection, and rover threshold checks");
+    GeoPoint origin(38.354, -119.458, true);
+    GeoPoint target;
+
+    // Grid center to GeoPoint
+    ASSERT_TRUE(gridToGeoPoint("CM87wb", target));
+    ASSERT_TRUE(target.isValid);
+    ASSERT_NEAR(target.latitude, 37.0625, 1e-4);
+    ASSERT_NEAR(target.longitude, -122.125, 1e-4);
+
+    // GeoPoint back to Grid
+    char grid6[7];
+    ASSERT_TRUE(geoPointToGrid(origin, grid6, 6));
+    ASSERT_STR_EQ(grid6, "DM08GI");
+
+    // WGS84 with GeoPoint structs
+    double distM = 0.0, bearingDeg = 0.0;
+    calculateWgs84(origin, target, distM, bearingDeg);
+    ASSERT_TRUE(distM > 270000.0 && distM < 280000.0); // ~275 km
+
+    // Reverse bearing
+    double revBearing = calculateReverseBearing(origin, target);
+    ASSERT_NEAR(revBearing, 57.72, 0.05);
+
+    // Rover transit alert: station within 15 km is inside alert; station at 17 km is outside
+    GeoPoint nearby(38.360, -119.460, true);
+    ASSERT_TRUE(isRoverTransitInsideAlert(nearby, origin, 16.0));
+
+    GeoPoint farAway(38.550, -119.460, true); // ~21 km North
+    ASSERT_TRUE(!isRoverTransitInsideAlert(farAway, origin, 16.0));
+
+    // KSXT location parser into GeoPoint
+    const char *ksxt_sample = "$KSXT,20261024185730.00,-119.45821000,38.35412000,68.3830,299.22,-67.03,190.28,0.022,,1,3,46,28*27";
+    GeoPoint parsedGps;
+    ASSERT_TRUE(parseKsxtLocation(ksxt_sample, parsedGps));
+    ASSERT_TRUE(parsedGps.isValid);
+    ASSERT_NEAR(parsedGps.latitude, 38.35412000, 1e-6);
+    ASSERT_NEAR(parsedGps.longitude, -119.45821000, 1e-6);
+
+    PASS();
+}
+
+void test_config_constants() {
+    TEST("src/config.h constants and macro dimensions");
+    ASSERT_TRUE(SCREEN_WIDTH == 480);
+    ASSERT_TRUE(SCREEN_HEIGHT == 480);
+    ASSERT_TRUE(CHAR_W(2) == 12);
+    ASSERT_TRUE(CHAR_H(2) == 16);
+    ASSERT_TRUE(RICH_YELLOW == 0xFEA0);
+    ASSERT_TRUE(HEADING_TIMEOUT_MS == 1500);
+    ASSERT_TRUE(EDIT_TIMEOUT_MS == 5000);
+    ASSERT_TRUE(CAL_MODAL_TIMEOUT_MS == 15000);
+    ASSERT_NEAR(ROVER_ALERT_THRESHOLD_KM, 16.0, 1e-6);
+
+    // Test grid character rolling macros
+    char c = 'A';
+    ASSERT_TRUE(INCA(c) == 'B');
+    ASSERT_TRUE(DECA(c) == 'Z');
+    c = 'Z';
+    ASSERT_TRUE(INCA(c) == 'A');
+
+    char n = '0';
+    ASSERT_TRUE(INCN(n) == '1');
+    ASSERT_TRUE(DECN(n) == '9');
+    n = '9';
+    ASSERT_TRUE(INCN(n) == '0');
+
+    PASS();
+}
+
+void test_calibration_class() {
+    TEST("Calibration class offset staging and persistence");
+    Calibration::resetHostStorage();
+
+    Calibration cal;
+    cal.begin();
+    ASSERT_NEAR(cal.getOffset(), 0.0f, 1e-4);
+    ASSERT_TRUE(!cal.isCalibrated());
+
+    // Setting offset and wrap normalization
+    cal.setOffset(4.2f);
+    ASSERT_NEAR(cal.getOffset(), 4.2f, 1e-4);
+    ASSERT_TRUE(cal.isCalibrated());
+
+    // Wrap-around normalization > 180 and < -180
+    cal.setOffset(190.0f);
+    ASSERT_NEAR(cal.getOffset(), -170.0f, 1e-4);
+
+    cal.setOffset(-200.0f);
+    ASSERT_NEAR(cal.getOffset(), 160.0f, 1e-4);
+
+    // Snapping: target = 10.0, raw = 355.0 -> delta = +15.0
+    cal.snap(10.0, 355.0);
+    ASSERT_NEAR(cal.getOffset(), 15.0f, 1e-4);
+
+    // Staging and proposed offset manipulation
+    cal.reset();
+    ASSERT_NEAR(cal.getOffset(), 0.0f, 1e-4);
+    ASSERT_TRUE(!cal.isCalibrated());
+
+    cal.stageProposedOffset(5.0f);
+    ASSERT_NEAR(cal.getProposedOffset(), 5.0f, 1e-4);
+    ASSERT_NEAR(cal.getOffset(), 0.0f, 1e-4); // Active unchanged until commit
+
+    cal.adjustProposedOffset(0.1f);
+    ASSERT_NEAR(cal.getProposedOffset(), 5.1f, 1e-4);
+
+    cal.adjustProposedOffset(-0.2f);
+    ASSERT_NEAR(cal.getProposedOffset(), 4.9f, 1e-4);
+
+    cal.snapProposed(45.0, 40.0); // +5.0
+    ASSERT_NEAR(cal.getProposedOffset(), 5.0f, 1e-4);
+
+    cal.commitProposed();
+    ASSERT_NEAR(cal.getOffset(), 5.0f, 1e-4);
+
+    // Persistence verification: new instance loads persisted value
+    Calibration cal2;
+    cal2.begin();
+    ASSERT_NEAR(cal2.getOffset(), 5.0f, 1e-4);
+    ASSERT_TRUE(cal2.isCalibrated());
+
+    // Bearing application
+    ASSERT_NEAR(cal2.apply(358.0), 3.0, 1e-4);
+
+    // In-memory update without persistence (used during Self-Test demo to avoid flash wear)
+    cal2.setOffset(4.2f, false);
+    ASSERT_NEAR(cal2.getOffset(), 4.2f, 1e-4);
+    Calibration cal3;
+    cal3.begin();
+    ASSERT_NEAR(cal3.getOffset(), 5.0f, 1e-4); // NVS storage preserved at 5.0f!
+
+    PASS();
+}
+
+void test_gps_simulator() {
+    TEST("GpsSimulator synthetic sentences and virtual rover displacement");
+    GpsSimulator sim;
+    ASSERT_TRUE(!sim.isActive());
+    ASSERT_TRUE(sim.getPacketCount() == 0);
+
+    // Checksum verification
+    uint8_t csum = GpsSimulator::computeChecksum("$GNHDT,123.4,T");
+    ASSERT_TRUE(csum != 0);
+
+    // Sentence injection and callback
+    static bool sentenceReceived = false;
+    static std::string lastSentence;
+    sim.injectSentence("$GNHDT,045.0,T*26", [](const char *s) {
+        sentenceReceived = true;
+        lastSentence = s;
+    }, 1000);
+
+    ASSERT_TRUE(sentenceReceived);
+    ASSERT_STR_EQ(lastSentence.c_str(), "$GNHDT,045.0,T*26");
+    ASSERT_TRUE(sim.isActive());
+    ASSERT_TRUE(sim.getPacketCount() == 1);
+    ASSERT_TRUE(sim.getLastInjectionMillis() == 1000);
+
+    // Synthetic KSXT generation & roundtrip parsing
+    char ksxtBuf[256];
+    ASSERT_TRUE(GpsSimulator::generateKsxt(ksxtBuf, sizeof(ksxtBuf),
+                                          "20261106180000.00", 38.35412, -119.45821,
+                                          125.5, BEARING_FIXED));
+    float hOut = 0.0f;
+    BearingQuality qOut = BEARING_LOST;
+    ASSERT_TRUE(parseKsxtHeading(ksxtBuf, hOut, qOut));
+    ASSERT_NEAR(hOut, 125.5, 0.01);
+    ASSERT_TRUE(qOut == BEARING_FIXED);
+
+    GeoPoint ptOut;
+    ASSERT_TRUE(parseKsxtLocation(ksxtBuf, ptOut));
+    ASSERT_NEAR(ptOut.latitude, 38.35412, 1e-5);
+    ASSERT_NEAR(ptOut.longitude, -119.45821, 1e-5);
+
+    // Synthetic HDT generation & roundtrip parsing
+    char hdtBuf[64];
+    ASSERT_TRUE(GpsSimulator::generateHdt(hdtBuf, sizeof(hdtBuf), 270.5));
+    ASSERT_TRUE(parseHDT(hdtBuf, &hOut, &qOut));
+    ASSERT_NEAR(hOut, 270.5, 0.01);
+
+    // Virtual rover displacement math
+    GeoPoint origin(38.35412, -119.45821, true); // CM87wa center
+    GeoPoint displaced10km = GpsSimulator::calculateRoverDisplacement(origin, 10.0, 45.0);
+    double dist10m = 0.0, brg10 = 0.0;
+    calculateWgs84(origin, displaced10km, dist10m, brg10);
+    ASSERT_NEAR(dist10m / 1000.0, 10.0, 0.2); // within 200m over 10km planar approximation
+    ASSERT_NEAR(brg10, 45.0, 1.0);
+    ASSERT_TRUE(isRoverTransitInsideAlert(displaced10km, origin, 16.0));
+
+    GeoPoint displaced20km = GpsSimulator::calculateRoverDisplacement(origin, 20.0, 45.0);
+    double dist20m = 0.0, brg20 = 0.0;
+    calculateWgs84(origin, displaced20km, dist20m, brg20);
+    ASSERT_NEAR(dist20m / 1000.0, 20.0, 0.4);
+    ASSERT_TRUE(!isRoverTransitInsideAlert(displaced20km, origin, 16.0));
+
+    PASS();
+}
+
+void test_gps_manager() {
+    TEST("GpsManager streaming sentence assembly, watchdog, and health evaluation");
+    GpsManager gm;
+    ASSERT_TRUE(!gm.hasHeading());
+    ASSERT_TRUE(!gm.hasLocation());
+    ASSERT_TRUE(!gm.hasTime());
+    ASSERT_TRUE(gm.getTotalBytesReceived() == 0);
+
+    // Ingest synthetic KSXT sentence byte by byte via feedByte
+    char ksxtBuf[256];
+    GpsSimulator::generateKsxt(ksxtBuf, sizeof(ksxtBuf),
+                              "20261106180000.00", 38.35412, -119.45821,
+                              123.4, BEARING_FIXED);
+
+    size_t len = strlen(ksxtBuf);
+    for (size_t i = 0; i < len; ++i) {
+        gm.feedByte((uint8_t)ksxtBuf[i], 1000);
+    }
+
+    ASSERT_TRUE(gm.hasHeading());
+    ASSERT_NEAR(gm.getHeading(), std::fmod(123.4 + 270.0, 360.0), 0.1);
+    ASSERT_TRUE(gm.getBearingQuality() == BEARING_FIXED);
+    ASSERT_TRUE(gm.getLastHeadingUpdate() == 1000);
+
+    ASSERT_TRUE(gm.hasLocation());
+    ASSERT_NEAR(gm.getLocation().latitude, 38.35412, 1e-5);
+    ASSERT_NEAR(gm.getLocation().longitude, -119.45821, 1e-5);
+
+    ASSERT_TRUE(gm.hasTime());
+    ASSERT_TRUE(gm.getHours() == 18);
+    ASSERT_TRUE(gm.getMinutes() == 0);
+
+    // Watchdog check before timeout
+    gm.checkStaleness(1500); // 500 ms elapsed
+    ASSERT_TRUE(gm.getBearingQuality() == BEARING_FIXED);
+
+    // Watchdog check after timeout (HEADING_TIMEOUT_MS = 1500)
+    gm.checkStaleness(2501); // 1501 ms elapsed -> BEARING_LOST
+    ASSERT_TRUE(gm.getBearingQuality() == BEARING_LOST);
+
+    // Feed fresh heading recovery
+    gm.feedSentence(ksxtBuf, 3000);
+    ASSERT_TRUE(gm.getBearingQuality() == BEARING_FIXED);
+    ASSERT_TRUE(gm.getLastHeadingUpdate() == 3000);
+
+    // Stream health evaluation
+    GpsLinkVerdict v = gm.evaluateStreamHealth(3000);
+    ASSERT_TRUE(v == GPS_LINK_OK_FIXED);
+
+    // GLL sentence ingestion with standard South and West indicators
+    const char *gllStandard = "$GNGLL,3821.2472,S,11927.4926,W,193000.00,A*3C";
+    gm.feedSentence(gllStandard, 3100);
+    ASSERT_TRUE(gm.hasLocation());
+    ASSERT_NEAR(gm.getLocation().latitude, -38.35412, 1e-4);
+    ASSERT_NEAR(gm.getLocation().longitude, -119.45821, 1e-4);
+    ASSERT_TRUE(gm.getHours() == 19);
+    ASSERT_TRUE(gm.getMinutes() == 30);
+
+    // Malformed/truncated GLL sentences must be rejected safely without out-of-bounds reads
+    gm.feedSentence("$GNGLL,38*12", 3200);
+    gm.feedSentence("$GNGLL,,,,,", 3300);
+    gm.feedSentence("$GNGLL", 3400);
+
+    // Watchdog staleness across 32-bit millis() rollover
+    gm.setHeading(90.0f, BEARING_FIXED, 0xFFFFFFF0UL);
+    ASSERT_TRUE(gm.getBearingQuality() == BEARING_FIXED);
+    gm.checkStaleness(1500UL); // 1500 - 0xFFFFFFF0 = 1516 ms >= 1500 ms -> BEARING_LOST
+    ASSERT_TRUE(gm.getBearingQuality() == BEARING_LOST);
+
+    // Bidirectional TX command transmission
+    std::string sentData;
+    gm.setTxHandler([](const uint8_t *data, size_t len, void *ctx) {
+        auto *s = static_cast<std::string*>(ctx);
+        if (s) s->append(reinterpret_cast<const char*>(data), len);
+    }, &sentData);
+    ASSERT_TRUE(gm.sendCommand("$PCFG,SAVE"));
+    ASSERT_STR_EQ(sentData.c_str(), "$PCFG,SAVE\r\n");
+
+    // Malformed & truncated NMEA boundary safety
+    gm.feedSentence("$GNGLL");
+    gm.feedSentence("$GPGLL");
+    gm.feedSentence("$GNGLL,");
+
+    PASS();
+}
+
+void test_serial_cli() {
+    TEST("SerialCli host USB command execution, reports, and dispatching");
+    GpsManager gm;
+    Calibration cal;
+    GpsSimulator sim;
+    SerialCli cli(gm, cal, sim);
+
+    static std::string cliOutput;
+    cliOutput.clear();
+    cli.setOutputHandler([](const char *str, void *ctx) {
+        auto *out = static_cast<std::string*>(ctx);
+        if (out) *out += str;
+    }, &cliOutput);
+
+    // Test help command
+    cli.executeCommand("help");
+    ASSERT_TRUE(cliOutput.find("GNSS Compass Serial Commands") != std::string::npos);
+    cliOutput.clear();
+
+    // Test status command
+    cli.executeCommand("status");
+    ASSERT_TRUE(cliOutput.find("GNSS Receiver Stream Diagnosis") != std::string::npos);
+    cliOutput.clear();
+
+    // Test sim commands
+    ASSERT_TRUE(!sim.isActive());
+    cli.executeCommand("sim on");
+    ASSERT_TRUE(sim.isActive());
+    ASSERT_TRUE(cliOutput.find("Simulation mode enabled") != std::string::npos);
+    cliOutput.clear();
+
+    cli.executeCommand("sim hdg 180.5 float");
+    ASSERT_TRUE(gm.hasHeading());
+    ASSERT_NEAR(gm.getHeading(), std::fmod(180.5 + 270.0, 360.0), 0.1);
+    ASSERT_TRUE(gm.getBearingQuality() == BEARING_FLOAT);
+    ASSERT_TRUE(cliOutput.find("Heading set to 180.5") != std::string::npos);
+    cliOutput.clear();
+
+    cli.executeCommand("sim pos 38.354 -119.458");
+    ASSERT_TRUE(gm.hasLocation());
+    ASSERT_NEAR(gm.getLocation().latitude, 38.354, 1e-4);
+    ASSERT_NEAR(gm.getLocation().longitude, -119.458, 1e-4);
+    cliOutput.clear();
+
+    cli.executeCommand("sim time 14:25");
+    ASSERT_TRUE(gm.hasTime());
+    ASSERT_TRUE(gm.getHours() == 14);
+    ASSERT_TRUE(gm.getMinutes() == 25);
+    cliOutput.clear();
+
+    // Test cal commands: raw antenna heading is 90.5 deg (180.5 baseline + 270 deg orthogonal offset)
+    cli.setTargetBearing(95.5);
+    cli.executeCommand("cal set 2.0");
+    ASSERT_NEAR(cal.getOffset(), 2.0f, 1e-4);
+    cliOutput.clear();
+
+    // Snap test: raw antenna heading is 90.5, target bearing is 95.5 -> snapped offset = +5.0
+    cli.executeCommand("cal snap");
+    ASSERT_NEAR(cal.getOffset(), 5.0f, 1e-4);
+    cliOutput.clear();
+
+    cli.executeCommand("cal zero");
+    ASSERT_NEAR(cal.getOffset(), 0.0f, 1e-4);
+    cliOutput.clear();
+
+    // Raw sentence injection through CLI: 090.0 baseline
+    char ksxtBuf[256];
+    GpsSimulator::generateKsxt(ksxtBuf, sizeof(ksxtBuf),
+                              "20261106193000.00", 38.35412, -119.45821,
+                              090.0, BEARING_FIXED);
+    cli.executeCommand(ksxtBuf);
+    ASSERT_TRUE(gm.hasHeading());
+    ASSERT_TRUE(gm.getBearingQuality() == BEARING_FIXED);
+    ASSERT_TRUE(sim.isActive());
+
+    cli.executeCommand("sim off");
+    ASSERT_TRUE(!sim.isActive());
+
+    PASS();
+}
+
+void test_input_manager_hit_testing() {
+    TEST("InputManager touch hit-testing and grid character translation");
+
+    // Local Grid Hit Area (100..340, 0..75)
+    ASSERT_TRUE(InputManager::isLocalGridTouched(100, 0));
+    ASSERT_TRUE(InputManager::isLocalGridTouched(340, 75));
+    ASSERT_TRUE(InputManager::isLocalGridTouched(220, 35));
+    ASSERT_TRUE(!InputManager::isLocalGridTouched(99, 35));
+    ASSERT_TRUE(!InputManager::isLocalGridTouched(341, 35));
+    ASSERT_TRUE(!InputManager::isLocalGridTouched(220, 76));
+
+    // Target Grid Hit Area (50..430, 70..235)
+    ASSERT_TRUE(InputManager::isTargetGridTouched(50, 70));
+    ASSERT_TRUE(InputManager::isTargetGridTouched(430, 235));
+    ASSERT_TRUE(InputManager::isTargetGridTouched(200, 150));
+    ASSERT_TRUE(!InputManager::isTargetGridTouched(49, 150));
+    ASSERT_TRUE(!InputManager::isTargetGridTouched(431, 150));
+    ASSERT_TRUE(!InputManager::isTargetGridTouched(200, 69));
+    ASSERT_TRUE(!InputManager::isTargetGridTouched(200, 236));
+
+    // Target Grid Character Column Mapping (REMSTARTX=80, CHAR_W(REMSIZE)=48)
+    ASSERT_TRUE(InputManager::getTargetGridCharFromTouch(80) == 0);
+    ASSERT_TRUE(InputManager::getTargetGridCharFromTouch(127) == 0);
+    ASSERT_TRUE(InputManager::getTargetGridCharFromTouch(128) == 1);
+    ASSERT_TRUE(InputManager::getTargetGridCharFromTouch(80 + 5 * 48) == 5);
+    ASSERT_TRUE(InputManager::getTargetGridCharFromTouch(30) == 0);   // Underflow clamp
+    ASSERT_TRUE(InputManager::getTargetGridCharFromTouch(450) == 5);  // Overflow clamp
+
+    // Calibration Pill Hit Area (180..300, 210..280)
+    ASSERT_TRUE(InputManager::isCalPillTouched(180, 210));
+    ASSERT_TRUE(InputManager::isCalPillTouched(300, 280));
+    ASSERT_TRUE(InputManager::isCalPillTouched(240, 245));
+    ASSERT_TRUE(!InputManager::isCalPillTouched(179, 245));
+    ASSERT_TRUE(!InputManager::isCalPillTouched(301, 245));
+    ASSERT_TRUE(!InputManager::isCalPillTouched(240, 209));
+    ASSERT_TRUE(!InputManager::isCalPillTouched(240, 281));
+
+    // Footer Hit Area (100..380, >= 435)
+    ASSERT_TRUE(InputManager::isFooterTouched(100, 435));
+    ASSERT_TRUE(InputManager::isFooterTouched(380, 479));
+    ASSERT_TRUE(InputManager::isFooterTouched(240, 450));
+    ASSERT_TRUE(!InputManager::isFooterTouched(99, 450));
+    ASSERT_TRUE(!InputManager::isFooterTouched(381, 450));
+    ASSERT_TRUE(!InputManager::isFooterTouched(240, 434));
+
+    // Modal Buttons Hit Areas
+    ASSERT_TRUE(InputManager::getModalButtonFromTouch(100, 250) == ModalButtonId::Snap);
+    ASSERT_TRUE(InputManager::getModalButtonFromTouch(300, 250) == ModalButtonId::Reset);
+    ASSERT_TRUE(InputManager::getModalButtonFromTouch(200, 300) == ModalButtonId::Save);
+    ASSERT_TRUE(InputManager::getModalButtonFromTouch(200, 360) == ModalButtonId::Cancel);
+    ASSERT_TRUE(InputManager::getModalButtonFromTouch(10, 10) == ModalButtonId::None);
+
+    PASS();
+}
+
+void test_input_manager_gestures() {
+    TEST("InputManager gesture state machine, encoder events, and long-press hold");
+
+    InputManager im;
+
+    // 1. Rotary Encoder Events
+    im.injectEncoderStep(+1);
+    UserEvent evt;
+    ASSERT_TRUE(im.pollEvent(evt));
+    ASSERT_TRUE(evt.type == UserEventType::RotateClockwise);
+
+    im.injectEncoderStep(-1);
+    ASSERT_TRUE(im.pollEvent(evt));
+    ASSERT_TRUE(evt.type == UserEventType::RotateCounterClockwise);
+
+    im.injectEncoderButton(true);
+    ASSERT_TRUE(im.pollEvent(evt));
+    ASSERT_TRUE(evt.type == UserEventType::EncoderButtonPressed);
+
+    // 2. Normal Mode Short Taps
+    // Tap on Cal Pill
+    im.injectTouch(true, 240, 245, 1000);
+    im.injectTouch(false, 0, 0, 1150);
+    ASSERT_TRUE(im.pollEvent(evt));
+    ASSERT_TRUE(evt.type == UserEventType::TouchCalibrationPill);
+
+    // Tap on Local Grid
+    im.injectTouch(true, 200, 35, 1300);
+    im.injectTouch(false, 0, 0, 1420);
+    ASSERT_TRUE(im.pollEvent(evt));
+    ASSERT_TRUE(evt.type == UserEventType::TouchLocalGrid);
+
+    // Tap on Target Grid col 3
+    im.injectTouch(true, 80 + 3 * 48 + 10, 120, 1600);
+    im.injectTouch(false, 0, 0, 1750);
+    ASSERT_TRUE(im.pollEvent(evt));
+    ASSERT_TRUE(evt.type == UserEventType::TouchGridCharacter);
+    ASSERT_TRUE(evt.gridIndex == 3);
+
+    // Tap on Footer
+    im.injectTouch(true, 240, 450, 1900);
+    im.injectTouch(false, 0, 0, 2020);
+    ASSERT_TRUE(im.pollEvent(evt));
+    ASSERT_TRUE(evt.type == UserEventType::TouchVersionFooter);
+
+    // 3. Calibration Mode Interactions
+    im.setUiMode(UiMode::Calibrating);
+
+    // Tap on Snap
+    im.injectTouch(true, 100, 250, 2200);
+    ASSERT_TRUE(im.pollEvent(evt));
+    ASSERT_TRUE(evt.type == UserEventType::ModalButtonDown);
+    ASSERT_TRUE(evt.buttonId == ModalButtonId::Snap);
+    im.injectTouch(false, 0, 0, 2300);
+    ASSERT_TRUE(im.pollEvent(evt));
+    ASSERT_TRUE(evt.type == UserEventType::SnapOffsetTriggered);
+
+    // Tap on Reset
+    im.injectTouch(true, 300, 250, 2500);
+    ASSERT_TRUE(im.pollEvent(evt));
+    ASSERT_TRUE(evt.type == UserEventType::ModalButtonDown);
+    ASSERT_TRUE(evt.buttonId == ModalButtonId::Reset);
+    im.injectTouch(false, 0, 0, 2600);
+    ASSERT_TRUE(im.pollEvent(evt));
+    ASSERT_TRUE(evt.type == UserEventType::ResetOffsetTriggered);
+
+    // Tap on Cancel
+    im.injectTouch(true, 200, 360, 2800);
+    ASSERT_TRUE(im.pollEvent(evt));
+    ASSERT_TRUE(evt.type == UserEventType::ModalButtonDown);
+    ASSERT_TRUE(evt.buttonId == ModalButtonId::Cancel);
+    im.injectTouch(false, 0, 0, 2900);
+    ASSERT_TRUE(im.pollEvent(evt));
+    ASSERT_TRUE(evt.type == UserEventType::CancelModalTriggered);
+
+    // 4. Long Press Hold on Save Button
+    im.injectTouch(true, 200, 300, 4000);
+    im.injectTouch(true, 200, 300, 4750); // 750ms -> 50%
+    ASSERT_TRUE(im.pollEvent(evt));
+    ASSERT_TRUE(evt.type == UserEventType::HoldSaveButtonProgress);
+    ASSERT_NEAR(evt.progress, 0.5f, 0.05f);
+
+    im.injectTouch(true, 200, 300, 5500); // 1500ms -> Commit!
+    bool committed = false;
+    while (im.pollEvent(evt)) {
+        if (evt.type == UserEventType::SaveButtonCommitted) committed = true;
+    }
+    ASSERT_TRUE(committed);
+
+    // 5. Finger Drift Cancellation (>35px)
+    im.injectTouch(false, 0, 0, 5600);
+    im.injectTouch(true, 200, 300, 6000);
+    im.injectTouch(true, 200, 345, 6300); // 45px drift
+    bool canceled = false;
+    while (im.pollEvent(evt)) {
+        if (evt.type == UserEventType::HoldSaveButtonProgress && evt.progress == 0.0f) canceled = true;
+    }
+    ASSERT_TRUE(canceled);
+
+    PASS();
+}
+
+void test_ui_formatters_and_modal_geometry() {
+    TEST("CalModal and DisplayUi string formatters and layout presentation");
+
+    char buf[64];
+
+    // CalModal Formatters
+    CalModal::formatTargetBearing(245.8, buf, sizeof(buf));
+    ASSERT_STR_EQ(buf, "Target Bearing : 245.8");
+
+    CalModal::formatRawHeading(12.3, true, buf, sizeof(buf));
+    ASSERT_STR_EQ(buf, "Raw GNSS Hdg   :  12.3");
+
+    CalModal::formatRawHeading(0.0, false, buf, sizeof(buf));
+    ASSERT_STR_EQ(buf, "Raw GNSS Hdg   : ---.-");
+
+    CalModal::formatCurrentOffset(4.2f, buf, sizeof(buf));
+    ASSERT_STR_EQ(buf, "Current Offset :  +4.2");
+
+    CalModal::formatCurrentOffset(-10.5f, buf, sizeof(buf));
+    ASSERT_STR_EQ(buf, "Current Offset : -10.5");
+
+    CalModal::formatProposedOffset(0.0f, buf, sizeof(buf));
+    ASSERT_STR_EQ(buf, "Proposed Offset:  +0.0");
+
+    // DisplayUi Formatters
+    DisplayUi::formatTimeString(9, 3, true, buf, sizeof(buf));
+    ASSERT_STR_EQ(buf, "09:03Z");
+
+    DisplayUi::formatTimeString(0, 0, false, buf, sizeof(buf));
+    ASSERT_STR_EQ(buf, "--:--Z");
+
+    DisplayUi::formatReverseBearingAndDistance(65.4, 15400.0, buf, sizeof(buf));
+    ASSERT_STR_EQ(buf, " 65.4   15 k  ");
+
+    DisplayUi::formatArrlDistance(1.0, buf, sizeof(buf));
+    ASSERT_STR_EQ(buf, "ARRL    1.0 k  ");
+
+    DisplayUi::formatBearingString(180.0, true, buf, sizeof(buf));
+    ASSERT_STR_EQ(buf, "180.0");
+
+    DisplayUi::formatBearingString(0.0, false, buf, sizeof(buf));
+    ASSERT_STR_EQ(buf, "---.-");
+
+    DisplayUi::formatCalibrationPillText(0.0f, false, buf, sizeof(buf));
+    ASSERT_STR_EQ(buf, "OFF");
+
+    DisplayUi::formatCalibrationPillText(2.5f, true, buf, sizeof(buf));
+    ASSERT_STR_EQ(buf, "+2.5");
+
+    PASS();
+}
+
+void test_self_test_failure_formatting() {
+    TEST("DisplayUi self-test failure message formatting and buffer safety");
+
+    char buf[32];
+
+    // Zero failures -> Pass message
+    DisplayUi::formatSelfTestFailure(nullptr, 0, buf, sizeof(buf));
+    ASSERT_STR_EQ(buf, "SELF-TEST PASSED");
+
+    // Single failure -> "FAILED: TEST #3"
+    int singleFail[] = {3};
+    DisplayUi::formatSelfTestFailure(singleFail, 1, buf, sizeof(buf));
+    ASSERT_STR_EQ(buf, "FAILED: TEST #3");
+
+    // Two failures -> "FAILED: #1, #2"
+    int twoFails[] = {1, 2};
+    DisplayUi::formatSelfTestFailure(twoFails, 2, buf, sizeof(buf));
+    ASSERT_STR_EQ(buf, "FAILED: #1, #2");
+
+    // Three failures -> "FAILED: #1, #2, #7"
+    int threeFails[] = {1, 2, 7};
+    DisplayUi::formatSelfTestFailure(threeFails, 3, buf, sizeof(buf));
+    ASSERT_STR_EQ(buf, "FAILED: #1, #2, #7");
+
+    // Four failures -> "FAILED: #1, #2, #3, #4"
+    int fourFails[] = {1, 2, 3, 4};
+    DisplayUi::formatSelfTestFailure(fourFails, 4, buf, sizeof(buf));
+    ASSERT_STR_EQ(buf, "FAILED: #1, #2, #3, #4");
+    ASSERT_TRUE(std::strlen(buf) < sizeof(buf));
+
+    // Buffer bounds safety with small buffer (16 bytes)
+    char smallBuf[16];
+    DisplayUi::formatSelfTestFailure(fourFails, 4, smallBuf, sizeof(smallBuf));
+    ASSERT_TRUE(std::strlen(smallBuf) < sizeof(smallBuf));
+
+    PASS();
+}
+
+void test_grid_editor() {
+    TEST("GridEditor character rolling, cursor, and inactivity timeout");
+    GridEditor ge;
+    ASSERT_STR_EQ(ge.getGrid(), "ZA00AA");
+    ASSERT_TRUE(ge.isEditing());
+    ASSERT_TRUE(ge.getCursorColumn() == 0);
+
+    // Roll character up ('Z' -> 'A')
+    ge.rollChar(+1, 1000);
+    ASSERT_STR_EQ(ge.getGrid(), "AA00AA");
+
+    // Roll character down ('A' -> 'Z')
+    ge.rollChar(-1, 1100);
+    ASSERT_STR_EQ(ge.getGrid(), "ZA00AA");
+
+    // Select character column 2 ('0')
+    ge.selectCharacter(2, 1200);
+    ASSERT_TRUE(ge.getCursorColumn() == 2);
+    ge.rollChar(+1, 1300); // '0' -> '1'
+    ASSERT_STR_EQ(ge.getGrid(), "ZA10AA");
+
+    // Clamping cursor column
+    ge.setCursorColumn(10);
+    ASSERT_TRUE(ge.getCursorColumn() == 5);
+    ge.setCursorColumn(-5);
+    ASSERT_TRUE(ge.getCursorColumn() == 0);
+
+    // Inactivity timeout: 5000 ms
+    ASSERT_TRUE(!ge.checkTimeout(1300 + 4999));
+    ASSERT_TRUE(ge.isEditing());
+    ASSERT_TRUE(ge.checkTimeout(1300 + 5001));
+    ASSERT_TRUE(!ge.isEditing());
+
+    PASS();
+}
+
+void test_app_controller() {
+    TEST("AppController state coordination, geodesy sync, and event handling");
+    Board board;
+    DisplayUi displayUi;
+    InputManager inputManager;
+    GpsManager gpsManager;
+    Calibration calibration;
+    GpsSimulator gpsSimulator;
+    SerialCli serialCli(gpsManager, calibration, gpsSimulator);
+
+    AppController app(board, displayUi, inputManager, gpsManager, calibration, gpsSimulator, serialCli);
+    app.begin();
+
+    // Initial state
+    ASSERT_STR_EQ(app.getMyGrid(), "JJ00AA00");
+    ASSERT_STR_EQ(app.getTargetGrid(), "ZA00AA");
+    ASSERT_TRUE(app.getUiMode() == UiMode::Normal);
+
+    // GPS Location update through GPS Manager
+    gpsManager.setLocation(38.35412, -119.45821, 1000);
+    ASSERT_TRUE(app.getCurrentPosition().latitude == 38.35412);
+    ASSERT_STR_EQ(app.getMyGrid(), "DM08GI54");
+    ASSERT_TRUE(app.getDistance() > 10000000.0); // JJ/ZA distance is > 10,000 km
+
+    // Event: Turn knob clockwise in edit mode (col 0: 'Z' -> 'A')
+    UserEvent evRot;
+    evRot.type = UserEventType::RotateClockwise;
+    app.handleUserEvent(evRot, 2000);
+    ASSERT_STR_EQ(app.getTargetGrid(), "AA00AA");
+
+    // Event: Tap Calibration Pill -> Transitions to Calibrating mode
+    UserEvent evPill;
+    evPill.type = UserEventType::TouchCalibrationPill;
+    app.handleUserEvent(evPill, 2100);
+    ASSERT_TRUE(app.getUiMode() == UiMode::Calibrating);
+
+    // Event: Turn knob clockwise in calibrating mode -> Nudges proposed offset +0.1 deg
+    float initProposed = calibration.getProposedOffset();
+    app.handleUserEvent(evRot, 2200);
+    ASSERT_NEAR(calibration.getProposedOffset(), initProposed + 0.1f, 1e-4);
+
+    // Event: Commit Save Button -> Persists offset and returns to Normal mode
+    UserEvent evSave;
+    evSave.type = UserEventType::SaveButtonCommitted;
+    app.handleUserEvent(evSave, 2300);
+    ASSERT_TRUE(app.getUiMode() == UiMode::Normal);
+    ASSERT_NEAR(calibration.getOffset(), initProposed + 0.1f, 1e-4);
+
+    // Event: Tap Local Grid -> Copies local station grid, disarms edit mode, and sets Rover Alert active
+    UserEvent evLoc;
+    evLoc.type = UserEventType::TouchLocalGrid;
+    app.handleUserEvent(evLoc, 2400);
+    ASSERT_STR_EQ(app.getTargetGrid(), "DM08GI");
+    ASSERT_TRUE(app.isRoverAlertActive());
+    ASSERT_TRUE(!app.getGridEditor().isEditing());
+    // Distance to origin is exact 0.0 m physically (not quantized to grid center!)
+    ASSERT_NEAR(app.getDistance(), 0.0, 1e-3);
+
+    // Bezel rotation during rover transit: does NOT roll characters and does NOT disarm rover mode
+    UserEvent evBump;
+    evBump.type = UserEventType::RotateClockwise;
+    app.handleUserEvent(evBump, 2450);
+    ASSERT_STR_EQ(app.getTargetGrid(), "DM08GI");
+    ASSERT_TRUE(app.isRoverAlertActive());
+
+    // Rover transit movement: 10.0 km physical displacement
+    GeoPoint originPos = app.getCurrentPosition();
+    GeoPoint displaced10km = GpsSimulator::calculateRoverDisplacement(originPos, 10.0, 45.0);
+    gpsManager.setLocation(displaced10km, 2500);
+    ASSERT_TRUE(app.isRoverAlertActive());
+    ASSERT_NEAR(app.getDistance() / 1000.0, 10.0, 0.05);
+
+    // Rover transit movement: 18.0 km physical displacement (alert clears >= 16 km)
+    GeoPoint displaced18km = GpsSimulator::calculateRoverDisplacement(originPos, 18.0, 45.0);
+    gpsManager.setLocation(displaced18km, 2600);
+    ASSERT_TRUE(app.isRoverAlertActive()); // Flag stays active to show normal white text
+    ASSERT_NEAR(app.getDistance() / 1000.0, 18.0, 0.05);
+
+    // Event: Touch Target Grid character -> Disarms rover alert and returns to stationary tracking
+    UserEvent evChar;
+    evChar.type = UserEventType::TouchGridCharacter;
+    evChar.gridIndex = 2;
+    app.handleUserEvent(evChar, 2700);
+    ASSERT_TRUE(!app.isRoverAlertActive());
+
+    // Non-blocking modal button unpress timer across 32-bit millis() rollover
+    UserEvent evSnap;
+    evSnap.type = UserEventType::SnapOffsetTriggered;
+    app.handleUserEvent(evSnap, 0xFFFFFFF0UL);
+    app.update(0xFFFFFFF0UL + 50); // 50 ms elapsed
+    app.update(50UL);              // 56 + 50 = 106 ms elapsed (< 120 ms)
+    app.update(100UL);             // 56 + 100 = 156 ms elapsed (>= 120 ms -> released)
+
+    // Decoupled geodesy calculation and navigation rendering
+    double prevDist = app.getDistance();
+    app.getGridEditor().setGrid("EL29ja");
+    // Model state distance remains unchanged until recalculateGeodesy() is called
+    ASSERT_NEAR(app.getDistance(), prevDist, 1e-4);
+    app.recalculateGeodesy();
+    ASSERT_TRUE(app.getDistance() > 2000000.0);
+    app.renderNavigationRows();
+    app.updateNavigation();
+
+    PASS();
+}
+
 int main() {
     std::cout << "========================================" << std::endl;
     std::cout << "  GNSS Compass Unit Test Suite" << std::endl;
     std::cout << "========================================" << std::endl;
 
     test_trig_helpers();
-    test_calc_lat_lon();
+    test_grid_to_geopoint();
     test_arrl_1km_rule();
     test_arrl_symmetry_and_known_paths();
     test_wgs84_distance_and_bearing();
@@ -467,8 +1309,21 @@ int main() {
     test_ksxt_time_and_location();
     test_legacy_hdt_ths_parsing();
     test_current_bearing_calculation();
+    test_bearing_filter_class();
     test_antenna_calibration();
     test_gps_stream_evaluation();
+    test_geopoint_and_modern_domain();
+    test_config_constants();
+    test_calibration_class();
+    test_gps_simulator();
+    test_gps_manager();
+    test_serial_cli();
+    test_input_manager_hit_testing();
+    test_input_manager_gestures();
+    test_ui_formatters_and_modal_geometry();
+    test_self_test_failure_formatting();
+    test_grid_editor();
+    test_app_controller();
 
     std::cout << "========================================" << std::endl;
     std::cout << "  All " << tests_passed << " / " << tests_run << " tests PASSED successfully!" << std::endl;

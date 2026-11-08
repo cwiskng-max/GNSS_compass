@@ -109,12 +109,12 @@ Arduino CLI requires sketches to reside inside a folder matching the sketch name
 
 ```bash
 mkdir -p build/gps_compass
-cp gps_compass.ino build/gps_compass/
+cp -r gps_compass.ino src build/gps_compass/
 ```
 
 *(Optional) Set a custom version identifier displayed on the screen footer:*
 ```bash
-sed -i 's/#define FW_VERSION .*/#define FW_VERSION           "v0.2-custom"/' build/gps_compass/gps_compass.ino
+sed -i 's/#define FW_VERSION .*/#define FW_VERSION           "v0.2-custom"/' build/gps_compass/src/config.h
 ```
 
 Compile and export the binary artifacts:

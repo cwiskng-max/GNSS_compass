@@ -10,7 +10,7 @@ The automated test suite verifies all mathematical calculations, coordinate proj
 
 ### Files
 * **`tests/test_calculations.cpp`**: Standalone C++ test suite containing assertion checks.
-* **`tests/run_tests.sh`**: Test runner script that extracts the pure mathematical functions directly from `gps_compass.ino`, compiles with `g++`, executes the suite, and cleans up artifacts.
+* **`tests/run_tests.sh`**: Test runner script that compiles the standalone `src/geo/` and `src/protocol/` modules with `tests/test_calculations.cpp` using `g++`, executes the suite, and validates all mathematical invariants.
 
 ### How to Run Locally
 From the repository root, run:
@@ -24,11 +24,11 @@ The test suite runs automatically on every push and pull request in [`.github/wo
 
 ### Test Cases Covered
 1. **Trigonometric Helpers:** Validates `toRad()` and `toDeg()` conversions against $\pi$.
-2. **Grid-to-Coordinate Math (`calcLatLon`):** Verifies Maidenhead locator center coordinates (e.g. `JJ00AA` at origin $+0.0208^\circ\text{ lat}, +0.0417^\circ\text{ lon}$) and bounds checking.
+2. **Grid-to-Coordinate Math (`gridToGeoPoint`):** Verifies Maidenhead locator center coordinates (e.g. `JJ00AA` at origin $+0.0208^\circ\text{ lat}, +0.0417^\circ\text{ lon}$) and bounds checking.
 3. **ARRL 1 km Minimum Rule:** Confirms identical grids (`CM87wa` vs `CM87wa`) return exactly `1.0 km` per ARRL 10 GHz contest rules, while adjacent subsquares return $> 1.0\text{ km}$ ($\sim 4.63\text{ km}$).
 4. **Distance Symmetry & Ground Truths:** Verifies $D(A, B) = D(B, A)$ and checks reference great-circle distances.
-5. **WGS84 Geodesic Math (`calculateWGS84`):** Verifies distance and cardinal bearings ($0^\circ$ North, $90^\circ$ East, $180^\circ$ South, $270^\circ$ West).
-6. **Round-Trip Locator Consistency (`calcLocator`):** Ensures coordinates derived from `calcLatLon` reconstruct the identical Maidenhead grid string when passed through `calcLocator`.
+5. **WGS84 Geodesic Math (`calculateWgs84`):** Verifies distance and cardinal bearings ($0^\circ$ North, $90^\circ$ East, $180^\circ$ South, $270^\circ$ West).
+6. **Round-Trip Grid Consistency (`geoPointToGrid`):** Ensures coordinates derived from `gridToGeoPoint` reconstruct the identical Maidenhead grid string when passed through `geoPointToGrid`.
 7. **Buffer Bounds & Ghost Character Erasure:** Formats distances across all ranges ($1.0\text{ km}$ to $> 10,000\text{ km}$) using `"ARRL %6.1f k  "`. Verifies string lengths stay strictly within the 24-byte buffer and trailing spaces exist to erase ghost characters on screen redraws.
 8. **Rover Transit Threshold:** Asserts that distances $< 16,000\text{ m}$ activate the rover relocation alert, while $\ge 16,000\text{ m}$ clear it.
 9. **Field Extraction (`getNthField`):** Validates comma-delimited token parsing, empty fields, and bounds.
@@ -36,7 +36,21 @@ The test suite runs automatically on every push and pull request in [`.github/wo
 11. **`$KSXT` Time & Location Extraction:** Validates UTC timestamp (14-digit full and 6-digit short) and geographic decimal coordinate parsing with solution status checking.
 12. **Legacy Sentence Parsing:** Tests fallback parsing of `$GNHDT` and `$GNTHS` and detects lost signal from empty fields.
 13. **Current Bearing Calculation:** Validates $270^\circ$ orthogonal baseline offset and circular wrap-around $[0, 360^\circ)$.
-14. **GPS Stream Evaluation:** Validates deterministic link verdicts (Disconnected, Corrupt, Acquiring, Position-Only, Float, Fixed).
+14. **Antenna Calibration:** Tests offset angle normalization within $[-180^\circ, +180^\circ]$, circular bearing offset addition, and modal calibration math.
+15. **GPS Stream Evaluation:** Validates deterministic link verdicts (Disconnected, Corrupt, Acquiring, Position-Only, Float, Fixed).
+16. **GeoPoint Domain & Rover Precision:** Validates `GeoPoint` lat/lon unquantized source of truth, `gridToGeoPoint` / `geoPointToGrid` conversions, reverse bearing calculations, and Rover 16 km threshold evaluation.
+17. **Configuration Constants (`src/config.h`):** Verifies hardware pin assignments, screen dimensions, layout coordinates, timeout macros, and target grid editing character macros.
+18. **Antenna Calibration Class (`src/system/calibration.*`):** Tests two-stage offset staging, nudging (+/-0.1 deg), snap calculation, reset, flash commit, wrap-around normalization, and mock NVS persistence across instances.
+19. **GPS Simulator (`src/gnss/simulator.*`):** Tests simulation state activation, virtual sentence injection callbacks, NMEA XOR checksums, synthetic `$KSXT`, `$GNGLL`, and `$GNHDT` sentence generation with roundtrip parser verification, and 64-bit double geodesic rover displacement calculations.
+20. **GNSS Manager (`src/gnss/gps_manager.*`):** Tests UART byte ingestion, line assembly buffer bounds, solution extraction, staleness watchdog timeout transition (`HEADING_TIMEOUT_MS`), and stream health evaluation.
+21. **Host USB Serial CLI (`src/protocol/serial_cli.*`):** Tests USB command execution (`help`, `status`, `cal`, `sim`), terminal echo/backspace handling, antenna calibration snap/zero calculations, simulation parameters, and raw sentence dispatching.
+22. **Input Touch & Hit-Testing (`src/ui/input_manager.*`):** Verifies bounding box geometry hit tests for local grid, target grid, target grid character columns (with clamping), calibration pill, footer, and calibration modal buttons (Snap, Reset, Save, Cancel).
+23. **Input Gesture State Machine (`src/ui/input_manager.*`):** Validates rotary encoder events, normal mode short taps, calibration modal button taps, 1.5s long-press hold on Save with progress calculation, commit events, drift cancellation (>35px), and touch debounce intervals.
+24. **UI Formatters & Modal Presentation (`src/ui/cal_modal.*`, `src/ui/display_ui.*`):** Validates string formatters across all operational ranges (target bearing, raw GNSS heading, current/proposed offset, UTC timestamp, reverse bearing/distance, ARRL contest distance, heading string, calibration pill).
+25. **Self-Test Failure Formatter (`src/ui/display_ui.*`):** Validates formatting of single-test and multi-test on-screen failure codes (e.g. `FAILED: TEST #3`, `FAILED: #1, #2, #7`), buffer truncation bounds safety, and pass message mapping.
+26. **Automated Mathematical Invariant Coverage:** Validates all geodetic projections, NMEA decoders, FreeRTOS queue bounds, and vector heading operations.
+27. **Grid Editor State (`src/ui/grid_editor.*`):** Tests target grid character rolling (INCG/DECG), cursor selection bounds clamping, and 5-second inactivity edit mode timeout.
+28. **App Controller Coordination (`src/system/app_controller.*`):** Validates whole-application state synchronization, GPS position ingest to Maidenhead grid projection, user interaction events (encoder rotation, calibration modal lifecycle, local station grid sync, and rover alert activation).
 
 ---
 
@@ -50,7 +64,7 @@ The firmware includes an interactive self-test demo to visually verify LCD rende
 * *(Note: To run only the GPS stream diagnosis without the visual demo, send `status` or `gps` via USB Serial).*
 
 ### Test Sequence
-The test automatically cycles through 6 visual scenarios, displaying the current test name in the bottom footer in cyan/yellow:
+The test automatically cycles through 7 visual scenarios, displaying the current test name in the bottom footer in cyan/yellow:
 
 | Step | Footer Title | Screen State & Verification |
 | :--- | :--- | :--- |
@@ -60,8 +74,9 @@ The test automatically cycles through 6 visual scenarios, displaying the current
 | **4** | `TEST 4: DIST > 1000K` | Target grid set to `EL29ja` ($\sim 2,500\text{ km}$). Verifies 4-digit distance formatting without screen wrapping. |
 | **5** | `TEST 5: GHOST RECOVERY` | Target grid jumps to $> 10,000\text{ km}$ (`ZA00AA`), then drops back to $1.0\text{ km}$ (`CM87wa`). Verifies position 14 is cleanly erased and no ghost `'k'` remains. |
 | **6** | `TEST 6: BEARING / GPS` | Rapidly tests bearing quality colors (1s White $\to$ 1s Yellow $\to$ 1s Red), then evaluates live `Serial2` data stream from UM982 receiver. Displays centered popup card: **`GPS: RTK FIXED (OK)`** (Green), **`GPS: RTK FLOAT (WARN)`** (Yellow), **`GPS: ACQUIRING`** (Yellow), or **`GPS: NO DATA / CABLE`** (Red). Prints full diagnostic report to serial console. |
+| **7** | `TEST 7: CAL MODAL` | Demos antenna calibration status pill (uncalibrated gray vs calibrated +4.2 deg cyan) and displays interactive calibration modal dialog preview. |
 
 ### Pass/Fail Confirmation & Clean Restoration
-* **Programmatic Assertions:** The firmware computes programmatic verification checks for the ARRL 1 km rule and rover threshold.
-* **On-Screen Banner:** A centered green **`SELF-TEST PASSED`** banner pops up across the screen for 2.5 seconds upon completion.
+* **Programmatic Assertions:** The firmware validates calculations across all stages (ARRL 1 km minimum rule, Rover <16 km alert threshold, mid/long/extreme distance boundaries, baseline offset geometry, and antenna calibration offset normalization).
+* **On-Screen Banner:** A centered green **`SELF-TEST PASSED`** banner pops up for 2.5 seconds upon success. If any test fails, an on-screen red card lists the failing test numbers (e.g. **`FAILED: TEST #2`** or **`FAILED: #1, #2`**) for 4.0 seconds, while detailed failure diagnostics are emitted over USB serial.
 * **State Restoration:** Erases the banner and cleanly restores your live GPS coordinates, local grid, target grid, heading, and the centered grey version footer (`v0.3-dev`).
