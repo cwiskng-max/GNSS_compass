@@ -128,3 +128,4 @@ src/
 | **4** | Serial CLI & `gps_sim.py` End-to-End | ~0.5 session | All 4 simulation scenarios pass over serial |
 
 *Total Implementation Horizon:* ~2 chat sessions.
+
