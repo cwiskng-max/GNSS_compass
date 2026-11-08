@@ -118,7 +118,7 @@
 #define CAL_TOUCH_Y_MAX      280
 
 // Set to 1 to show ARRL contest distance (Row 6), 0 to hide
-#define ENABLE_ARRL_DIST     1
+#define ENABLE_ARRL_DIST     0
 
 #if ENABLE_ARRL_DIST
 // Row 4: UTC Time
@@ -144,7 +144,7 @@
 // Row 5: Reverse Bearing & Distance
 #define REVBEAR_SZ           4
 #define REVBEAR_X            90
-#define REVBEAR_Y            372
+#define REVBEAR_Y            376
 #endif
 
 // Row 7: Firmware Version Footer

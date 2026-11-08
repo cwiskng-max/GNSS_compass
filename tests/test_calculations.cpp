@@ -1298,6 +1298,19 @@ void test_app_controller() {
     ASSERT_NEAR(app.getDistance(), prevDist, 1e-4);
     app.recalculateGeodesy();
     ASSERT_TRUE(app.getDistance() > 2000000.0);
+#if !ENABLE_ARRL_DIST
+    double expectedDistMeters = calculateArrlContestDistance(app.getMyGrid(), "EL29ja") * 1000.0;
+    ASSERT_NEAR(app.getDistance(), expectedDistMeters, 1e-4);
+
+    // Same grid contest distance rule in stationary mode (1.0 km minimum floor)
+    app.setMyGrid("CM87wa00");
+    app.getGridEditor().setGrid("CM87wa");
+    app.recalculateGeodesy();
+    ASSERT_NEAR(app.getDistance(), 1000.0, 1e-4);
+    char bufRev[24];
+    DisplayUi::formatReverseBearingAndDistance(app.getReverseBearing(), app.getDistance(), bufRev, sizeof(bufRev));
+    ASSERT_TRUE(std::strstr(bufRev, "   1 k  ") != nullptr);
+#endif
     app.renderNavigationRows();
     app.updateNavigation();
 
