@@ -65,6 +65,14 @@ void AppController::setUiMode(UiMode mode) {
     inputManager_.setUiMode(mode);
 }
 
+void AppController::setHeadingState(bool hasHeading, BearingQuality quality, unsigned long lastUpdate) {
+    hasHeading_ = hasHeading;
+    currentBearingQuality_ = quality;
+    if (lastUpdate > 0) {
+        lastHeadingUpdate_ = lastUpdate;
+    }
+}
+
 void AppController::drawCurrentBearing() {
     BearingFilter &bf = gpsManager_.getBearingFilter();
     if (currentUiMode_ == UiMode::Calibrating) {

@@ -229,5 +229,8 @@
 #define INCG(x) (x=(x>='0' && x<='9')?INCN(x):INCA(x))
 #define DECG(x) (x=(x>='0' && x<='9')?DECN(x):DECA(x))
 
-// Legacy ASCII to numeric digit helper
-#define aton(x) (((x) >= '0' && (x) <= '9') ? ((x) - '0') : 0)
+// ASCII to numeric digit conversion (single-evaluation, type-safe inline)
+inline int charToDigit(char c) {
+    return (c >= '0' && c <= '9') ? (c - '0') : 0;
+}
+#define aton(x) charToDigit(x)

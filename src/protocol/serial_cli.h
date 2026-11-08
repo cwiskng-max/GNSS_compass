@@ -48,19 +48,17 @@ public:
 
     // Navigation domain context provider (queries live values on-demand)
     void setNavigationContextProvider(CliNavContextProviderFn fn, void *context = nullptr) { navContextFn_ = fn; navContext_ = context; }
-    CliNavContext getNavContext() const {
-        return navContextFn_ ? navContextFn_(navContext_) : fallbackNavContext_;
-    }
+    CliNavContext getNavContext() const;
 
     // Direct context overrides (useful for standalone unit tests)
     void setTargetBearing(double bearingDeg) { fallbackNavContext_.targetBearing = bearingDeg; }
-    double getTargetBearing() const { return getNavContext().targetBearing; }
+    double getTargetBearing() const;
 
     void setRoverAlertActive(bool active) { fallbackNavContext_.isRoverAlertActive = active; }
-    bool isRoverAlertActive() const { return getNavContext().isRoverAlertActive; }
+    bool isRoverAlertActive() const;
 
     void setRoverDistance(double distMeters) { fallbackNavContext_.roverDistanceMeters = distMeters; }
-    double getRoverDistance() const { return getNavContext().roverDistanceMeters; }
+    double getRoverDistance() const;
 
     // Formatted diagnostic reports
     void printHelp();
