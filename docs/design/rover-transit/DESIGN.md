@@ -61,6 +61,7 @@ Rover Mode is triggered deliberately when packing up from an operating location:
 3. **Bezel / Knob Lockout:** Automatically disarms edit mode (`gridEditor_.setEditing(false)`) and hides the editing cursor (`^`). This guarantees that road vibration bumps or accidental turns of the rotary bezel during transit cannot mutate the origin grid or drop out of Rover Mode.
 4. **Timestamp:** Records UNIX/GPS epoch departure timestamp.
 5. **Mode Engagement:** Firmware transitions `AppController` into `operationalMode = MODE_ROVER`.
+6. **Initial Contest Departure Log (Stop #1):** If the contest history log is currently empty (e.g. beginning of the contest weekend at the first summit), tapping Row 1 automatically records the current site as **Stop #1 (`0.0 km`, Status: `ORIGIN`)** in NVS before arming Rover Mode. This ensures that the complete weekend roster—from starting summit through all subsequent stops—is preserved in history and exported over serial.
 
 ---
 
@@ -98,36 +99,30 @@ Displacement is continuously rendered with tenths-of-a-kilometer decimal precisi
 
 ---
 
-### 2.3 Left Slot Exploration: Back-Azimuth vs. Textual State Label
+### 2.3 Row 5 Qualification Card Presentation: Status Word + Decimal Distance
 
-In stationary Bearing Mode, Row 5 renders reverse bearing on the left and target distance on the right: `"%5.1f %4i k  "`.
+In stationary Bearing Mode, Row 5 renders reverse bearing on the left and contest distance to target on the right: `"%5.1f %4i k  "`.
 
-In Rover Mode, the left-hand slot currently continues to display the back-azimuth pointing back to the departure site (e.g. ` 184.2   6.4 k `).
+In Rover Mode, Row 5 seamlessly transforms into the dedicated **Rover Qualification Card** on a solid white background (`0xFFFF`). Rather than showing the back-azimuth to the previous summit (which has no operational utility while driving), the left slot displays an explicit textual status word, and the right slot displays continuous decimal displacement (`%5.1f k`):
 
-> [!NOTE]
-> **Open Design Question:** During road transit, does a driver actually benefit from seeing the back-azimuth to their previous site, or would this space be more valuable displaying an explicit textual status label?
-> * **Option A (Back-Azimuth):** ` 184.2   6.4 k ` / ` 184.2  18.2 k ` / ` 184.2  22.4 k ` / ` 184.2  11.2 k ` (Amber)
-> * **Option B (Status Word):** `TRANSIT  6.4 k ` / `QUALIFIED 18.2 k` / `REVISIT 22.4 k ` / `NO GPS   11.2 k ` (Amber)
->
-> Option B provides instant clarity for drivers, eliminating any ambiguity between states (especially between New Grid and Revisited Grid) without relying solely on color recognition.
->
-> In both options, when entering a tunnel, dense canopy, or deep mountain canyon where GPS signal is temporarily lost, **State 4 preserves and holds the last known valid distance** (e.g. `11.2 k`) rather than blanking with dashes (`--.- k`). A driver cannot remember the exact fraction of a kilometer when signal drops, so holding the last known reading in Deep Amber provides critical context until satellites are re-acquired.
+* **State A (In-Transit Under 16k):** `TRANSIT  6.4 k ` (Red text on White `0xF800` / `0xFFFF`)
+* **State B (Qualified New Grid):** `QUALIFIED 18.2 k` (Forest Green on White `0x03E0` / `0xFFFF`)
+* **State C (Qualified Revisited Grid):** `REVISIT  22.4 k ` (Royal Blue on White `0x011C` / `0xFFFF`)
+* **State D (GPS Lost / Stale):** `NO GPS   11.2 k ` (Deep Amber on White `0xDC00` / `0xFFFF` — holds last known value)
+
+This provides instant, unambiguous clarity for drivers, eliminating any confusion between states (especially between New Grid and Revisited Grid) without relying solely on color recognition while watching the road.
+
+When entering a tunnel, dense canopy, or deep mountain canyon where GPS signal is temporarily lost, **State D preserves and holds the last known valid distance** (e.g. `11.2 k`) rather than blanking with dashes (`--.- k`). A driver cannot remember the exact fraction of a kilometer when signal drops, so holding the last known reading in Deep Amber provides critical context until satellites are re-acquired.
 
 ---
 
 ### 2.4 Visual Preview: On-Screen Color Examples (Row 5)
 
-Below are exact visual simulations of the 4 states rendered on the solid white background card:
+Below is an exact visual simulation of the 4 states rendered on the solid white background card:
 
-#### Option A: Back-Azimuth + Continuous Decimal Distance
+![Rover Mode Qualification Card: Status Word and Decimal Distance](images/rover_option_b.svg)
 
-![Rover Mode Option A: Bearing and Decimal Distance](images/rover_option_a.svg)
-
----
-
-#### Option B: Textual Status Label + Continuous Decimal Distance
-
-![Rover Mode Option B: Status Word and Decimal Distance](images/rover_option_b.svg)
+*(Note: Earlier design explorations considered retaining the reverse azimuth, e.g. ` 184.2  18.2 k `, but explicit textual status words were selected for superior at-a-glance driving ergonomics.)*
 
 ---
 
@@ -248,7 +243,7 @@ While ARRL microwave contest rules do not require being 16 km away from *all* pa
 **Visual Presentation:**
 When the rover arrives at a site with $\ge 16.0\text{ km}$ displacement, but the current grid matches an earlier stop in the contest log:
 - **Card Color:** Qualified **Royal Blue on White** (`0x011C` on `0xFFFF`) (State C).
-- **Textual Indicator:** Displays `REVISIT  22.4 k ` (Option B) or ` 184.2  22.4 k ` (Option A) in high-contrast Royal Blue.
+- **Textual Indicator:** Displays `REVISIT  22.4 k ` in high-contrast Royal Blue on White.
 - **Operating Context:** Confirms legal 16 km displacement has been met, but immediately alerts the operator to check their log for duplicate contacts on the bands they plan to activate.
 
 ---
@@ -300,7 +295,7 @@ In stationary Bearing Mode, Row 5 renders reverse bearing on the left and contes
             |        Row 4           | Y=300                          |        Row 4           | Y=300
              \   UTC: 18:42:15 Z    /                                  \   UTC: 18:42:15 Z    /
               '.     Row 5        .'   Y=352                            '.     Row 5        .'   Y=352
-                '-. 184.2   42 k  .-'                                     '-.[ 184.2  18.2 k ]-'  <-- White Card Slot
+                '-. 184.2   42 k  .-'                                     '-.[QUALIFIED 18.2 k]-'  <-- White Card Slot
                   '-- Row 6: ARRL --'  Y=408                                '-- (Row 6 Blank) --'  Y=408
                       (Y = 480)                                                 (Y = 480)
 ```
@@ -319,26 +314,22 @@ The Rover Qualification Card renders on a solid white background card (`0xFFFF`)
 
 1. **State A: In-Transit Under 16 km (Red on White Warning)**
    - **Text Color:** High-contrast Red (`0xF800`) on Pure White (`0xFFFF`)
-   - **Option A (Azimuth):** ` 184.2   6.4 k `
-   - **Option B (Status Word):** `TRANSIT  6.4 k `
+   - **Display Format:** `TRANSIT  6.4 k `
    - **Legality:** **ILLEGAL** (Displacement $< 16.0\text{ km}$; continue driving to satisfy the 16 km rule).
 
 2. **State B: Qualified New Location (Forest Green on White)**
    - **Text Color:** Forest Green (`0x03E0`) on Pure White (`0xFFFF`)
-   - **Option A (Azimuth):** ` 184.2  18.2 k `
-   - **Option B (Status Word):** `QUALIFIED 18.2 k`
+   - **Display Format:** `QUALIFIED 18.2 k`
    - **Legality:** **QUALIFIED** (Displacement $\ge 16.0\text{ km}$; unvisited grid square; all contest bands open for new contacts).
 
 3. **State C: Qualified Revisited Grid (Royal Blue on White)**
    - **Text Color:** Royal Blue (`0x011C`) on Pure White (`0xFFFF`)
-   - **Option A (Azimuth):** ` 184.2  22.4 k `
-   - **Option B (Status Word):** `REVISIT  22.4 k `
+   - **Display Format:** `REVISIT  22.4 k `
    - **Legality:** **QUALIFIED** (Displacement $\ge 16.0\text{ km}$; grid was activated earlier in contest weekend; check log for duplicate contacts).
 
 4. **State D: GPS Signal Lost / Stale (Deep Amber on White — Holds Last Known)**
    - **Text Color:** Deep Amber (`0xDC00`) on Pure White (`0xFFFF`)
-   - **Option A (Azimuth):** ` 184.2  11.2 k ` (holds last known valid bearing and displacement)
-   - **Option B (Status Word):** `NO GPS   11.2 k ` (holds last known valid displacement)
+   - **Display Format:** `NO GPS   11.2 k ` (holds last known valid displacement)
    - **Legality:** **WAIT GPS** (GPS fix lost $> 3\text{s}$ in tunnel/heavy canopy; holds last known reading rather than blanking).
 
 ---
