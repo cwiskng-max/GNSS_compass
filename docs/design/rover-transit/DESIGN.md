@@ -94,7 +94,7 @@ Displacement is continuously rendered with tenths-of-a-kilometer decimal precisi
 | **A: In-Transit Under 16k** | $< 16.0\text{ km}$ | Any grid | **Red text on White** (`0xF800` on `0xFFFF`) | **ILLEGAL** (Keep driving; under 16 km) |
 | **B: Qualified New Location** | $\ge 16.0\text{ km}$ | New grid (unvisited) | **Forest Green on White** (`0x03E0` on `0xFFFF`) | **QUALIFIED** (Legal site; all bands open) |
 | **C: Qualified Revisited Grid** | $\ge 16.0\text{ km}$ | Visited earlier in log | **Royal Blue on White** (`0x011C` on `0xFFFF`) | **QUALIFIED** (Legal site; check band log for duplicate QSOs) |
-| **D: GPS Signal Lost / Stale** | Any / Stale | Stale GPS fix (> 3s) | **Deep Amber on White** (`0xDC00` on `0xFFFF`) | **WAIT GPS** (Signal lost in tunnel/trees; hold last known) |
+| **D: GPS Signal Lost / Stale** | Holds last valid | Stale GPS fix (> 3s) | **Deep Amber on White** (`0xDC00` on `0xFFFF`) | **WAIT GPS** (Signal lost in foliage/tunnel; holds last known value) |
 
 ---
 
@@ -106,10 +106,12 @@ In Rover Mode, the left-hand slot currently continues to display the back-azimut
 
 > [!NOTE]
 > **Open Design Question:** During road transit, does a driver actually benefit from seeing the back-azimuth to their previous site, or would this space be more valuable displaying an explicit textual status label?
-> * **Option A (Back-Azimuth):** ` 184.2   6.4 k ` / ` 184.2  18.2 k ` / ` 184.2  22.4 k `
-> * **Option B (Status Word):** `TRANSIT  6.4 k ` / `QUALIFIED 18.2 k` / `REVISIT 22.4 k ` / `NO GPS  --.- k `
+> * **Option A (Back-Azimuth):** ` 184.2   6.4 k ` / ` 184.2  18.2 k ` / ` 184.2  22.4 k ` / ` 184.2  11.2 k ` (Amber)
+> * **Option B (Status Word):** `TRANSIT  6.4 k ` / `QUALIFIED 18.2 k` / `REVISIT 22.4 k ` / `NO GPS   11.2 k ` (Amber)
 >
 > Option B provides instant clarity for drivers, eliminating any ambiguity between states (especially between New Grid and Revisited Grid) without relying solely on color recognition.
+>
+> In both options, when entering a tunnel, dense canopy, or deep mountain canyon where GPS signal is temporarily lost, **State 4 preserves and holds the last known valid distance** (e.g. `11.2 k`) rather than blanking with dashes (`--.- k`). A driver cannot remember the exact fraction of a kilometer when signal drops, so holding the last known reading in Deep Amber provides critical context until satellites are re-acquired.
 
 ---
 
@@ -173,10 +175,12 @@ As rovers travel between multiple operating locations across a contest weekend, 
 [Stop 1: CM87wa (Site 1)] ──(24.2 km)──> [Stop 2: CM87wb (Site 2)] ──(38.5 km)──> [Stop 3: CM88ec (Site 3)]
 ```
 
-### 3.1 Data Model (`RoverStop`)
+### 3.1 Data Model (`RoverStop`) & Non-Volatile Capacity
 
 ```cpp
-#define MAX_ROVER_STOPS 20  // Defaults to 20 stops; easily scalable to 50 or 100+
+// Factory default for non-volatile configuration ("rover_cfg", key "max_stops")
+constexpr uint16_t DEFAULT_MAX_ROVER_STOPS = 100;
+constexpr uint16_t ABS_MAX_ROVER_STOPS     = 500;
 
 struct RoverStop {
     uint32_t timestamp;        // GPS epoch timestamp (seconds)
@@ -188,8 +192,10 @@ struct RoverStop {
 };
 ```
 
-Stored in ESP32 Non-Volatile Storage (`Preferences.h`) under namespace `"rover_log"`:
-- Storage footprint: $20 \times 32\text{ bytes} \approx 640\text{ bytes}$ (negligible in the 16 MB NOR flash partition).
+Stored in ESP32 Non-Volatile Storage (`Preferences.h`) under namespace `"rover_log"` (stops) and `"rover_cfg"` (configuration):
+- **Non-Volatile Configurable Capacity (`MAX_ROVER_STOPS`):** Persisted in NVS under `"rover_cfg"` (key `"max_stops"`) with a factory default of **100 stops** (configurable between 10 and 500 stops via CLI or setup menu).
+- **Storage Footprint:** At 100 stops, $100 \times 32\text{ bytes} \approx 3.2\text{ KB}$, entirely negligible within the 16 MB NOR flash partition and 8 MB PSRAM.
+- **Log Management:** Operates as a persistent chronological log. If the log reaches capacity, the oldest unpinned entries roll over, or capacity can be expanded dynamically via CLI/UI without data loss.
 
 ---
 
@@ -212,15 +218,13 @@ If the operator had already clicked the knob to end rover transit at that locati
 
 ### 3.3 Historical Grid Duplication Warning
 
-While ARRL microwave contest rules do not require being 16 km away from *all* past locations (only the *immediate prior* location), operating from a grid square already activated earlier in the weekend has specific scoring constraints (e.g., stations cannot work the same contact on the same band from the same grid twice).
+While ARRL microwave contest rules do not require being 16 km away from *all* past locations (only the *immediate prior* location), operating from a grid square already activated earlier in the weekend has specific scoring constraints (e.g., stations cannot claim QSO points for the same contact on the same band from the same grid twice).
 
 **Visual Presentation:**
 When the rover arrives at a site with $\ge 16.0\text{ km}$ displacement, but the current grid matches an earlier stop in the contest log:
-- **Card Color:** Qualified **Vibrant Green** (confirming legal 16 km displacement was achieved).
-- **Advisory Badge:** Overlaid with an informational warning text:
-  ```text
-  [ QUALIFIED - NOTE: CM87wa ACTIVATED AT 14:22Z ]
-  ```
+- **Card Color:** Qualified **Royal Blue on White** (`0x011C` on `0xFFFF`) (State C).
+- **Textual Indicator:** Displays `REVISIT  22.4 k ` (Option B) or ` 184.2  22.4 k ` (Option A) in high-contrast Royal Blue.
+- **Operating Context:** Confirms legal 16 km displacement has been met, but immediately alerts the operator to check their log for duplicate contacts on the bands they plan to activate.
 
 ---
 
@@ -255,6 +259,8 @@ Rover Mode directly consumes the existing, unit-tested functions in `src/geo/geo
 
 ### 5.1 Bearing Mode vs. Rover Mode UI Budget
 
+In stationary Bearing Mode, Row 5 renders reverse bearing on the left and contest distance to target on the right, with Row 6 rendering ARRL contest distance. In Rover Mode, Row 5 seamlessly transforms into the dedicated **Rover Qualification Card** on a solid white background, with Row 6 blanked to keep driver focus entirely on the qualification card:
+
 ```text
            --- BEARING MODE (Stationary) ---                          --- ROVER MODE (In-Transit) ---
                       (Y = 0)                                                   (Y = 0)
@@ -263,34 +269,61 @@ Rover Mode directly consumes the existing, unit-tested functions in `src/geo/geo
               .'   My Grid:       '.  Y=35                              .'   My Grid:       '.  Y=35
              /     CM87wa22         \                                  /     CM87wb44         \
             |        Row 2           | Y=95                           |        Row 2           | Y=95
-            |   Target: CM97be       |                                |  Origin: CM87wa        |
+            |   Target: CM97be       |                                |   Target: CM97be       |
             |        Row 3           | Y=223                          |        Row 3           | Y=223
-            |  Hdg: 142  Tgt: 142    |                                |  TRANSIT STATUS BANNER |
+            |  Hdg: 142  Tgt: 142    |                                |  Hdg: 142  Tgt: 142    |
             |        Row 4           | Y=300                          |        Row 4           | Y=300
-             \   UTC: 18:42:15 Z    /                                  \   DISPLACEMENT: 17.4k /
-              '.     Row 5        .'   Y=370                            '.     Row 5        .'   Y=370
-                '-.  Rev: 322  42k -'                                     '-. GRID: TRAVERSED -'
-                     (Y = 480)                                                 (Y = 480)
+             \   UTC: 18:42:15 Z    /                                  \   UTC: 18:42:15 Z    /
+              '.     Row 5        .'   Y=352                            '.     Row 5        .'   Y=352
+                '-. 184.2   42 k  .-'                                     '-.[ 184.2  18.2 k ]-'  <-- White Card Slot
+                  '-- Row 6: ARRL --'  Y=408                                '-- (Row 6 Blank) --'  Y=408
+                      (Y = 480)                                                 (Y = 480)
 ```
 
-### 5.2 Rover Mode Visual Status States
+#### Geometry Budget & Typography (`src/config.h`)
+- **Card Geometry:** Padded white card ($X=20, Y=352, W=440, H=46$) with $8\text{ px}$ corner radius, centered horizontally.
+- **Chord Clearance:** On a $480\text{ px}$ circular display, the horizontal chord at $Y=352\text{--}398$ exceeds $403\text{ px}$, comfortably fitting within the circular viewport.
+- **Text Sizing (`REVBEAR_SZ = 4`):** Fixed-width monospace at $24\text{ px}$ per character. Up to 16 characters occupy $384\text{ px}$, leaving $28\text{ px}$ horizontal padding on each side of the card.
+- **Row 6 Suppression:** In Rover Mode, ARRL target distance is suppressed (`renderArrlDistance()` early returns), preventing visual clutter.
 
-#### Row 3: Status Card & Row 4: Displacement Meter
+---
 
-1. **State 1: In-Transit Under 16 km (Red on White Warning)**
-   - Row 3 Banner: `[ TRANSIT: UNDER 16 KM ]` (Red background, White text)
-   - Row 4 Displacement: `DIST:  6.4 km` (Bold Red, Size 6)
-   - Row 5 Grid Status: `GRID: SAME (CM87wa)` (Red text)
+### 5.2 Row 5 Rover Qualification Card (4 Visual States)
 
-2. **State 2: Grid Boundary Crossed, but Under 16 km (Amber Alert)**
-   - Row 3 Banner: `[ NEW GRID / UNDER 16 KM ]` (Amber background, Black text)
-   - Row 4 Displacement: `DIST: 12.8 km` (Amber, Size 6)
-   - Row 5 Grid Status: `GRID: NEW (CM87wb)` (Cyan text)
+The Rover Qualification Card renders on a solid white background card (`0xFFFF`) at Row 5:
 
-3. **State 3: Fully Qualified New Location (Green Qualified Banner)**
-   - Row 3 Banner: `[ LEGAL SITE QUALIFIED ]` (Vibrant Green, Black text)
-   - Row 4 Displacement: `DIST: 18.2 km` (Pure White, Size 6)
-   - Row 5 Grid Status: `GRID: NEW (CM87wb)` (Green text)
+1. **State A: In-Transit Under 16 km (Red on White Warning)**
+   - **Text Color:** High-contrast Red (`0xF800`) on Pure White (`0xFFFF`)
+   - **Option A (Azimuth):** ` 184.2   6.4 k `
+   - **Option B (Status Word):** `TRANSIT  6.4 k `
+   - **Legality:** **ILLEGAL** (Displacement $< 16.0\text{ km}$; continue driving to satisfy the 16 km rule).
+
+2. **State B: Qualified New Location (Forest Green on White)**
+   - **Text Color:** Forest Green (`0x03E0`) on Pure White (`0xFFFF`)
+   - **Option A (Azimuth):** ` 184.2  18.2 k `
+   - **Option B (Status Word):** `QUALIFIED 18.2 k`
+   - **Legality:** **QUALIFIED** (Displacement $\ge 16.0\text{ km}$; unvisited grid square; all contest bands open for new contacts).
+
+3. **State C: Qualified Revisited Grid (Royal Blue on White)**
+   - **Text Color:** Royal Blue (`0x011C`) on Pure White (`0xFFFF`)
+   - **Option A (Azimuth):** ` 184.2  22.4 k `
+   - **Option B (Status Word):** `REVISIT  22.4 k `
+   - **Legality:** **QUALIFIED** (Displacement $\ge 16.0\text{ km}$; grid was activated earlier in contest weekend; check log for duplicate contacts).
+
+4. **State D: GPS Signal Lost / Stale (Deep Amber on White — Holds Last Known)**
+   - **Text Color:** Deep Amber (`0xDC00`) on Pure White (`0xFFFF`)
+   - **Option A (Azimuth):** ` 184.2  11.2 k ` (holds last known valid bearing and displacement)
+   - **Option B (Status Word):** `NO GPS   11.2 k ` (holds last known valid displacement)
+   - **Legality:** **WAIT GPS** (GPS fix lost $> 3\text{s}$ in tunnel/heavy canopy; holds last known reading rather than blanking).
+
+---
+
+### 5.3 Rendering Pipeline & Flicker-Free Partial Refresh
+
+The display architecture in `DisplayUi` is optimized for high readability and zero flicker:
+- **Card Drawing:** Background card drawn via `gfx_->fillRoundRect(20, 352, 440, 46, 8, 0xFFFF)`.
+- **Text Drawing:** Foreground text rendered with transparent or white background `gfx_->setTextColor(stateColor, 0xFFFF)`.
+- **Selective Redraw:** Row 5 redraws only when displacement changes by $\ge 0.1\text{ km}$, qualification state transitions, or the 1 Hz GPS watchdog detects a signal loss/recovery event.
 
 ---
 
@@ -302,28 +335,54 @@ Integrating with [`src/protocol/serial_cli.h`](../../src/protocol/serial_cli.h) 
 
 | Command | Action | Output / Behavior |
 | :--- | :--- | :--- |
-| `rover` / `rover status` | Displays active rover transit status | Origin coords, live displacement, grid boundary status, and qualification state |
+| `rover` / `rover status` | Displays active rover transit status | Origin coords, live displacement, grid boundary status, qualification state (A–D), and GPS fix health |
 | `rover start` | Emulates Row 1 tap | Captures current location as origin and arms Rover Mode |
-| `rover stop` | Confirms transit completion | Commits location to history and returns to Bearing Mode |
-| `rover log` | Prints contest history | Table of all visited summits, timestamps, coordinates, and displacements |
+| `rover stop` | Emulates natural target tuning exit | Commits location to history log and returns to Bearing Mode (primarily for scripts/testing) |
+| `rover log` | Prints contest history | Formatted table of all visited stops, timestamps, coordinates, grids, and displacements |
 | `rover undo` | Discards last stop | Discards most recent entry, restores origin baseline, and auto-rearms Rover Mode |
-| `rover clear` | Clears history | Resets contest log (with confirmation) |
+| `rover max [n]` | Gets / sets max capacity | Reports current limit, or sets and persists new NVS capacity (default 100, range 10–500) |
+| `rover clear` | Clears history | Resets contest log (with confirmation prompt) |
 
 ### 6.2 Simulation Verification with `gps_sim.py`
-The simulation framework in `tools/gps_sim.py` directly validates Rover Mode:
-- `python3 tools/gps_sim.py rover`: Feeds a live vehicle track driving from `CM87wa` past 16 km into `CM87wb`, testing all UI state transitions in real time.
-- `python3 tools/gps_sim.py canyon`: Drives the canyon backtrack scenario, asserting that the firmware drops out of Qualified state when distance drops under 16 km.
+
+The simulation framework in [`tools/gps_sim.py`](../../tools/gps_sim.py) enables full automated and interactive validation without requiring road trips:
+- **Transit Journey (States A $\to$ B):**  
+  `./tools/gps_sim.py rover --origin CM87wa --speed 75 --distance 25`  
+  Feeds a live vehicle track driving from `CM87wa` past 16 km into `CM87wb`, testing real-time State A (Red) to State B (Green) qualification.
+- **Mountain Canyon Backtrack (States B $\to$ A):**  
+  `./tools/gps_sim.py backtrack --origin CM87wa`  
+  Simulates switchback retreat, validating instantaneous, hysteresis-free drop from Qualified (Green) back to In-Transit (Red) when straight-line distance drops under 16 km.
+- **GPS Loss & Watchdog Degradation (State D):**  
+  `./tools/gps_sim.py rtk`  
+  Simulates signal drop and watchdog timeout, verifying that the display transitions to Deep Amber (`0xDC00`) and preserves the last known valid distance.
+- **Loop Course Revisit (State C):**  
+  `./tools/gps_sim.py rover --origin CM87wb --dest CM87wa`  
+  Simulates returning to an earlier activated grid square after $\ge 16\text{ km}$, asserting State C (Royal Blue on White / `REVISIT`).
 
 ---
 
 ## 7. Verification & Automated Test Strategy
 
-1. **Native C++ Unit Tests (`tests/test_calculations.cpp`):**
-   - Direct linking against `src/geo/geo_math.cpp` and `src/geo/maidenhead.cpp` (no `sed` scraping required).
-   - Dual-condition qualification truth table (States A, B, C, D, E).
-   - Dynamic backtrack assertions.
-   - History log stack operations (`RoverLogManager`: append stop, undo fallback, clear all).
-2. **Interactive Simulation Harness:**
-   - Execute `tools/gps_sim.py` automated test runner asserting serial status output across transit milestones.
-3. **CI Pipeline:**
-   - Automated native unit testing and headless `arduino-cli` build verification on every pull request.
+The Rover Mode architecture is verified across three testing tiers:
+
+### 7.1 Native C++ Unit Tests (`tests/test_calculations.cpp`)
+Executed locally via `./tests/run_tests.sh` with zero hardware dependencies:
+1. **Continuous 0.1 km Geodesic Precision:** Asserting `%5.1f k` decimal formatting across integer boundaries and 0.1 km increments.
+2. **4-State Qualification Matrix (States A, B, C, D):** Validating truth table combinations of displacement ($< 16\text{ km}$ vs. $\ge 16\text{ km}$), grid history (unvisited vs. revisited), and GPS freshness (active vs. stale $> 3\text{s}$).
+3. **Dynamic Backtrack Assertions:** Validating instantaneous state reversibility without hysteresis latching.
+4. **Natural 2-Step Exit State Machine:**
+   - Tap character arms `isEditing = true` and shows cursor (`^`).
+   - Physical bezel rotation commits stop to NVS history and disarms Rover Mode on first tick.
+   - Inactivity auto-lock timeout (`EDIT_TIME_OUT_MS = 5000`) disarms accidental touch selections without exiting Rover Mode.
+5. **History Log Stack Operations (`RoverLogManager`):**
+   - Appending stops, chronological query, and duplicate grid search.
+   - "Discard Last Entry" undo fallback and automatic Rover Mode re-arm relative to prior site.
+6. **Non-Volatile Configuration Persistence:**
+   - Storing and loading `max_stops` in NVS (`Preferences.h` under namespace `"rover_cfg"`), asserting factory default of 100 stops and bounds clamping (10 to 500).
+
+### 7.2 Interactive Simulation & Automated Serial Assertions
+- USB CDC serial test runner executing `tools/gps_sim.py` scenarios, asserting live CLI reports (`rover status`) at each transit milestone.
+
+### 7.3 Continuous Integration (CI Pipeline)
+- Automated execution of `./tests/run_tests.sh` on every pull request.
+- Headless `arduino-cli` build verification ensuring ESP32-S3 firmware compilation within NOR flash and PSRAM limits.
