@@ -33,7 +33,7 @@ public:
     void resetProposed() { proposedOffset_ = 0.0f; }
     void snapProposed(double targetBearingDeg, double rawHeadingDeg);
     void syncProposedFromActive() { proposedOffset_ = activeOffset_; }
-    void commitProposed();
+    void commitProposed() { setOffset(proposedOffset_); }
 
     // Status & transformation helpers
     bool isCalibrated() const { return std::abs(activeOffset_) >= 0.05f; }

@@ -63,11 +63,7 @@ public:
     bool hasHeading() const { return hasHeading_; }
     BearingQuality getBearingQuality() const { return currentBearingQuality_; }
     unsigned long getLastHeadingUpdate() const { return lastHeadingUpdate_; }
-    void setHeadingState(bool hasHeading, BearingQuality quality, unsigned long lastUpdate = 0) {
-        hasHeading_ = hasHeading;
-        currentBearingQuality_ = quality;
-        if (lastUpdate > 0) lastHeadingUpdate_ = lastUpdate;
-    }
+    void setHeadingState(bool hasHeading, BearingQuality quality, unsigned long lastUpdate = 0);
 
     bool isRoverAlertActive() const { return isRoverAlertActive_; }
     void setRoverAlertActive(bool active) { isRoverAlertActive_ = active; }

@@ -603,6 +603,13 @@ void test_config_constants() {
     n = '9';
     ASSERT_TRUE(INCN(n) == '0');
 
+    // Test ASCII to numeric digit conversion
+    ASSERT_TRUE(charToDigit('0') == 0);
+    ASSERT_TRUE(charToDigit('5') == 5);
+    ASSERT_TRUE(charToDigit('9') == 9);
+    ASSERT_TRUE(charToDigit('X') == 0);
+    ASSERT_TRUE(aton('7') == 7);
+
     PASS();
 }
 
@@ -1202,6 +1209,12 @@ void test_app_controller() {
     ASSERT_STR_EQ(app.getMyGrid(), "JJ00AA00");
     ASSERT_STR_EQ(app.getTargetGrid(), "ZA00AA");
     ASSERT_TRUE(app.getUiMode() == UiMode::Normal);
+
+    // Heading state setter & getter verification
+    app.setHeadingState(true, BEARING_FIXED, 12345UL);
+    ASSERT_TRUE(app.hasHeading());
+    ASSERT_TRUE(app.getBearingQuality() == BEARING_FIXED);
+    ASSERT_TRUE(app.getLastHeadingUpdate() == 12345UL);
 
     // GPS Location update through GPS Manager
     gpsManager.setLocation(38.35412, -119.45821, 1000);

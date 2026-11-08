@@ -57,6 +57,22 @@ void SerialCli::begin() {
     inputBuffer_[0] = '\0';
 }
 
+CliNavContext SerialCli::getNavContext() const {
+    return navContextFn_ ? navContextFn_(navContext_) : fallbackNavContext_;
+}
+
+double SerialCli::getTargetBearing() const {
+    return getNavContext().targetBearing;
+}
+
+bool SerialCli::isRoverAlertActive() const {
+    return getNavContext().isRoverAlertActive;
+}
+
+double SerialCli::getRoverDistance() const {
+    return getNavContext().roverDistanceMeters;
+}
+
 void SerialCli::print(const char *str) {
     if (!str) return;
     if (outputFn_) {

@@ -69,10 +69,6 @@ void Calibration::snapProposed(double targetBearingDeg, double rawHeadingDeg) {
     proposedOffset_ = normalizeOffset((float)(targetBearingDeg - rawHeadingDeg));
 }
 
-void Calibration::commitProposed() {
-    setOffset(proposedOffset_);
-}
-
 double Calibration::apply(double rawHeadingDeg) const {
     return applyBearingOffset(rawHeadingDeg, activeOffset_);
 }
