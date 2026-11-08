@@ -17,6 +17,7 @@
 #include "../src/ui/grid_editor.h"
 #include "../src/system/board.h"
 #include "../src/system/app_controller.h"
+#include "../src/system/rover_log_manager.h"
 
 int tests_run = 0;
 int tests_passed = 0;
@@ -589,6 +590,15 @@ void test_config_constants() {
     ASSERT_TRUE(EDIT_TIMEOUT_MS == 5000);
     ASSERT_TRUE(CAL_MODAL_TIMEOUT_MS == 15000);
     ASSERT_NEAR(ROVER_ALERT_THRESHOLD_KM, 16.0, 1e-6);
+    ASSERT_TRUE(DEFAULT_MAX_ROVER_STOPS == 100);
+    ASSERT_TRUE(MIN_ROVER_STOPS == 10);
+    ASSERT_TRUE(ABS_MAX_ROVER_STOPS == 500);
+    ASSERT_TRUE(ROVER_CARD_W == 400);
+    ASSERT_TRUE(ROVER_CARD_H == 44);
+    ASSERT_TRUE(COLOR_ROVER_TRANSIT_RED == 0xF800);
+    ASSERT_TRUE(COLOR_ROVER_QUALIFIED_GREEN == 0x03E0);
+    ASSERT_TRUE(COLOR_ROVER_REVISIT_BLUE == 0x011C);
+    ASSERT_TRUE(COLOR_ROVER_NOGPS_AMBER == 0xDC00);
 
     // Test grid character rolling macros
     char c = 'A';
@@ -1317,6 +1327,292 @@ void test_app_controller() {
     PASS();
 }
 
+void test_rover_stop_model() {
+    TEST("RoverStop data model and operators");
+    RoverStop s1;
+    ASSERT_TRUE(s1.timestamp == 0);
+    ASSERT_NEAR(s1.latitude, 0.0, 1e-9);
+    ASSERT_NEAR(s1.longitude, 0.0, 1e-9);
+    ASSERT_STR_EQ(s1.grid, "");
+    ASSERT_NEAR(s1.displacement_km, 0.0f, 1e-6);
+    ASSERT_TRUE(!s1.qualified_16km);
+
+    RoverStop s2(1730000000, 37.421998, -122.084000, "CM87wa22", 24.25f, true);
+    ASSERT_TRUE(s2.timestamp == 1730000000);
+    ASSERT_NEAR(s2.latitude, 37.421998, 1e-6);
+    ASSERT_NEAR(s2.longitude, -122.084000, 1e-6);
+    ASSERT_STR_EQ(s2.grid, "CM87wa22");
+    ASSERT_NEAR(s2.displacement_km, 24.25f, 1e-4);
+    ASSERT_TRUE(s2.qualified_16km);
+
+    RoverStop s3 = s2;
+    ASSERT_TRUE(s2 == s3);
+    ASSERT_TRUE(!(s2 != s3));
+
+    s3.qualified_16km = false;
+    ASSERT_TRUE(s2 != s3);
+
+    // Overlong grid string safety
+    RoverStop s4(100, 10.0, 20.0, "1234567890ABCDEF", 5.0f, false);
+    ASSERT_TRUE(std::strlen(s4.grid) == 8);
+    ASSERT_STR_EQ(s4.grid, "12345678");
+
+    // Null grid safety
+    s4.setGrid(nullptr);
+    ASSERT_STR_EQ(s4.grid, "");
+
+    PASS();
+}
+
+void test_rover_log_manager_stack_ops() {
+    TEST("RoverLogManager stack operations, inspection, and sequential undo");
+    RoverLogManager::resetHostStorage();
+
+    RoverLogManager mgr;
+    mgr.begin();
+
+    // Initial empty state
+    ASSERT_TRUE(mgr.isEmpty());
+    ASSERT_TRUE(mgr.getStopCount() == 0);
+    ASSERT_TRUE(mgr.getLastStop() == nullptr);
+    ASSERT_TRUE(mgr.getPriorStop() == nullptr);
+    ASSERT_TRUE(mgr.getStop(0) == nullptr);
+
+    RoverStop temp;
+    ASSERT_TRUE(!mgr.getLastStop(temp));
+    ASSERT_TRUE(!mgr.getPriorStop(temp));
+    ASSERT_TRUE(!mgr.getStop(0, temp));
+
+    // Empty stack pop protection
+    ASSERT_TRUE(!mgr.popLastStop());
+    ASSERT_TRUE(mgr.getStopCount() == 0);
+
+    // Append Stop 1 (Origin)
+    RoverStop stop1(1000, 37.421998, -122.084000, "CM87wa22", 0.0f, false);
+    ASSERT_TRUE(mgr.appendStop(stop1));
+    ASSERT_TRUE(!mgr.isEmpty());
+    ASSERT_TRUE(mgr.getStopCount() == 1);
+    ASSERT_TRUE(mgr.getLastStop() != nullptr);
+    ASSERT_TRUE(*mgr.getLastStop() == stop1);
+    ASSERT_TRUE(mgr.getPriorStop() == nullptr); // only 1 stop
+    ASSERT_TRUE(mgr.getStop(0) != nullptr && *mgr.getStop(0) == stop1);
+    ASSERT_TRUE(mgr.getStop(1) == nullptr);
+
+    // Append Stop 2 (First transit destination)
+    RoverStop stop2(2000, 37.581204, -122.215401, "CM87wb44", 24.2f, true);
+    ASSERT_TRUE(mgr.appendStop(stop2));
+    ASSERT_TRUE(mgr.getStopCount() == 2);
+    ASSERT_TRUE(mgr.getLastStop() != nullptr && *mgr.getLastStop() == stop2);
+    ASSERT_TRUE(mgr.getPriorStop() != nullptr && *mgr.getPriorStop() == stop1);
+
+    // Append Stop 3 (Second transit destination)
+    RoverStop stop3(3000, 37.774929, -122.419418, "CM88ec12", 28.5f, true);
+    ASSERT_TRUE(mgr.appendStop(stop3));
+    ASSERT_TRUE(mgr.getStopCount() == 3);
+    ASSERT_TRUE(mgr.getLastStop() != nullptr && *mgr.getLastStop() == stop3);
+    ASSERT_TRUE(mgr.getPriorStop() != nullptr && *mgr.getPriorStop() == stop2);
+
+    ASSERT_TRUE(mgr.getStop(0, temp) && temp == stop1);
+    ASSERT_TRUE(mgr.getStop(1, temp) && temp == stop2);
+    ASSERT_TRUE(mgr.getStop(2, temp) && temp == stop3);
+    ASSERT_TRUE(!mgr.getStop(3, temp));
+
+    // Range-based for loop traversal via getStops()
+    size_t iterCount = 0;
+    uint32_t expectedTs[3] = {1000, 2000, 3000};
+    for (const auto &stop : mgr.getStops()) {
+        ASSERT_TRUE(stop.timestamp == expectedTs[iterCount]);
+        iterCount++;
+    }
+    ASSERT_TRUE(iterCount == 3);
+
+    // Sequential Undo / Pop
+    // Pop Stop 3 -> fallback to Stop 2
+    ASSERT_TRUE(mgr.popLastStop());
+    ASSERT_TRUE(mgr.getStopCount() == 2);
+    ASSERT_TRUE(mgr.getLastStop() != nullptr && *mgr.getLastStop() == stop2);
+    ASSERT_TRUE(mgr.getPriorStop() != nullptr && *mgr.getPriorStop() == stop1);
+
+    // Pop Stop 2 -> fallback to Stop 1
+    ASSERT_TRUE(mgr.popLastStop());
+    ASSERT_TRUE(mgr.getStopCount() == 1);
+    ASSERT_TRUE(mgr.getLastStop() != nullptr && *mgr.getLastStop() == stop1);
+    ASSERT_TRUE(mgr.getPriorStop() == nullptr);
+
+    // Pop Stop 1 -> stack empty
+    ASSERT_TRUE(mgr.popLastStop());
+    ASSERT_TRUE(mgr.isEmpty());
+    ASSERT_TRUE(mgr.getStopCount() == 0);
+    ASSERT_TRUE(mgr.getLastStop() == nullptr);
+    ASSERT_TRUE(mgr.getPriorStop() == nullptr);
+
+    // Pop again on empty stack returns false safely
+    ASSERT_TRUE(!mgr.popLastStop());
+    ASSERT_TRUE(mgr.isEmpty());
+
+    PASS();
+}
+
+void test_rover_log_manager_duplicate_grid_search() {
+    TEST("RoverLogManager duplicate grid subsquare search and casing");
+    RoverLogManager::resetHostStorage();
+
+    RoverLogManager mgr;
+    mgr.begin();
+
+    // Empty log search
+    ASSERT_TRUE(!mgr.hasVisitedGrid("CM87wa"));
+    ASSERT_TRUE(!mgr.hasVisitedGrid("CM87wa22"));
+    ASSERT_TRUE(!mgr.hasVisitedGrid(nullptr));
+    ASSERT_TRUE(!mgr.hasVisitedGrid(""));
+    ASSERT_TRUE(!mgr.hasVisitedGrid("CM87")); // < 6 chars
+
+    // Add stops
+    RoverStop stop1(1000, 37.42, -122.08, "CM87wa22", 0.0f, false);
+    RoverStop stop2(2000, 37.58, -122.21, "CM87wb44", 24.2f, true);
+    RoverStop stop3(3000, 37.77, -122.41, "CM88ec12", 28.5f, true);
+    mgr.appendStop(stop1);
+    mgr.appendStop(stop2);
+    mgr.appendStop(stop3);
+
+    // Subsquares in log (6-character check)
+    ASSERT_TRUE(mgr.hasVisitedGrid("CM87wa"));
+    ASSERT_TRUE(mgr.hasVisitedGrid("CM87wb"));
+    ASSERT_TRUE(mgr.hasVisitedGrid("CM88ec"));
+
+    // Case-insensitivity assertions
+    ASSERT_TRUE(mgr.hasVisitedGrid("cm87wa"));
+    ASSERT_TRUE(mgr.hasVisitedGrid("Cm87Wb"));
+    ASSERT_TRUE(mgr.hasVisitedGrid("cm88EC"));
+
+    // 8-character inputs matching 6-character subsquare
+    ASSERT_TRUE(mgr.hasVisitedGrid("CM87wa99"));
+    ASSERT_TRUE(mgr.hasVisitedGrid("cm87wb00"));
+
+    // Grids not visited
+    ASSERT_TRUE(!mgr.hasVisitedGrid("CM87wc"));
+    ASSERT_TRUE(!mgr.hasVisitedGrid("CM87aa"));
+    ASSERT_TRUE(!mgr.hasVisitedGrid("FN31aa"));
+    ASSERT_TRUE(!mgr.hasVisitedGrid("DM04ms"));
+
+    // Discarding a stop removes its grid from visited history
+    ASSERT_TRUE(mgr.popLastStop()); // removes CM88ec
+    ASSERT_TRUE(!mgr.hasVisitedGrid("CM88ec"));
+    ASSERT_TRUE(mgr.hasVisitedGrid("CM87wb")); // still visited
+    ASSERT_TRUE(mgr.hasVisitedGrid("CM87wa")); // still visited
+
+    // Clear history removes all visited grids
+    mgr.clearHistory();
+    ASSERT_TRUE(mgr.isEmpty());
+    ASSERT_TRUE(!mgr.hasVisitedGrid("CM87wa"));
+    ASSERT_TRUE(!mgr.hasVisitedGrid("CM87wb"));
+
+    PASS();
+}
+
+void test_rover_log_manager_capacity_and_nvs() {
+    TEST("RoverLogManager capacity clamping, FIFO rollover, and NVS persistence");
+    RoverLogManager::resetHostStorage();
+
+    // 1. Factory defaults and bounds clamping
+    RoverLogManager mgr1;
+    mgr1.begin();
+    ASSERT_TRUE(mgr1.getMaxStops() == DEFAULT_MAX_ROVER_STOPS); // default 100
+
+    mgr1.setMaxStops(5); // below MIN_ROVER_STOPS (10)
+    ASSERT_TRUE(mgr1.getMaxStops() == MIN_ROVER_STOPS);
+
+    mgr1.setMaxStops(999); // above ABS_MAX_ROVER_STOPS (500)
+    ASSERT_TRUE(mgr1.getMaxStops() == ABS_MAX_ROVER_STOPS);
+
+    mgr1.setMaxStops(10, true);
+    ASSERT_TRUE(mgr1.getMaxStops() == 10);
+
+    // 2. FIFO Rollover at capacity
+    // Fill to capacity of 10 stops
+    for (uint32_t i = 1; i <= 10; ++i) {
+        char g[9];
+        snprintf(g, sizeof(g), "CM87w%c11", (char)('a' + (i - 1)));
+        RoverStop s(1000 + i, 37.0 + i * 0.1, -122.0, g, (float)(i * 5.0), true);
+        ASSERT_TRUE(mgr1.appendStop(s));
+    }
+    ASSERT_TRUE(mgr1.getStopCount() == 10);
+    ASSERT_TRUE(mgr1.getStop(0)->timestamp == 1001);
+    ASSERT_TRUE(mgr1.getLastStop()->timestamp == 1010);
+
+    // Append 11th stop -> stop 1 rolls over, stop 2 becomes index 0
+    RoverStop s11(1011, 38.1, -122.0, "CM88aa11", 55.0f, true);
+    ASSERT_TRUE(mgr1.appendStop(s11));
+    ASSERT_TRUE(mgr1.getStopCount() == 10);
+    ASSERT_TRUE(mgr1.getStop(0)->timestamp == 1002);
+    ASSERT_TRUE(mgr1.getLastStop()->timestamp == 1011);
+    ASSERT_TRUE(mgr1.getPriorStop()->timestamp == 1010);
+
+    // Append 12th stop -> stop 2 rolls over, stop 3 becomes index 0
+    RoverStop s12(1012, 38.2, -122.0, "CM88ab11", 60.0f, true);
+    ASSERT_TRUE(mgr1.appendStop(s12));
+    ASSERT_TRUE(mgr1.getStopCount() == 10);
+    ASSERT_TRUE(mgr1.getStop(0)->timestamp == 1003);
+    ASSERT_TRUE(mgr1.getLastStop()->timestamp == 1012);
+
+    // 3. NVS Persistence across instances
+    // A fresh RoverLogManager instance loading from NVS must recover state exactly
+    RoverLogManager mgr2;
+    mgr2.begin();
+    ASSERT_TRUE(mgr2.getMaxStops() == 10);
+    ASSERT_TRUE(mgr2.getStopCount() == 10);
+    ASSERT_TRUE(mgr2.getStop(0)->timestamp == 1003);
+    ASSERT_TRUE(mgr2.getLastStop()->timestamp == 1012);
+    ASSERT_TRUE(mgr2.getPriorStop()->timestamp == 1011);
+    ASSERT_TRUE(mgr2.hasVisitedGrid("CM88ab"));
+    ASSERT_TRUE(!mgr2.hasVisitedGrid("CM87wa")); // rolled over!
+
+    // 4. Truncation on capacity reduction
+    mgr2.setMaxStops(15, true); // expand capacity to 15 without data loss
+    ASSERT_TRUE(mgr2.getMaxStops() == 15);
+    ASSERT_TRUE(mgr2.getStopCount() == 10);
+
+    // Append 5 more stops up to 15
+    for (uint32_t i = 13; i <= 17; ++i) {
+        char g[9];
+        snprintf(g, sizeof(g), "CM88a%c11", (char)('a' + (i - 13)));
+        RoverStop s(1000 + i, 38.0 + (i - 12) * 0.1, -122.0, g, (float)(i * 5.0), true);
+        ASSERT_TRUE(mgr2.appendStop(s));
+    }
+    ASSERT_TRUE(mgr2.getStopCount() == 15);
+    ASSERT_TRUE(mgr2.getStop(0)->timestamp == 1003);
+    ASSERT_TRUE(mgr2.getLastStop()->timestamp == 1017);
+
+    // Now reduce capacity from 15 down to 10 (valid clamped range 10-500) -> 5 oldest dropped
+    mgr2.setMaxStops(10, true);
+    ASSERT_TRUE(mgr2.getMaxStops() == 10);
+    ASSERT_TRUE(mgr2.getStopCount() == 10);
+    ASSERT_TRUE(mgr2.getStop(0)->timestamp == 1008);
+    ASSERT_TRUE(mgr2.getLastStop()->timestamp == 1017);
+
+    // Another instance loads truncated state
+    RoverLogManager mgr3;
+    mgr3.begin();
+    ASSERT_TRUE(mgr3.getMaxStops() == 10);
+    ASSERT_TRUE(mgr3.getStopCount() == 10);
+    ASSERT_TRUE(mgr3.getStop(0)->timestamp == 1008);
+    ASSERT_TRUE(mgr3.getLastStop()->timestamp == 1017);
+
+    // 5. Clear history resets stops but preserves max_stops capacity
+    mgr3.clearHistory();
+    ASSERT_TRUE(mgr3.isEmpty());
+    ASSERT_TRUE(mgr3.getStopCount() == 0);
+    ASSERT_TRUE(mgr3.getMaxStops() == 10);
+
+    RoverLogManager mgr4;
+    mgr4.begin();
+    ASSERT_TRUE(mgr4.isEmpty());
+    ASSERT_TRUE(mgr4.getStopCount() == 0);
+    ASSERT_TRUE(mgr4.getMaxStops() == 10);
+
+    PASS();
+}
+
 int main() {
     std::cout << "========================================" << std::endl;
     std::cout << "  GNSS Compass Unit Test Suite" << std::endl;
@@ -1350,6 +1646,10 @@ int main() {
     test_self_test_failure_formatting();
     test_grid_editor();
     test_app_controller();
+    test_rover_stop_model();
+    test_rover_log_manager_stack_ops();
+    test_rover_log_manager_duplicate_grid_search();
+    test_rover_log_manager_capacity_and_nvs();
 
     std::cout << "========================================" << std::endl;
     std::cout << "  All " << tests_passed << " / " << tests_run << " tests PASSED successfully!" << std::endl;

@@ -211,6 +211,30 @@
 #define TOUCH_FOOTER_Y_MAX       480
 
 // ==============================================================================
+// Rover Mode & History Configuration
+// ==============================================================================
+#define ROVER_CFG_NAMESPACE          "rover_cfg"
+#define ROVER_CFG_KEY_MAX_STOPS      "max_stops"
+#define ROVER_LOG_NAMESPACE          "rover_log"
+#define ROVER_LOG_KEY_COUNT          "count"
+
+#define DEFAULT_MAX_ROVER_STOPS      100
+#define MIN_ROVER_STOPS              10
+#define ABS_MAX_ROVER_STOPS          500
+
+// Row 5 Rover Qualification Card Layout & Colors (RGB565)
+#define ROVER_CARD_X                 40
+#define ROVER_CARD_Y                 372
+#define ROVER_CARD_W                 400
+#define ROVER_CARD_H                 44
+#define ROVER_CARD_R                 8
+
+#define COLOR_ROVER_TRANSIT_RED      0xF800
+#define COLOR_ROVER_QUALIFIED_GREEN  0x03E0
+#define COLOR_ROVER_REVISIT_BLUE     0x011C
+#define COLOR_ROVER_NOGPS_AMBER      0xDC00
+
+// ==============================================================================
 // Timeouts & Operational Thresholds
 // ==============================================================================
 #define HEADING_TIMEOUT_MS        1500
