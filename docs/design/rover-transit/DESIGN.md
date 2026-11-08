@@ -33,9 +33,7 @@ stateDiagram-v2
     }
 
     BearingMode --> RoverMode : 1-Tap Origin Snapshot (Row 1 My Grid)
-    RoverMode --> ExitPrompt : Tap/Turn Target Grid (Row 2)
-    ExitPrompt --> BearingMode : Click Rotary Push-Button (Confirmed Arrival)
-    ExitPrompt --> RoverMode : Screen Tap / 8s Timeout (Keep tracking)
+    RoverMode --> BearingMode : Tap Character & Turn Bezel (Natural Target Tuning)
     BearingMode --> RoverMode : Discard Last Stop (Auto-rearm to prior site)
 ```
 
@@ -145,27 +143,25 @@ Mountain transit rarely occurs in a straight line. An operator driving through c
 
 ---
 
-### 2.4 Ending Rover Mode & Rotary Push-Button Confirmation
+### 2.6 Ending Rover Mode & Natural Targeting Transition
 
-Ending Rover Mode signifies that the vehicle has parked, the mast will be deployed, and the operator is ready to aim antennas at distant stations.
+Ending Rover Mode signifies that the vehicle has parked, antennas will be aimed, and the operator is ready to work distant stations.
 
-#### Accidental Touch Protection: Hardware Push-Button Confirmation
-While driving over rough terrain, vibrations or stray objects (cables, coats) could brush the touchscreen. An accidental screen touch must not exit Rover Mode or erase the live origin tracking baseline while driving.
+#### Zero-Overhead Natural Interaction
+Rather than requiring a modal popup or dedicated push-button press that interrupts the operator's workflow, the exit transition is completely natural:
+1. **Step 1 (Tap Character):** The operator taps a character in Row 2 (Target Grid) to select it, arming editing (`isEditing = true`) and displaying the yellow cursor (`^`).
+2. **Step 2 (Turn Bezel):** The operator turns the rotary encoder knob to begin rolling the character to tune their first target station.
+3. **Commit Transition:** On the very first encoder tick that changes a character while editing is armed:
+   - The completed transit stop is automatically appended to the **Rover Location History Log** (NVS).
+   - Rover Mode cleanly disarms (`isRoverAlertActive = false`).
+   - The system is now in standard **Bearing Mode** (Row 5 displays normal target bearing and contest distance).
 
-**Mechanism: Physical Push-Button Arbitration**
-- In Rover Mode, tapping Row 2 or turning the encoder does **not** instantly switch to target editing.
-- Instead, the display surfaces an on-screen prompt:
-  ```text
-  +--------------------------------------------+
-  |    CLICK ROTARY KNOB TO FINISH TRANSIT     |
-  |  (Physical push-button confirms arrival)   |
-  +--------------------------------------------+
-  ```
-- **To Confirm Exit:** The operator must physically press down on the **rotary encoder push-button** (connected via `Board::isEncoderButtonPressed()`). This positive, tactile hardware action guarantees deliberate intent to end transit.
-- **Cancel / Auto-Timeout:** Tapping the screen or 8 seconds of inactivity cancels the prompt, maintaining Rover Mode without interruption.
-- Upon confirmed push-button exit:
-  1. The completed transit stop is automatically appended to the **Rover Location History Log** (NVS).
-  2. The system transitions cleanly back to **Bearing Mode** and unlocks `GridEditor` for target dish alignment.
+#### Two-Step Accidental Touch Protection
+This design provides built-in 2-step protection against accidental transitions while driving over rough terrain:
+- An accidental touchscreen bump (from a loose cable, coat, or road vibration) might select a character, but **touch alone does not exit Rover Mode**.
+- It requires the combination of a touch selection **followed by a deliberate physical rotation of the rotary bezel**.
+- If the screen was touched accidentally and the bezel is not turned, the standard 5-second inactivity auto-lock fires (`EDIT_TIME_OUT_MS`), automatically disarming edit mode (`isEditing = false`), hiding the cursor, and keeping Rover Mode active without user intervention.
+- Finally, if the operator intentionally tunes a target and later realizes the site is unviable, the **"Discard Last Entry"** feature provides a complete safety net, reverting the log and automatically re-arming Rover Mode relative to the prior legitimate site.
 
 ---
 
