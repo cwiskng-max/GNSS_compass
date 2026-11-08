@@ -48,6 +48,7 @@ void AppController::setMyGrid(const char *grid) {
     if (!grid) return;
     std::strncpy(myGrid_, grid, sizeof(myGrid_) - 1);
     myGrid_[sizeof(myGrid_) - 1] = '\0';
+    updateNavigation();
 }
 
 void AppController::setCurrentPosition(const GeoPoint &pos) {
@@ -88,6 +89,11 @@ void AppController::recalculateGeodesy() {
         gridToGeoPoint(gridEditor_.getGrid(), targetPosition_);
     }
     calculateWgs84(currentPosition_, targetPosition_, distance_, bearing_);
+#if !ENABLE_ARRL_DIST
+    if (!isRoverAlertActive_) {
+        distance_ = calculateArrlContestDistance(myGrid_, gridEditor_.getGrid()) * 1000.0;
+    }
+#endif
     revbearing_ = calculateReverseBearing(currentPosition_, targetPosition_);
 }
 

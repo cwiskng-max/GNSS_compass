@@ -1,6 +1,7 @@
 #include "geo_math.h"
 #include "maidenhead.h"
 #include <cstring>
+#include <cctype>
 
 double toRad(double degree) {
     return degree * M_PI / 180.0;
@@ -51,7 +52,14 @@ double calculateReverseBearing(const GeoPoint &from, const GeoPoint &to) {
 
 double calculateArrlContestDistance(const char *gridA, const char *gridB) {
     if (!gridA || !gridB) return 1.0;
-    if (strncmp(gridA, gridB, 6) == 0) {
+    bool match = true;
+    for (int i = 0; i < 6; ++i) {
+        if (!gridA[i] || !gridB[i] || std::toupper((unsigned char)gridA[i]) != std::toupper((unsigned char)gridB[i])) {
+            match = false;
+            break;
+        }
+    }
+    if (match) {
         return 1.0;
     }
     double lat1 = 0.0, lon1 = 0.0, lat2 = 0.0, lon2 = 0.0;
