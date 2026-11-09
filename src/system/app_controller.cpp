@@ -199,6 +199,9 @@ void AppController::discardLastStopAndRearm(unsigned long nowMs) {
 void AppController::setUiMode(UiMode mode) {
     currentUiMode_ = mode;
     inputManager_.setUiMode(mode);
+    if (mode != UiMode::Normal) {
+        gridEditor_.setEditing(false);
+    }
 }
 
 void AppController::setHeadingState(bool hasHeading, BearingQuality quality, unsigned long lastUpdate) {
@@ -490,7 +493,7 @@ void AppController::handleUserEvent(const UserEvent &event, unsigned long nowMs)
                 calModalOpenedMillis_ = nowMs;
                 calibration_.adjustProposedOffset(0.1f);
                 displayUi_.getCalModal().drawProposedOffsetRow(calibration_.getProposedOffset());
-            } else if (gridEditor_.isEditing()) {
+            } else if (currentUiMode_ == UiMode::Normal && gridEditor_.isEditing()) {
                 if (operationalMode_ == OperationalMode::Rover) {
                     onTargetEdited(nowMs);
                 }
@@ -505,7 +508,7 @@ void AppController::handleUserEvent(const UserEvent &event, unsigned long nowMs)
                 calModalOpenedMillis_ = nowMs;
                 calibration_.adjustProposedOffset(-0.1f);
                 displayUi_.getCalModal().drawProposedOffsetRow(calibration_.getProposedOffset());
-            } else if (gridEditor_.isEditing()) {
+            } else if (currentUiMode_ == UiMode::Normal && gridEditor_.isEditing()) {
                 if (operationalMode_ == OperationalMode::Rover) {
                     onTargetEdited(nowMs);
                 }
@@ -516,10 +519,10 @@ void AppController::handleUserEvent(const UserEvent &event, unsigned long nowMs)
             break;
 
         case UserEventType::EncoderButtonPressed:
-            // Toggle edit mode on knob press in Bearing Mode only.
-            // In Rover Mode, knob press is locked out to enforce 2-step natural exit
-            // (touch character selection followed by physical rotary knob rotation).
-            if (operationalMode_ == OperationalMode::Rover) {
+            // Toggle edit mode on knob press in Normal Bearing Mode only.
+            // Disarmed in modals (Calibrating, RoverHistory) to prevent target grid poking through.
+            // Locked out in Rover Mode to enforce 2-step natural exit.
+            if (currentUiMode_ != UiMode::Normal || operationalMode_ == OperationalMode::Rover) {
                 break;
             }
             gridEditor_.setEditing(!gridEditor_.isEditing());
@@ -528,6 +531,9 @@ void AppController::handleUserEvent(const UserEvent &event, unsigned long nowMs)
             break;
 
         case UserEventType::TouchCalibrationPill:
+            if (currentUiMode_ != UiMode::Normal) {
+                break;
+            }
             if (hasHeading_) {
                 calibration_.snapProposed(bearing_, gpsManager_.getBearingFilter().getRawHeading());
             } else {
@@ -535,19 +541,23 @@ void AppController::handleUserEvent(const UserEvent &event, unsigned long nowMs)
             }
             setUiMode(UiMode::Calibrating);
             calModalOpenedMillis_ = nowMs;
-            gridEditor_.setEditing(false);
             displayUi_.getCalModal().drawModal(bearing_, gpsManager_.getBearingFilter().getRawHeading(), hasHeading_,
                                               calibration_.getOffset(), calibration_.getProposedOffset());
             break;
 
         case UserEventType::TouchLocalGrid:
+            if (currentUiMode_ != UiMode::Normal) {
+                break;
+            }
             startRoverMode(nowMs);
             break;
 
         case UserEventType::LongPressLocalGridTriggered:
+            if (currentUiMode_ != UiMode::Normal) {
+                break;
+            }
             setUiMode(UiMode::RoverHistory);
             calModalOpenedMillis_ = nowMs;
-            gridEditor_.setEditing(false);
             displayUi_.getRoverHistoryModal().drawModal(
                 roverLogManagerRef_->getLastStop(),
                 roverLogManagerRef_->getStopCount(),
@@ -556,6 +566,9 @@ void AppController::handleUserEvent(const UserEvent &event, unsigned long nowMs)
             break;
 
         case UserEventType::TouchGridCharacter:
+            if (currentUiMode_ != UiMode::Normal) {
+                break;
+            }
             // 2-step natural target exit protection: character touch arms editing and shows cursor,
             // but does NOT exit Rover Mode until the bezel is physically rotated.
             gridEditor_.selectCharacter(event.gridIndex, nowMs);
@@ -564,6 +577,9 @@ void AppController::handleUserEvent(const UserEvent &event, unsigned long nowMs)
             break;
 
         case UserEventType::TouchVersionFooter:
+            if (currentUiMode_ != UiMode::Normal) {
+                break;
+            }
             runVisualSelfTest();
             break;
 
@@ -716,6 +732,8 @@ void AppController::update(unsigned long nowMs) {
 
     // 7. Edit timeout check
     if (gridEditor_.checkTimeout(nowMs)) {
-        displayUi_.renderTargetGrid(gridEditor_.getGrid(), gridEditor_.getCursorColumn(), gridEditor_.isEditing());
+        if (currentUiMode_ == UiMode::Normal) {
+            displayUi_.renderTargetGrid(gridEditor_.getGrid(), gridEditor_.getCursorColumn(), gridEditor_.isEditing());
+        }
     }
 }

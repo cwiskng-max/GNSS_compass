@@ -1291,6 +1291,13 @@ void test_app_controller() {
     app.handleUserEvent(evPill, 2100);
     ASSERT_TRUE(app.getUiMode() == UiMode::Calibrating);
 
+    // Bezel depress while CalModal is open: must be ignored and must NOT arm edit mode
+    UserEvent evBezelPress;
+    evBezelPress.type = UserEventType::EncoderButtonPressed;
+    app.handleUserEvent(evBezelPress, 2150);
+    ASSERT_TRUE(!app.getGridEditor().isEditing());
+    ASSERT_TRUE(app.getUiMode() == UiMode::Calibrating);
+
     // Event: Turn knob clockwise in calibrating mode -> Nudges proposed offset +0.1 deg
     float initProposed = calibration.getProposedOffset();
     app.handleUserEvent(evRot, 2200);
@@ -2149,6 +2156,18 @@ void test_rover_history_undo_modal_and_autorearm() {
     evLongPress.type = UserEventType::LongPressLocalGridTriggered;
     app.handleUserEvent(evLongPress, 3000);
     ASSERT_TRUE(app.getUiMode() == UiMode::RoverHistory);
+
+    // Bezel depress while Rover History modal is open: must be ignored
+    UserEvent evBezel;
+    evBezel.type = UserEventType::EncoderButtonPressed;
+    app.handleUserEvent(evBezel, 3050);
+    ASSERT_TRUE(!app.getGridEditor().isEditing());
+
+    // Bezel rotation while Rover History modal is open: must be ignored and not roll target grid
+    UserEvent evTurn;
+    evTurn.type = UserEventType::RotateClockwise;
+    app.handleUserEvent(evTurn, 3060);
+    ASSERT_TRUE(!app.getGridEditor().isEditing());
 
     // Test Cancel button: modal closes, no change to history or mode
     UserEvent evCancel;
