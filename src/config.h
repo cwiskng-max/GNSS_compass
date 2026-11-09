@@ -223,16 +223,48 @@
 #define ABS_MAX_ROVER_STOPS          500
 
 // Row 5 Rover Qualification Card Layout & Colors (RGB565)
-#define ROVER_CARD_X                 40
-#define ROVER_CARD_Y                 372
-#define ROVER_CARD_W                 400
-#define ROVER_CARD_H                 44
+// Scaled to fit within 480x480 circular screen chord (chord width ~330 px at Y: 374..414)
+#define ROVER_CARD_SZ                3
+#define ROVER_CARD_W                 320
+#define ROVER_CARD_H                 40
+#define ROVER_CARD_X                 ((SCREEN_WIDTH - ROVER_CARD_W) / 2)
+#define ROVER_CARD_Y                 374
 #define ROVER_CARD_R                 8
+#define ROVER_CARD_TEXT_X            (ROVER_CARD_X + (ROVER_CARD_W - (16 * CHAR_W(ROVER_CARD_SZ))) / 2)
+#define ROVER_CARD_TEXT_Y            (ROVER_CARD_Y + (ROVER_CARD_H - CHAR_H(ROVER_CARD_SZ)) / 2)
 
 #define COLOR_ROVER_TRANSIT_RED      0xF800
 #define COLOR_ROVER_QUALIFIED_GREEN  0x03E0
 #define COLOR_ROVER_REVISIT_BLUE     0x011C
 #define COLOR_ROVER_NOGPS_AMBER      0xDC00
+
+// Rover History Modal Dialog Geometry
+#define ROVER_MODAL_X                35
+#define ROVER_MODAL_Y                75
+#define ROVER_MODAL_W                410
+#define ROVER_MODAL_H                335
+
+// Rover History Modal Buttons
+#define ROVER_BTN_DISCARD_X          75
+#define ROVER_BTN_DISCARD_Y          260
+#define ROVER_BTN_DISCARD_W          330
+#define ROVER_BTN_DISCARD_H          46
+
+#define ROVER_BTN_CANCEL_X           140
+#define ROVER_BTN_CANCEL_Y           320
+#define ROVER_BTN_CANCEL_W           200
+#define ROVER_BTN_CANCEL_H           40
+
+// Rover History Modal Touch Hit Areas
+#define ROVER_TOUCH_DISCARD_X_MIN    70
+#define ROVER_TOUCH_DISCARD_X_MAX    410
+#define ROVER_TOUCH_DISCARD_Y_MIN    255
+#define ROVER_TOUCH_DISCARD_Y_MAX    310
+
+#define ROVER_TOUCH_CANCEL_X_MIN     130
+#define ROVER_TOUCH_CANCEL_X_MAX     350
+#define ROVER_TOUCH_CANCEL_Y_MIN     315
+#define ROVER_TOUCH_CANCEL_Y_MAX     365
 
 // ==============================================================================
 // Timeouts & Operational Thresholds

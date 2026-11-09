@@ -150,7 +150,7 @@ Rather than requiring a modal popup or dedicated push-button press that interrup
 2. **Step 2 (Turn Bezel):** The operator turns the rotary encoder knob to begin rolling the character to tune their first target station.
 3. **Commit Transition:** On the very first encoder tick that changes a character while editing is armed:
    - The completed transit stop is automatically appended to the **Rover Location History Log** (NVS).
-   - Rover Mode cleanly disarms (`isRoverAlertActive = false`).
+   - Rover Mode cleanly disarms (`operationalMode = MODE_BEARING`).
    - The system is now in standard **Bearing Mode** (Row 5 displays normal target bearing and contest distance).
 
 #### Two-Step Accidental Touch Protection

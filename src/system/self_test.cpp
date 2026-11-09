@@ -25,7 +25,7 @@ void SelfTest::run(AppController &app) {
     GeoPoint saved_currentPos = app.getCurrentPosition();
     GeoPoint saved_targetPos = app.getTargetPosition();
     bool saved_hasHeading = app.hasHeading();
-    bool saved_isRoverAlertActive = app.isRoverAlertActive();
+    OperationalMode saved_operationalMode = app.getOperationalMode();
     bool saved_isEditing = app.getGridEditor().isEditing();
     BearingQuality saved_quality = app.getBearingQuality();
     unsigned long saved_lastHeading = app.getLastHeadingUpdate();
@@ -44,7 +44,7 @@ void SelfTest::run(AppController &app) {
     app.setCurrentPosition(pos1);
     app.setHeadingState(true, BEARING_FIXED);
     app.getGpsManager().getBearingFilter().seed(180.0f);
-    app.setRoverAlertActive(false);
+    app.setOperationalMode(OperationalMode::Bearing);
     app.getDisplayUi().renderMyGrid(app.getMyGrid());
     app.getDisplayUi().renderTargetGrid(app.getTargetGrid(), app.getGridEditor().getCursorColumn(), app.getGridEditor().isEditing());
     app.updateNavigation();
@@ -55,7 +55,7 @@ void SelfTest::run(AppController &app) {
     app.getDisplayUi().showFooterText("TEST 2: ROVER < 16K", RICH_YELLOW);
     app.setTargetGrid("CM87wb");
     app.setHeadingState(true, BEARING_FIXED);
-    app.setRoverAlertActive(true);
+    app.setOperationalMode(OperationalMode::Rover);
     app.getDisplayUi().renderTargetGrid(app.getTargetGrid(), app.getGridEditor().getCursorColumn(), app.getGridEditor().isEditing());
     app.updateNavigation();
     delay(3000);
@@ -65,7 +65,7 @@ void SelfTest::run(AppController &app) {
     app.getDisplayUi().showFooterText("TEST 3: DIST < 1000K", CYAN);
     app.setTargetGrid("DN13ab");
     app.setHeadingState(true, BEARING_FIXED);
-    app.setRoverAlertActive(false);
+    app.setOperationalMode(OperationalMode::Bearing);
     app.getDisplayUi().renderTargetGrid(app.getTargetGrid(), app.getGridEditor().getCursorColumn(), app.getGridEditor().isEditing());
     app.updateNavigation();
     delay(3000);
@@ -241,7 +241,7 @@ void SelfTest::run(AppController &app) {
     app.setCurrentPosition(saved_currentPos);
     app.setTargetPosition(saved_targetPos);
     app.setHeadingState(saved_hasHeading, saved_quality, saved_lastHeading);
-    app.setRoverAlertActive(saved_isRoverAlertActive);
+    app.setOperationalMode(saved_operationalMode);
     app.getGridEditor().setEditing(saved_isEditing);
     app.getCalibration().setOffset(savedOffset, false);
     app.setUiMode(saved_uiMode);

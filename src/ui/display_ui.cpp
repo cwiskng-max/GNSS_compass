@@ -89,6 +89,7 @@ void DisplayUi::initLcd() {
     gfx_->setTextColor(WHITE, BLACK);
 
     calModal_.setGfx(gfx_);
+    roverHistoryModal_.setGfx(gfx_);
 }
 
 void DisplayUi::begin() {
@@ -190,21 +191,15 @@ void DisplayUi::renderTargetBearing(double targetBearing) {
     gfx_->print(buf);
 }
 
-void DisplayUi::renderReverseBearingAndDistance(double revBearing, double distanceMeters, bool isRoverAlertActive) {
+void DisplayUi::renderReverseBearingAndDistance(double revBearing, double distanceMeters) {
     if (!gfx_) return;
 
     char buf[24];
     formatReverseBearingAndDistance(revBearing, distanceMeters, buf, sizeof(buf));
-    int rdist = static_cast<int>(std::floor(distanceMeters / 1000.0));
-    if (rdist < 16 && isRoverAlertActive) {
-        gfx_->setTextColor(RED, WHITE);
-    } else {
-        gfx_->setTextColor(WHITE, BLACK);
-    }
+    gfx_->setTextColor(WHITE, BLACK);
     gfx_->setTextSize(REVBEAR_SZ);
     gfx_->setCursor(REVBEAR_X, REVBEAR_Y);
     gfx_->print(buf);
-    gfx_->setTextColor(WHITE, BLACK);
 }
 
 void DisplayUi::renderRoverCard(RoverState state, double displacementKm) {
@@ -217,8 +212,8 @@ void DisplayUi::renderRoverCard(RoverState state, double displacementKm) {
 
     uint16_t textColor = getRoverStateTextColor(state);
     gfx_->setTextColor(textColor, WHITE);
-    gfx_->setTextSize(REVBEAR_SZ);
-    gfx_->setCursor(ROVER_CARD_X + 8, ROVER_CARD_Y + 6);
+    gfx_->setTextSize(ROVER_CARD_SZ);
+    gfx_->setCursor(ROVER_CARD_TEXT_X, ROVER_CARD_TEXT_Y);
     gfx_->print(buf);
     gfx_->setTextColor(WHITE, BLACK);
 }
@@ -284,7 +279,11 @@ void DisplayUi::redrawMainScreen(const MainScreenState &s) {
     renderCurrentBearing(s.currentHeading, s.bearingQuality, s.hasHeading);
     renderCalibrationPill(s.calOffset, s.isCalibrated);
     renderTargetBearing(s.targetBearing);
-    renderReverseBearingAndDistance(s.revBearing, s.distanceMeters, s.isRoverAlertActive);
+    if (s.isRoverMode) {
+        renderRoverCard(s.roverState, s.roverDisplacementKm);
+    } else {
+        renderReverseBearingAndDistance(s.revBearing, s.distanceMeters);
+    }
     renderArrlDistance(s.myGrid, s.targetGrid);
     renderUtcTime(s.hours, s.minutes, s.hasTime);
     showFooterText(FW_VERSION, DIM_GRAY_TEXT);
@@ -299,7 +298,7 @@ void DisplayUi::renderTargetGrid(const char *, uint8_t, bool) {}
 void DisplayUi::renderCurrentBearing(double, BearingQuality, bool) {}
 void DisplayUi::renderCalibrationPill(float, bool) {}
 void DisplayUi::renderTargetBearing(double) {}
-void DisplayUi::renderReverseBearingAndDistance(double, double, bool) {}
+void DisplayUi::renderReverseBearingAndDistance(double, double) {}
 void DisplayUi::renderRoverCard(RoverState, double) {}
 void DisplayUi::renderArrlDistance(const char *, const char *) {}
 void DisplayUi::renderUtcTime(int, int, bool) {}

@@ -65,8 +65,8 @@ double SerialCli::getTargetBearing() const {
     return getNavContext().targetBearing;
 }
 
-bool SerialCli::isRoverAlertActive() const {
-    return getNavContext().isRoverAlertActive;
+bool SerialCli::isRoverMode() const {
+    return getNavContext().isRoverMode;
 }
 
 double SerialCli::getRoverDistance() const {
@@ -360,8 +360,8 @@ void SerialCli::printSimulationStatus(unsigned long nowMs) {
 
     CliNavContext nav = getNavContext();
     printFormat("  Rover Mode Active : %s\r\n",
-                nav.isRoverAlertActive ? "YES (<16k alert tracking)" : "NO (Stationary target tracking)");
-    if (nav.isRoverAlertActive) {
+                nav.isRoverMode ? "YES (Rover Mode)" : "NO (Stationary target tracking)");
+    if (nav.isRoverMode) {
         int distKm = (int)std::floor(nav.roverDistanceMeters / 1000.0);
         printFormat("  Rover Distance    : %5.1f km (Alert: %s)\r\n",
                     nav.roverDistanceMeters / 1000.0,

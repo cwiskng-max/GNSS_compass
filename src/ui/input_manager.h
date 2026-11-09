@@ -14,7 +14,8 @@
 
 enum class UiMode : uint8_t {
     Normal = 0,
-    Calibrating = 1
+    Calibrating = 1,
+    RoverHistory = 2
 };
 
 enum class ModalButtonId : uint8_t {
@@ -22,7 +23,8 @@ enum class ModalButtonId : uint8_t {
     Snap = 1,
     Reset = 2,
     Save = 3,
-    Cancel = 4
+    Cancel = 4,
+    Discard = 5
 };
 
 enum class UserEventType : uint8_t {
@@ -31,6 +33,7 @@ enum class UserEventType : uint8_t {
     RotateCounterClockwise,
     EncoderButtonPressed,
     TouchLocalGrid,
+    LongPressLocalGridTriggered,
     TouchGridCharacter,
     TouchCalibrationPill,
     TouchVersionFooter,
@@ -40,7 +43,8 @@ enum class UserEventType : uint8_t {
     SaveButtonCommitted,
     SnapOffsetTriggered,
     ResetOffsetTriggered,
-    CancelModalTriggered
+    CancelModalTriggered,
+    DiscardLastStopTriggered
 };
 
 struct UserEvent {
@@ -75,6 +79,7 @@ public:
     static bool isCalPillTouched(int16_t x, int16_t y);
     static bool isFooterTouched(int16_t x, int16_t y);
     static ModalButtonId getModalButtonFromTouch(int16_t x, int16_t y);
+    static ModalButtonId getRoverModalButtonFromTouch(int16_t x, int16_t y);
 
     void handleTouchPoint(bool touched, int16_t x, int16_t y, unsigned long nowMs);
 

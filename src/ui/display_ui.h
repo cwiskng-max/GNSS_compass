@@ -7,6 +7,7 @@
 #include "../types.h"
 #include "cal_modal.h"
 #include "rover_card.h"
+#include "rover_history_modal.h"
 
 #if defined(ARDUINO)
 #include <Arduino_GFX_Library.h>
@@ -23,7 +24,9 @@ struct MainScreenState {
     double targetBearing = 0.0;
     double revBearing = 0.0;
     double distanceMeters = 0.0;
-    bool isRoverAlertActive = false;
+    bool isRoverMode = false;
+    RoverState roverState = RoverState::InTransitUnder16k;
+    double roverDisplacementKm = 0.0;
     double currentHeading = 0.0;
     BearingQuality bearingQuality = BearingQuality::None;
     bool hasHeading = false;
@@ -48,7 +51,7 @@ public:
     void renderCurrentBearing(double heading, BearingQuality quality, bool hasHeading);
     void renderCalibrationPill(float offset, bool isCalibrated);
     void renderTargetBearing(double targetBearing);
-    void renderReverseBearingAndDistance(double revBearing, double distanceMeters, bool isRoverAlertActive);
+    void renderReverseBearingAndDistance(double revBearing, double distanceMeters);
     void renderRoverCard(RoverState state, double displacementKm);
     void renderArrlDistance(const char *myGrid, const char *targetGrid);
     void renderUtcTime(int hours, int minutes, bool hasTime);
@@ -58,6 +61,7 @@ public:
     void redrawMainScreen(const MainScreenState &state);
 
     CalModal &getCalModal() { return calModal_; }
+    RoverHistoryModal &getRoverHistoryModal() { return roverHistoryModal_; }
 
 #if defined(ARDUINO)
     Arduino_GFX *getGfx() const { return gfx_; }
@@ -73,6 +77,7 @@ public:
 
 private:
     CalModal calModal_;
+    RoverHistoryModal roverHistoryModal_;
 
 #if defined(ARDUINO)
     Arduino_ESP32RGBPanel *bus_ = nullptr;

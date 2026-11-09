@@ -594,8 +594,11 @@ void test_config_constants() {
     ASSERT_TRUE(DEFAULT_MAX_ROVER_STOPS == 100);
     ASSERT_TRUE(MIN_ROVER_STOPS == 10);
     ASSERT_TRUE(ABS_MAX_ROVER_STOPS == 500);
-    ASSERT_TRUE(ROVER_CARD_W == 400);
-    ASSERT_TRUE(ROVER_CARD_H == 44);
+    ASSERT_TRUE(ROVER_CARD_SZ == 3);
+    ASSERT_TRUE(ROVER_CARD_W == 320);
+    ASSERT_TRUE(ROVER_CARD_H == 40);
+    ASSERT_TRUE(ROVER_CARD_X == 80);
+    ASSERT_TRUE(ROVER_CARD_TEXT_X == 96);
     ASSERT_TRUE(COLOR_ROVER_TRANSIT_RED == 0xF800);
     ASSERT_TRUE(COLOR_ROVER_QUALIFIED_GREEN == 0x03E0);
     ASSERT_TRUE(COLOR_ROVER_REVISIT_BLUE == 0x011C);
@@ -1257,12 +1260,12 @@ void test_app_controller() {
     ASSERT_TRUE(app.getUiMode() == UiMode::Normal);
     ASSERT_NEAR(calibration.getOffset(), initProposed + 0.1f, 1e-4);
 
-    // Event: Tap Local Grid -> Copies local station grid, disarms edit mode, and sets Rover Alert active
+    // Event: Tap Local Grid -> Copies local station grid, disarms edit mode, and sets Rover Mode active
     UserEvent evLoc;
     evLoc.type = UserEventType::TouchLocalGrid;
     app.handleUserEvent(evLoc, 2400);
     ASSERT_STR_EQ(app.getTargetGrid(), "DM08GI");
-    ASSERT_TRUE(app.isRoverAlertActive());
+    ASSERT_TRUE(app.isRoverMode());
     ASSERT_TRUE(!app.getGridEditor().isEditing());
     // Distance to origin is exact 0.0 m physically (not quantized to grid center!)
     ASSERT_NEAR(app.getDistance(), 0.0, 1e-3);
@@ -1272,27 +1275,35 @@ void test_app_controller() {
     evBump.type = UserEventType::RotateClockwise;
     app.handleUserEvent(evBump, 2450);
     ASSERT_STR_EQ(app.getTargetGrid(), "DM08GI");
-    ASSERT_TRUE(app.isRoverAlertActive());
+    ASSERT_TRUE(app.isRoverMode());
 
     // Rover transit movement: 10.0 km physical displacement
     GeoPoint originPos = app.getCurrentPosition();
     GeoPoint displaced10km = GpsSimulator::calculateRoverDisplacement(originPos, 10.0, 45.0);
     gpsManager.setLocation(displaced10km, 2500);
-    ASSERT_TRUE(app.isRoverAlertActive());
+    ASSERT_TRUE(app.isRoverMode());
     ASSERT_NEAR(app.getDistance() / 1000.0, 10.0, 0.05);
 
     // Rover transit movement: 18.0 km physical displacement (alert clears >= 16 km)
     GeoPoint displaced18km = GpsSimulator::calculateRoverDisplacement(originPos, 18.0, 45.0);
     gpsManager.setLocation(displaced18km, 2600);
-    ASSERT_TRUE(app.isRoverAlertActive()); // Flag stays active to show normal white text
+    ASSERT_TRUE(app.isRoverMode());
     ASSERT_NEAR(app.getDistance() / 1000.0, 18.0, 0.05);
 
-    // Event: Touch Target Grid character -> Disarms rover alert and returns to stationary tracking
+    // 2-Step exit: Touch Target Grid character selects char and arms editing, but Rover Mode remains active
     UserEvent evChar;
     evChar.type = UserEventType::TouchGridCharacter;
     evChar.gridIndex = 2;
     app.handleUserEvent(evChar, 2700);
-    ASSERT_TRUE(!app.isRoverAlertActive());
+    ASSERT_TRUE(app.isRoverMode());
+    ASSERT_TRUE(app.getGridEditor().isEditing());
+
+    // Step 2: First bezel rotation while editing commits stop and disarms Rover Mode
+    UserEvent evRoll;
+    evRoll.type = UserEventType::RotateClockwise;
+    app.handleUserEvent(evRoll, 2750);
+    ASSERT_TRUE(!app.isRoverMode());
+    ASSERT_TRUE(app.getOperationalMode() == OperationalMode::Bearing);
 
     // Non-blocking modal button unpress timer across 32-bit millis() rollover
     UserEvent evSnap;
@@ -1716,6 +1727,334 @@ void test_rover_card_formatting_and_colors() {
     PASS();
 }
 
+void test_rover_history_modal_formatters() {
+    TEST("RoverHistoryModal string formatters and buffer safety");
+
+    char buf[48];
+
+    // Null / empty stop
+    RoverHistoryModal::formatLastStop(0, nullptr, buf, sizeof(buf));
+    ASSERT_STR_EQ(buf, "Last Stop: None");
+
+    RoverHistoryModal::formatDisplacementStatus(nullptr, buf, sizeof(buf));
+    ASSERT_STR_EQ(buf, "Displacement: 0.0 km (NONE)");
+
+    RoverHistoryModal::formatTotalStops(0, buf, sizeof(buf));
+    ASSERT_STR_EQ(buf, "Total Logged Stops: 0");
+
+    // Origin stop (Stop 1, 0.0 km, not qualified)
+    // 14:15 UTC = 14 * 3600 + 15 * 60 = 50400 + 900 = 51300 s
+    RoverStop stop1(51300, 37.421998, -122.084000, "CM87wa22", 0.0f, false);
+    RoverHistoryModal::formatLastStop(1, &stop1, buf, sizeof(buf));
+    ASSERT_STR_EQ(buf, "Last: #1 - CM87wa22 (14:15Z)");
+
+    RoverHistoryModal::formatDisplacementStatus(&stop1, buf, sizeof(buf));
+    ASSERT_STR_EQ(buf, "Disp:   0.0 km (ORIGIN)");
+
+    // Qualified move (Stop 2, 24.2 km)
+    // 16:32 UTC = 16 * 3600 + 32 * 60 = 57600 + 1920 = 59520 s
+    RoverStop stop2(59520, 37.581204, -122.215401, "CM87wb44", 24.2f, true);
+    RoverHistoryModal::formatLastStop(2, &stop2, buf, sizeof(buf));
+    ASSERT_STR_EQ(buf, "Last: #2 - CM87wb44 (16:32Z)");
+
+    RoverHistoryModal::formatDisplacementStatus(&stop2, buf, sizeof(buf));
+    ASSERT_STR_EQ(buf, "Disp:  24.2 km (QUALIFIED)");
+
+    RoverHistoryModal::formatTotalStops(4, buf, sizeof(buf));
+    ASSERT_STR_EQ(buf, "Total Logged Stops: 4");
+
+    // Under 16k uncompleted / partial stop
+    RoverStop stopUnder(60000, 37.5, -122.1, "CM87wb11", 12.5f, false);
+    RoverHistoryModal::formatDisplacementStatus(&stopUnder, buf, sizeof(buf));
+    ASSERT_STR_EQ(buf, "Disp:  12.5 km (UNDER 16k)");
+
+    // Null buffer safety
+    RoverHistoryModal::formatLastStop(1, &stop1, nullptr, 0);
+    RoverHistoryModal::formatDisplacementStatus(&stop1, nullptr, 0);
+    RoverHistoryModal::formatTotalStops(1, nullptr, 0);
+
+    PASS();
+}
+
+void test_rover_input_gestures_and_hit_testing() {
+    TEST("InputManager Rover touch hit-testing, Row 1 long-press, and history modal events");
+
+    InputManager im;
+    im.begin();
+
+    // Hit-testing in Rover History Modal
+    ASSERT_TRUE(InputManager::getRoverModalButtonFromTouch(ROVER_BTN_DISCARD_X + 10, ROVER_BTN_DISCARD_Y + 10) == ModalButtonId::Discard);
+    ASSERT_TRUE(InputManager::getRoverModalButtonFromTouch(ROVER_BTN_CANCEL_X + 10, ROVER_BTN_CANCEL_Y + 10) == ModalButtonId::Cancel);
+    ASSERT_TRUE(InputManager::getRoverModalButtonFromTouch(10, 10) == ModalButtonId::None);
+
+    // Row 1 Short Tap (< 1500 ms) in Normal mode -> TouchLocalGrid
+    im.injectTouch(true, 200, 35, 1000); // Touch down on Row 1
+    im.injectTouch(false, 0, 0, 1300);   // Release after 300 ms (< 1500 ms)
+    UserEvent ev;
+    ASSERT_TRUE(im.pollEvent(ev));
+    ASSERT_TRUE(ev.type == UserEventType::TouchLocalGrid);
+    ASSERT_TRUE(!im.pollEvent(ev));
+
+    // Row 1 Long Press (>= 1500 ms) in Normal mode -> LongPressLocalGridTriggered
+    im.injectTouch(true, 200, 35, 2000); // Touch down
+    im.injectTouch(true, 200, 35, 3000); // Held for 1000 ms -> no event yet
+    ASSERT_TRUE(!im.pollEvent(ev));
+    im.injectTouch(true, 200, 35, 3500); // Held for 1500 ms -> triggers long-press!
+    ASSERT_TRUE(im.pollEvent(ev));
+    ASSERT_TRUE(ev.type == UserEventType::LongPressLocalGridTriggered);
+
+    // Release after long-press does NOT trigger short tap
+    im.injectTouch(false, 0, 0, 3600);
+    ASSERT_TRUE(!im.pollEvent(ev));
+
+    // RoverHistory mode button touch and release
+    im.setUiMode(UiMode::RoverHistory);
+
+    // Press Discard button
+    im.injectTouch(true, ROVER_BTN_DISCARD_X + 20, ROVER_BTN_DISCARD_Y + 10, 4000);
+    ASSERT_TRUE(im.pollEvent(ev));
+    ASSERT_TRUE(ev.type == UserEventType::ModalButtonDown && ev.buttonId == ModalButtonId::Discard);
+
+    // Release Discard button -> DiscardLastStopTriggered
+    im.injectTouch(false, 0, 0, 4100);
+    ASSERT_TRUE(im.pollEvent(ev));
+    ASSERT_TRUE(ev.type == UserEventType::DiscardLastStopTriggered);
+
+    // Press Cancel button
+    im.injectTouch(true, ROVER_BTN_CANCEL_X + 20, ROVER_BTN_CANCEL_Y + 10, 5000);
+    ASSERT_TRUE(im.pollEvent(ev));
+    ASSERT_TRUE(ev.type == UserEventType::ModalButtonDown && ev.buttonId == ModalButtonId::Cancel);
+
+    // Release Cancel button -> CancelModalTriggered
+    im.injectTouch(false, 0, 0, 5100);
+    ASSERT_TRUE(im.pollEvent(ev));
+    ASSERT_TRUE(ev.type == UserEventType::CancelModalTriggered);
+
+    PASS();
+}
+
+void test_rover_app_controller_transitions_and_natural_exit() {
+    TEST("AppController Rover Mode transitions, 2-step natural exit, and inactivity timeout");
+
+    RoverLogManager::resetHostStorage();
+
+    Board board;
+    DisplayUi displayUi;
+    InputManager inputManager;
+    GpsManager gpsManager;
+    Calibration calibration;
+    GpsSimulator gpsSimulator;
+    SerialCli serialCli(gpsManager, calibration, gpsSimulator);
+
+    AppController app(board, displayUi, inputManager, gpsManager, calibration, gpsSimulator, serialCli);
+    app.begin();
+
+    // Set starting position at Mount Diablo (CM87wa)
+    GeoPoint startPos(37.421998, -122.084000, true);
+    app.setCurrentPosition(startPos);
+    ASSERT_STR_EQ(app.getMyGrid(), "CM87WK91");
+    ASSERT_TRUE(app.getOperationalMode() == OperationalMode::Bearing);
+    ASSERT_TRUE(!app.isRoverMode());
+    ASSERT_TRUE(app.getRoverLogManager().isEmpty());
+
+    // 1. One-Tap Origin Capture: Tap Row 1 (My Grid)
+    UserEvent evTapMyGrid;
+    evTapMyGrid.type = UserEventType::TouchLocalGrid;
+    app.handleUserEvent(evTapMyGrid, 1000);
+
+    // Rover Mode engaged
+    ASSERT_TRUE(app.getOperationalMode() == OperationalMode::Rover);
+    ASSERT_TRUE(app.isRoverMode());
+    ASSERT_TRUE(!app.getGridEditor().isEditing()); // Bezel locked out
+
+    // History stack has Stop #1 (ORIGIN, 0.0 km)
+    ASSERT_TRUE(app.getRoverLogManager().getStopCount() == 1);
+    const RoverStop *stop1 = app.getRoverLogManager().getStop(0);
+    ASSERT_TRUE(stop1 != nullptr);
+    ASSERT_NEAR(stop1->displacement_km, 0.0f, 1e-4);
+    ASSERT_TRUE(!stop1->qualified_16km);
+    ASSERT_NEAR(app.getOriginPoint().latitude, startPos.latitude, 1e-6);
+    ASSERT_NEAR(app.getOriginPoint().longitude, startPos.longitude, 1e-6);
+    ASSERT_STR_EQ(app.getOriginGrid(), "CM87WK91");
+
+    // Road vibration bezel bumps while driving: no character rolling and does NOT exit Rover Mode
+    UserEvent evBump;
+    evBump.type = UserEventType::RotateClockwise;
+    app.handleUserEvent(evBump, 1100);
+    ASSERT_TRUE(app.isRoverMode());
+    ASSERT_STR_EQ(app.getTargetGrid(), "CM87WK");
+
+    // 2. Continuous Displacement: Drive 10.0 km (State A: InTransitUnder16k)
+    GeoPoint pos10km = GpsSimulator::calculateRoverDisplacement(startPos, 10.0, 45.0);
+    app.setCurrentPosition(pos10km);
+    app.update(2000);
+    ASSERT_TRUE(app.isRoverMode());
+    ASSERT_NEAR(app.getDistance() / 1000.0, 10.0, 0.1);
+    ASSERT_TRUE(app.getCurrentRoverState() == RoverState::InTransitUnder16k);
+
+    // 3. Drive to 24.2 km into new grid (State B: QualifiedNewGrid)
+    GeoPoint pos24km = GpsSimulator::calculateRoverDisplacement(startPos, 24.2, 45.0);
+    app.setCurrentPosition(pos24km);
+    app.update(3000);
+    ASSERT_TRUE(app.isRoverMode());
+    ASSERT_NEAR(app.getDistance() / 1000.0, 24.2, 0.1);
+    ASSERT_TRUE(app.getCurrentRoverState() == RoverState::QualifiedNewGrid);
+
+    // 4. Dynamic Backtrack: Switchback turn drops displacement to 15.2 km (< 16 km)
+    // Assert instantaneous drop back to State A (no hysteresis latching)
+    GeoPoint pos15km = GpsSimulator::calculateRoverDisplacement(startPos, 15.2, 45.0);
+    app.setCurrentPosition(pos15km);
+    app.update(4000);
+    ASSERT_TRUE(app.getCurrentRoverState() == RoverState::InTransitUnder16k);
+
+    // Resume forward driving to 25.0 km -> immediately recovers to State B
+    GeoPoint pos25km = GpsSimulator::calculateRoverDisplacement(startPos, 25.0, 45.0);
+    app.setCurrentPosition(pos25km);
+    app.update(5000);
+    ASSERT_TRUE(app.getCurrentRoverState() == RoverState::QualifiedNewGrid);
+
+    // 5. Two-Step Natural Target Exit Protection
+    // Step 1: Accidental touch on Target Grid character (Row 2)
+    UserEvent evTouchChar;
+    evTouchChar.type = UserEventType::TouchGridCharacter;
+    evTouchChar.gridIndex = 2;
+    app.handleUserEvent(evTouchChar, 6000);
+
+    // Character selected and editing armed, BUT Rover Mode is NOT exited!
+    ASSERT_TRUE(app.getGridEditor().isEditing());
+    ASSERT_TRUE(app.getGridEditor().getCursorColumn() == 2);
+    ASSERT_TRUE(app.isRoverMode()); // Still in Rover Mode!
+
+    // Inactivity timeout (5 seconds = EDIT_TIMEOUT_MS): driver didn't turn knob
+    app.update(11050); // 6000 + 5050 ms
+    ASSERT_TRUE(!app.getGridEditor().isEditing()); // Cursor hidden, edit auto-locked
+    ASSERT_TRUE(app.isRoverMode()); // Still in Rover Mode!
+
+    // Step 1 again: Driver intentionally touches character to tune distant station
+    app.handleUserEvent(evTouchChar, 12000);
+    ASSERT_TRUE(app.getGridEditor().isEditing());
+    ASSERT_TRUE(app.isRoverMode());
+
+    // Step 2: Driver turns knob to roll character
+    UserEvent evRollKnob;
+    evRollKnob.type = UserEventType::RotateClockwise;
+    app.handleUserEvent(evRollKnob, 12200);
+
+    // Commit Transition:
+    // Rover Mode cleanly exited, stop committed to history, now in stationary Bearing Mode
+    ASSERT_TRUE(!app.isRoverMode());
+    ASSERT_TRUE(app.getOperationalMode() == OperationalMode::Bearing);
+    ASSERT_TRUE(app.getRoverLogManager().getStopCount() == 2);
+
+    const RoverStop *stop2 = app.getRoverLogManager().getStop(1);
+    ASSERT_TRUE(stop2 != nullptr);
+    ASSERT_NEAR(stop2->displacement_km, 25.0f, 0.2f);
+    ASSERT_TRUE(stop2->qualified_16km);
+
+    PASS();
+}
+
+void test_rover_history_undo_modal_and_autorearm() {
+    TEST("Rover History & Undo modal, Discard Last Stop, and auto-rearm");
+
+    RoverLogManager::resetHostStorage();
+
+    Board board;
+    DisplayUi displayUi;
+    InputManager inputManager;
+    GpsManager gpsManager;
+    Calibration calibration;
+    GpsSimulator gpsSimulator;
+    SerialCli serialCli(gpsManager, calibration, gpsSimulator);
+
+    AppController app(board, displayUi, inputManager, gpsManager, calibration, gpsSimulator, serialCli);
+    app.begin();
+
+    // Start at Site 1 (CM87wa)
+    GeoPoint site1(37.421998, -122.084000, true);
+    app.setCurrentPosition(site1);
+
+    // Arm Rover Mode (creates Stop 1: CM87wa, 0.0 km)
+    UserEvent evTapMyGrid;
+    evTapMyGrid.type = UserEventType::TouchLocalGrid;
+    app.handleUserEvent(evTapMyGrid, 1000);
+    ASSERT_TRUE(app.getRoverLogManager().getStopCount() == 1);
+
+    // Drive 24.0 km to Site 2 (CM87wb)
+    GeoPoint site2 = GpsSimulator::calculateRoverDisplacement(site1, 24.0, 45.0);
+    app.setCurrentPosition(site2);
+    app.update(2000);
+
+    // Natural exit to stationary mode by editing target (creates Stop 2: CM87wb, 24.0 km)
+    UserEvent evTouchChar;
+    evTouchChar.type = UserEventType::TouchGridCharacter;
+    evTouchChar.gridIndex = 2;
+    app.handleUserEvent(evTouchChar, 2500);
+
+    UserEvent evRoll;
+    evRoll.type = UserEventType::RotateClockwise;
+    app.handleUserEvent(evRoll, 2600);
+
+    ASSERT_TRUE(app.getOperationalMode() == OperationalMode::Bearing);
+    ASSERT_TRUE(app.getRoverLogManager().getStopCount() == 2);
+
+    // Operator discovers Site 2 has severe RF noise / locked gate -> unviable!
+    // Open Rover History Modal via 1.5s long-press on Row 1
+    UserEvent evLongPress;
+    evLongPress.type = UserEventType::LongPressLocalGridTriggered;
+    app.handleUserEvent(evLongPress, 3000);
+    ASSERT_TRUE(app.getUiMode() == UiMode::RoverHistory);
+
+    // Test Cancel button: modal closes, no change to history or mode
+    UserEvent evCancel;
+    evCancel.type = UserEventType::CancelModalTriggered;
+    app.handleUserEvent(evCancel, 3100);
+    app.update(3300); // 200 ms later, modal button release clears
+    ASSERT_TRUE(app.getUiMode() == UiMode::Normal);
+    ASSERT_TRUE(app.getOperationalMode() == OperationalMode::Bearing);
+    ASSERT_TRUE(app.getRoverLogManager().getStopCount() == 2);
+
+    // Reopen modal and trigger DISCARD LAST STOP
+    app.handleUserEvent(evLongPress, 4000);
+    ASSERT_TRUE(app.getUiMode() == UiMode::RoverHistory);
+
+    UserEvent evDiscard;
+    evDiscard.type = UserEventType::DiscardLastStopTriggered;
+    app.handleUserEvent(evDiscard, 4100);
+
+    // Discard executed:
+    // 1. Topmost stop (Site 2) popped from stack -> now 1 stop (Site 1)
+    ASSERT_TRUE(app.getRoverLogManager().getStopCount() == 1);
+    ASSERT_TRUE(*app.getRoverLogManager().getLastStop() == *app.getRoverLogManager().getStop(0));
+
+    // 2. Active origin restored to Site 1
+    ASSERT_NEAR(app.getOriginPoint().latitude, site1.latitude, 1e-6);
+    ASSERT_NEAR(app.getOriginPoint().longitude, site1.longitude, 1e-6);
+
+    // 3. Auto-closes dialog and AUTO-RE-ARMS Rover Mode relative to Site 1!
+    ASSERT_TRUE(app.getUiMode() == UiMode::Normal);
+    ASSERT_TRUE(app.getOperationalMode() == OperationalMode::Rover);
+    ASSERT_TRUE(!app.getGridEditor().isEditing());
+
+    // Live displacement is immediately 24.0 km relative to Site 1!
+    ASSERT_NEAR(app.getDistance() / 1000.0, 24.0, 0.2);
+
+    // 4. GPS Loss in foliage / mountain canyon (State D: GpsLostStale)
+    // In Rover Mode, advance time by 3.5 seconds without GPS update
+    app.update(7700); // 4100 + 3600 ms (> 3000 ms)
+    ASSERT_TRUE(app.getCurrentRoverState() == RoverState::GpsLostStale);
+    ASSERT_NEAR(app.getLastValidDisplacementKm(), 24.0, 0.2); // Holds last known distance!
+
+    // GPS Signal Recovered: new location received -> immediately returns to State B
+    GeoPoint site3 = GpsSimulator::calculateRoverDisplacement(site1, 28.0, 45.0);
+    app.setCurrentPosition(site3);
+    app.update(8000);
+    ASSERT_TRUE(app.getCurrentRoverState() == RoverState::QualifiedNewGrid);
+    ASSERT_NEAR(app.getDistance() / 1000.0, 28.0, 0.2);
+
+    PASS();
+}
+
 int main() {
     std::cout << "========================================" << std::endl;
     std::cout << "  GNSS Compass Unit Test Suite" << std::endl;
@@ -1755,6 +2094,10 @@ int main() {
     test_rover_log_manager_capacity_and_nvs();
     test_rover_card_evaluator();
     test_rover_card_formatting_and_colors();
+    test_rover_history_modal_formatters();
+    test_rover_input_gestures_and_hit_testing();
+    test_rover_app_controller_transitions_and_natural_exit();
+    test_rover_history_undo_modal_and_autorearm();
 
     std::cout << "========================================" << std::endl;
     std::cout << "  All " << tests_passed << " / " << tests_run << " tests PASSED successfully!" << std::endl;

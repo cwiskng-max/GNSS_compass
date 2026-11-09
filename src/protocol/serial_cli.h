@@ -18,7 +18,7 @@ typedef void (*CliRoverSimCallback)(const char *originGrid, double distKm, void 
  */
 struct CliNavContext {
     double targetBearing = 0.0;
-    bool isRoverAlertActive = false;
+    bool isRoverMode = false;
     double roverDistanceMeters = 0.0;
 };
 typedef CliNavContext (*CliNavContextProviderFn)(void *context);
@@ -54,8 +54,8 @@ public:
     void setTargetBearing(double bearingDeg) { fallbackNavContext_.targetBearing = bearingDeg; }
     double getTargetBearing() const;
 
-    void setRoverAlertActive(bool active) { fallbackNavContext_.isRoverAlertActive = active; }
-    bool isRoverAlertActive() const;
+    void setRoverMode(bool active) { fallbackNavContext_.isRoverMode = active; }
+    bool isRoverMode() const;
 
     void setRoverDistance(double distMeters) { fallbackNavContext_.roverDistanceMeters = distMeters; }
     double getRoverDistance() const;
