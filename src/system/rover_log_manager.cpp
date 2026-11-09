@@ -231,12 +231,22 @@ void RoverLogManager::saveToNvs() {
 #if defined(ARDUINO)
     Preferences logPrefs;
     if (logPrefs.begin(ROVER_LOG_NAMESPACE, false)) {
-        logPrefs.clear();
+        uint16_t oldCount = logPrefs.getUShort(ROVER_LOG_KEY_COUNT, 0);
+
+        // Overwrite entries in place (never clear() to protect against mid-write power loss)
         for (size_t i = 0; i < stops_.size(); ++i) {
             char key[16];
             snprintf(key, sizeof(key), "s%u", (unsigned int)i);
             logPrefs.putBytes(key, &stops_[i], sizeof(RoverStop));
         }
+
+        // Clean up any trailing orphaned keys if capacity shrunk
+        for (size_t i = stops_.size(); i < oldCount; ++i) {
+            char key[16];
+            snprintf(key, sizeof(key), "s%u", (unsigned int)i);
+            logPrefs.remove(key);
+        }
+
         logPrefs.putUShort(ROVER_LOG_KEY_COUNT, (uint16_t)stops_.size());
         logPrefs.end();
     }

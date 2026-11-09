@@ -79,6 +79,8 @@ public:
 private:
     CalModal calModal_;
     RoverHistoryModal roverHistoryModal_;
+    char lastRoverCardBuf_[24] = {0};
+    RoverState lastRoverCardState_ = static_cast<RoverState>(-1);
 
 #if defined(ARDUINO)
     Arduino_ESP32RGBPanel *bus_ = nullptr;

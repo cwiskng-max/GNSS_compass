@@ -63,9 +63,13 @@ void AppController::setCurrentPosition(const GeoPoint &pos) {
     hasLocation_ = true;
     currentPosition_ = pos;
     lastLocationUpdate_ = (currentNowMs_ > 0 ? currentNowMs_ : 1);
-    geoPointToGrid(currentPosition_, myGrid_);
-    if (currentUiMode_ != UiMode::Calibrating && currentUiMode_ != UiMode::RoverHistory) {
-        displayUi_.renderMyGrid(myGrid_);
+    char newGrid[9];
+    geoPointToGrid(currentPosition_, newGrid);
+    if (std::strcmp(myGrid_, newGrid) != 0) {
+        std::strcpy(myGrid_, newGrid);
+        if (currentUiMode_ == UiMode::Normal) {
+            displayUi_.renderMyGrid(myGrid_);
+        }
     }
     updateNavigation();
 }
@@ -189,6 +193,9 @@ void AppController::drawCurrentBearing() {
     BearingFilter &bf = gpsManager_.getBearingFilter();
     if (currentUiMode_ == UiMode::Calibrating) {
         displayUi_.getCalModal().drawRawHeading(bf.getRawHeading(), hasHeading_);
+        return;
+    }
+    if (currentUiMode_ != UiMode::Normal) {
         return;
     }
     displayUi_.renderCurrentBearing(bf.getCalibratedHeading(calibration_.getOffset()),
@@ -315,7 +322,7 @@ void AppController::begin() {
         self->hasTime_ = true;
         self->hours_ = h;
         self->minutes_ = m;
-        if (self->currentUiMode_ != UiMode::Calibrating) {
+        if (self->currentUiMode_ == UiMode::Normal) {
             self->displayUi_.renderUtcTime(h, m, true);
         }
     }, this);
@@ -377,7 +384,7 @@ void AppController::begin() {
             self->hasLocation_ = true;
             self->currentPosition_ = self->gpsManager_.getLocation();
             geoPointToGrid(self->currentPosition_, self->myGrid_);
-            if (self->currentUiMode_ != UiMode::Calibrating) {
+            if (self->currentUiMode_ == UiMode::Normal) {
                 self->displayUi_.renderMyGrid(self->myGrid_);
             }
         }
@@ -385,7 +392,7 @@ void AppController::begin() {
             self->hasTime_ = true;
             self->hours_ = self->gpsManager_.getHours();
             self->minutes_ = self->gpsManager_.getMinutes();
-            if (self->currentUiMode_ != UiMode::Calibrating) {
+            if (self->currentUiMode_ == UiMode::Normal) {
                 self->displayUi_.renderUtcTime(self->hours_, self->minutes_, true);
             }
         }

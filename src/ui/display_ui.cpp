@@ -205,10 +205,17 @@ void DisplayUi::renderReverseBearingAndDistance(double revBearing, double distan
 void DisplayUi::renderRoverCard(RoverState state, double displacementKm) {
     if (!gfx_) return;
 
-    gfx_->fillRoundRect(ROVER_CARD_X, ROVER_CARD_Y, ROVER_CARD_W, ROVER_CARD_H, ROVER_CARD_R, WHITE);
-
     char buf[20];
     formatRoverCard(state, displacementKm, buf, sizeof(buf));
+
+    if (state == lastRoverCardState_ && std::strcmp(buf, lastRoverCardBuf_) == 0) {
+        return;
+    }
+    lastRoverCardState_ = state;
+    std::strncpy(lastRoverCardBuf_, buf, sizeof(lastRoverCardBuf_) - 1);
+    lastRoverCardBuf_[sizeof(lastRoverCardBuf_) - 1] = '\0';
+
+    gfx_->fillRoundRect(ROVER_CARD_X, ROVER_CARD_Y, ROVER_CARD_W, ROVER_CARD_H, ROVER_CARD_R, WHITE);
 
     uint16_t textColor = getRoverStateTextColor(state);
     gfx_->setTextColor(textColor, WHITE);
@@ -220,6 +227,8 @@ void DisplayUi::renderRoverCard(RoverState state, double displacementKm) {
 
 void DisplayUi::clearRoverCard() {
     if (!gfx_) return;
+    lastRoverCardState_ = static_cast<RoverState>(-1);
+    lastRoverCardBuf_[0] = '\0';
     gfx_->fillRect(ROVER_CARD_X - 2, ROVER_CARD_Y - 2, ROVER_CARD_W + 4, ROVER_CARD_H + 4, BLACK);
 }
 

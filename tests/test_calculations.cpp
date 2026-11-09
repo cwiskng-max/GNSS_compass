@@ -1373,6 +1373,9 @@ void test_rover_stop_model() {
     s4.setGrid(nullptr);
     ASSERT_STR_EQ(s4.grid, "");
 
+    // Assert deterministic packed struct size (34 bytes: 4 + 8 + 8 + 9 + 4 + 1)
+    ASSERT_TRUE(sizeof(RoverStop) == 34);
+
     PASS();
 }
 
@@ -2312,8 +2315,17 @@ void test_rover_simulation_scenarios_e2e() {
     ASSERT_TRUE(cliOut.find("STATE B: QUALIFIED") != std::string::npos);
     cliOut.clear();
 
+    // Verify stationary vehicle fix: standing still at site2 for 5 seconds receiving identical KSXT
+    // keeps GPS watchdog fresh and NEVER triggers false-positive State D (NO GPS)
+    injectKsxt(site2, 45.0f, BEARING_FIXED, 4000);
+    injectKsxt(site2, 45.0f, BEARING_FIXED, 5000);
+    injectKsxt(site2, 45.0f, BEARING_FIXED, 6000);
+    injectKsxt(site2, 45.0f, BEARING_FIXED, 7000);
+    injectKsxt(site2, 45.0f, BEARING_FIXED, 8000);
+    ASSERT_TRUE(app.getCurrentRoverState() == RoverState::QualifiedNewGrid);
+
     // Stop transit via CLI 'rover stop' -> commits Site 2 to contest history log
-    serialCli.executeCommand("rover stop", 3100);
+    serialCli.executeCommand("rover stop", 8100);
     ASSERT_TRUE(!app.isRoverMode());
     ASSERT_TRUE(app.getRoverLogManager().getStopCount() == 2);
     const RoverStop *stop2 = app.getRoverLogManager().getLastStop();
@@ -2326,16 +2338,16 @@ void test_rover_simulation_scenarios_e2e() {
     // Scenario 2: Mountain Canyon Backtrack Retreat (State B -> State A -> State B)
     // ==============================================================
     // Depart Site 2 towards mountain ridge
-    serialCli.executeCommand("rover start", 4000);
+    serialCli.executeCommand("rover start", 10000);
     ASSERT_TRUE(app.isRoverMode());
     cliOut.clear();
 
     // Climb ridge to 16.8 km -> State B (QUALIFIED)
     GeoPoint pos16_8km = GpsSimulator::calculateRoverDisplacement(site2, 16.8, 30.0);
-    injectKsxt(pos16_8km, 30.0f, BEARING_FIXED, 5000);
+    injectKsxt(pos16_8km, 30.0f, BEARING_FIXED, 11000);
     ASSERT_TRUE(app.getCurrentRoverState() == RoverState::QualifiedNewGrid);
 
-    serialCli.executeCommand("rover status", 5000);
+    serialCli.executeCommand("rover status", 11000);
     ASSERT_TRUE(cliOut.find("16.8 km") != std::string::npos);
     ASSERT_TRUE(cliOut.find("STATE B: QUALIFIED") != std::string::npos);
     cliOut.clear();
@@ -2343,40 +2355,40 @@ void test_rover_simulation_scenarios_e2e() {
     // Switchback turn down canyon: straight-line distance retreats to 15.1 km (< 16 km)
     // Assert instantaneous, hysteresis-free drop to State A
     GeoPoint pos15_1km = GpsSimulator::calculateRoverDisplacement(site2, 15.1, 30.0);
-    injectKsxt(pos15_1km, 30.0f, BEARING_FIXED, 6000);
+    injectKsxt(pos15_1km, 30.0f, BEARING_FIXED, 12000);
     ASSERT_TRUE(app.getCurrentRoverState() == RoverState::InTransitUnder16k);
 
-    serialCli.executeCommand("rover status", 6000);
+    serialCli.executeCommand("rover status", 12000);
     ASSERT_TRUE(cliOut.find("15.1 km") != std::string::npos);
     ASSERT_TRUE(cliOut.find("STATE A: In-Transit") != std::string::npos);
     cliOut.clear();
 
     // Ridge breakout to 21.5 km -> recovers immediately to State B
     GeoPoint site3 = GpsSimulator::calculateRoverDisplacement(site2, 21.5, 30.0);
-    injectKsxt(site3, 30.0f, BEARING_FIXED, 7000);
+    injectKsxt(site3, 30.0f, BEARING_FIXED, 13000);
     ASSERT_TRUE(app.getCurrentRoverState() == RoverState::QualifiedNewGrid);
 
     // Commit Site 3
-    serialCli.executeCommand("rover stop", 7100);
+    serialCli.executeCommand("rover stop", 13100);
     ASSERT_TRUE(app.getRoverLogManager().getStopCount() == 3);
     cliOut.clear();
 
     // ==============================================================
     // Scenario 3: GPS Signal Drop and Watchdog Recovery (State B -> State D -> State B)
     // ==============================================================
-    serialCli.executeCommand("rover start", 8000);
+    serialCli.executeCommand("rover start", 14000);
     ASSERT_TRUE(app.isRoverMode());
     cliOut.clear();
 
     GeoPoint pos19km = GpsSimulator::calculateRoverDisplacement(site3, 19.0, 45.0);
-    injectKsxt(pos19km, 45.0f, BEARING_FIXED, 9000);
+    injectKsxt(pos19km, 45.0f, BEARING_FIXED, 15000);
     ASSERT_TRUE(app.getCurrentRoverState() == RoverState::QualifiedNewGrid);
 
     // Signal drop in dense canopy: advance time by 3.6 seconds (> 3000 ms watchdog) without GPS update
-    app.update(12600);
+    app.update(18600);
     ASSERT_TRUE(app.getCurrentRoverState() == RoverState::GpsLostStale);
 
-    serialCli.executeCommand("rover status", 12600);
+    serialCli.executeCommand("rover status", 18600);
     ASSERT_TRUE(cliOut.find("STATE D: NO GPS") != std::string::npos);
     ASSERT_TRUE(cliOut.find("19.0 km") != std::string::npos); // Holds last valid reading!
     ASSERT_TRUE(cliOut.find("Stale / Timeout") != std::string::npos);
@@ -2384,15 +2396,15 @@ void test_rover_simulation_scenarios_e2e() {
 
     // GPS fix recovered -> returns to State B
     GeoPoint site4 = GpsSimulator::calculateRoverDisplacement(site3, 22.0, 45.0);
-    injectKsxt(site4, 45.0f, BEARING_FIXED, 13000);
+    injectKsxt(site4, 45.0f, BEARING_FIXED, 19000);
     ASSERT_TRUE(app.getCurrentRoverState() == RoverState::QualifiedNewGrid);
 
-    serialCli.executeCommand("rover status", 13000);
+    serialCli.executeCommand("rover status", 19000);
     ASSERT_TRUE(cliOut.find("STATE B: QUALIFIED") != std::string::npos);
     ASSERT_TRUE(cliOut.find("Fresh") != std::string::npos);
     cliOut.clear();
 
-    serialCli.executeCommand("rover stop", 13100);
+    serialCli.executeCommand("rover stop", 19100);
     ASSERT_TRUE(app.getRoverLogManager().getStopCount() == 4);
     cliOut.clear();
 
@@ -2400,29 +2412,29 @@ void test_rover_simulation_scenarios_e2e() {
     // Scenario 4: Loop Course Revisit (State C Assertion)
     // ==============================================================
     // Depart Site 4 and travel back to origin grid CM87wa (already activated at Stop 1)
-    serialCli.executeCommand("rover start", 14000);
+    serialCli.executeCommand("rover start", 20000);
     ASSERT_TRUE(app.isRoverMode());
     cliOut.clear();
 
     // Drive back to originSite coordinates (CM87wa) >= 16 km displacement from Site 4
-    injectKsxt(originSite, 45.0f, BEARING_FIXED, 15000);
-    app.update(15000);
+    injectKsxt(originSite, 45.0f, BEARING_FIXED, 21000);
+    app.update(21000);
 
     // Assert State C (REVISITED)
     ASSERT_TRUE(app.getCurrentRoverState() == RoverState::QualifiedRevisitedGrid);
 
-    serialCli.executeCommand("rover status", 15000);
+    serialCli.executeCommand("rover status", 21000);
     ASSERT_TRUE(cliOut.find("STATE C: REVISITED") != std::string::npos);
     ASSERT_TRUE(cliOut.find("Previously Visited") != std::string::npos);
     cliOut.clear();
 
     // Commit revisited stop
-    serialCli.executeCommand("rover stop", 15100);
+    serialCli.executeCommand("rover stop", 21100);
     ASSERT_TRUE(app.getRoverLogManager().getStopCount() == 5);
     cliOut.clear();
 
     // Verify formatted ASCII contest history table has 5 stops with all details
-    serialCli.executeCommand("rover history", 15200);
+    serialCli.executeCommand("rover history", 21200);
     ASSERT_TRUE(cliOut.find("ROVER LOCATION HISTORY (5 stops / max 100)") != std::string::npos);
     ASSERT_TRUE(cliOut.find("1 |") != std::string::npos);
     ASSERT_TRUE(cliOut.find("ORIGIN") != std::string::npos);
@@ -2433,7 +2445,7 @@ void test_rover_simulation_scenarios_e2e() {
     cliOut.clear();
 
     // Verify CLI Undo pops Stop 5 and auto-rearms Rover Mode relative to Site 4
-    serialCli.executeCommand("rover undo", 16000);
+    serialCli.executeCommand("rover undo", 22000);
     ASSERT_TRUE(cliOut.find("Discarded last stop") != std::string::npos);
     ASSERT_TRUE(app.getRoverLogManager().getStopCount() == 4);
     ASSERT_TRUE(app.isRoverMode());
@@ -2442,13 +2454,13 @@ void test_rover_simulation_scenarios_e2e() {
     cliOut.clear();
 
     // Verify CLI Max Stops adjustment
-    serialCli.executeCommand("rover max 150", 16100);
+    serialCli.executeCommand("rover max 150", 22100);
     ASSERT_TRUE(cliOut.find("Max stops capacity set to 150") != std::string::npos);
     ASSERT_TRUE(app.getRoverLogManager().getMaxStops() == 150);
     cliOut.clear();
 
     // Verify CLI Clear
-    serialCli.executeCommand("rover clear confirm", 16200);
+    serialCli.executeCommand("rover clear confirm", 22200);
     ASSERT_TRUE(cliOut.find("Rover location history cleared from NVS") != std::string::npos);
     ASSERT_TRUE(app.getRoverLogManager().isEmpty());
     cliOut.clear();

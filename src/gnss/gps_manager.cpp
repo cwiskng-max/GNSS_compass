@@ -240,11 +240,7 @@ void GpsManager::processSentence(char *sentence, unsigned long nowMs) {
 
         GeoPoint ksxtPt;
         if (parseKsxtLocation(sentence, ksxtPt)) {
-            if (!hasLocation() ||
-                std::abs(ksxtPt.latitude - location_.latitude) > 0.00001 ||
-                std::abs(ksxtPt.longitude - location_.longitude) > 0.00001) {
-                setLocation(ksxtPt, nowMs);
-            }
+            setLocation(ksxtPt, nowMs);
         }
     } else if (strncmp(sentence, "$GNGLL", 6) == 0 || strncmp(sentence, "$GPGLL", 6) == 0) {
         gllPacketCount_++;

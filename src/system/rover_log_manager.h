@@ -11,6 +11,7 @@
 /**
  * @brief Represents a persistent contest operating site / transit stop.
  */
+#pragma pack(push, 1)
 struct RoverStop {
     uint32_t timestamp;        // GPS epoch timestamp (seconds)
     double   latitude;         // Decimal latitude of operating site
@@ -19,20 +20,26 @@ struct RoverStop {
     float    displacement_km;  // Verified straight-line km from immediate prior stop
     bool     qualified_16km;   // Whether the move met the 16 km requirement
 
-    RoverStop()
-        : timestamp(0), latitude(0.0), longitude(0.0), displacement_km(0.0f), qualified_16km(false) {
-        std::memset(grid, 0, sizeof(grid));
+    RoverStop() {
+        std::memset(this, 0, sizeof(*this));
     }
 
-    RoverStop(uint32_t ts, double lat, double lon, const char *g, float disp, bool qual)
-        : timestamp(ts), latitude(lat), longitude(lon), displacement_km(disp), qualified_16km(qual) {
+    RoverStop(uint32_t ts, double lat, double lon, const char *g, float disp, bool qual) {
+        std::memset(this, 0, sizeof(*this));
+        timestamp = ts;
+        latitude = lat;
+        longitude = lon;
+        displacement_km = disp;
+        qualified_16km = qual;
         setGrid(g);
     }
 
     void setGrid(const char *g) {
         if (g) {
-            std::strncpy(grid, g, sizeof(grid) - 1);
-            grid[sizeof(grid) - 1] = '\0';
+            size_t len = std::strlen(g);
+            if (len > sizeof(grid) - 1) len = sizeof(grid) - 1;
+            std::memcpy(grid, g, len);
+            grid[len] = '\0';
         } else {
             std::memset(grid, 0, sizeof(grid));
         }
@@ -51,6 +58,7 @@ struct RoverStop {
         return !(*this == other);
     }
 };
+#pragma pack(pop)
 
 /**
  * @brief Manages the persistent multi-stop rover contest location history stack in NVS.
