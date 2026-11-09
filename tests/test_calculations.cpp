@@ -19,6 +19,7 @@
 #include "../src/system/board.h"
 #include "../src/system/app_controller.h"
 #include "../src/system/rover_log_manager.h"
+#include "../src/system/self_test.h"
 
 int tests_run = 0;
 int tests_passed = 0;
@@ -1378,6 +1379,25 @@ void test_app_controller() {
     app.renderNavigationRows();
     app.updateNavigation();
 
+    // Verify self-testing mode suppression of live updates
+    ASSERT_TRUE(!app.isSelfTesting());
+    app.setSelfTesting(true);
+    ASSERT_TRUE(app.isSelfTesting());
+    GeoPoint posBefore = app.getCurrentPosition();
+    gpsManager.setLocation(GeoPoint(40.1234, -120.5678, true), 3000);
+    ASSERT_NEAR(app.getCurrentPosition().latitude, posBefore.latitude, 1e-5);
+    ASSERT_NEAR(app.getCurrentPosition().longitude, posBefore.longitude, 1e-5);
+    app.setSelfTesting(false);
+    ASSERT_TRUE(!app.isSelfTesting());
+
+    PASS();
+}
+
+void test_self_test_assertions() {
+    TEST("SelfTest 9-stage invariant assertions validation (including Rover capabilities)");
+    int failedTests[16];
+    int failedCount = SelfTest::runAssertions(failedTests, sizeof(failedTests) / sizeof(failedTests[0]));
+    ASSERT_TRUE(failedCount == 0);
     PASS();
 }
 
@@ -2756,6 +2776,7 @@ int main() {
     test_self_test_failure_formatting();
     test_grid_editor();
     test_app_controller();
+    test_self_test_assertions();
     test_rover_stop_model();
     test_rover_log_manager_stack_ops();
     test_rover_log_manager_duplicate_grid_search();

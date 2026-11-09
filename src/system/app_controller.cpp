@@ -40,6 +40,7 @@ AppController::AppController(Board &board,
       bearing_(0.0),
       revbearing_(0.0),
       currentUiMode_(UiMode::Normal),
+      isSelfTesting_(false),
       calModalOpenedMillis_(0),
       pendingModalButtonRelease_(ModalButtonId::None),
       pendingModalButtonReleaseStartMillis_(0)
@@ -337,7 +338,7 @@ void AppController::begin() {
     // Wire GPS Manager event callbacks (passing this as context)
     gpsManager_.setOnHeadingUpdated([](float /* heading */, BearingQuality quality, void *ctx) {
         auto *self = static_cast<AppController*>(ctx);
-        if (!self) return;
+        if (!self || self->isSelfTesting_) return;
         self->hasHeading_ = self->gpsManager_.hasHeading();
         self->currentBearingQuality_ = quality;
         self->lastHeadingUpdate_ = self->gpsManager_.getLastHeadingUpdate();
@@ -346,13 +347,13 @@ void AppController::begin() {
 
     gpsManager_.setOnLocationUpdated([](const GeoPoint &pos, void *ctx) {
         auto *self = static_cast<AppController*>(ctx);
-        if (!self) return;
+        if (!self || self->isSelfTesting_) return;
         self->setCurrentPosition(pos);
     }, this);
 
     gpsManager_.setOnTimeUpdated([](int h, int m, void *ctx) {
         auto *self = static_cast<AppController*>(ctx);
-        if (!self) return;
+        if (!self || self->isSelfTesting_) return;
         self->hasTime_ = true;
         self->hours_ = h;
         self->minutes_ = m;

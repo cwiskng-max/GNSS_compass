@@ -109,6 +109,9 @@ public:
     int getHours() const { return hours_; }
     int getMinutes() const { return minutes_; }
 
+    bool isSelfTesting() const { return isSelfTesting_; }
+    void setSelfTesting(bool testing) { isSelfTesting_ = testing; }
+
     // Direct subsystem references
     Board& getBoard() { return board_; }
     DisplayUi& getDisplayUi() { return displayUi_; }
@@ -159,6 +162,7 @@ private:
     double revbearing_;
 
     UiMode currentUiMode_;
+    bool isSelfTesting_;
     unsigned long calModalOpenedMillis_;
     ModalButtonId pendingModalButtonRelease_;
     unsigned long pendingModalButtonReleaseStartMillis_;
