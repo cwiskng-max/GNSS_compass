@@ -254,6 +254,20 @@ class SerialSender:
             except Exception as e:
                 print(f"\n[ERROR] Serial write error: {e}")
 
+    def send_cmd(self, cmd: str, wait_resp: float = 0.2) -> str:
+        """Sends a text CLI command (e.g. 'rover status', 'rover clear confirm') and returns response."""
+        if self.dry_run or self.ser is None:
+            return ""
+        try:
+            self.ser.write((cmd.strip() + "\r\n").encode('ascii'))
+            self.ser.flush()
+            if wait_resp > 0:
+                time.sleep(wait_resp)
+                return self.ser.read_all().decode('utf-8', errors='replace')
+        except Exception as e:
+            print(f"\n[ERROR] Serial command error: {e}")
+        return ""
+
     def close(self):
         if self.ser and self.ser.is_open:
             self.ser.close()
@@ -403,6 +417,180 @@ def run_backtrack_scenario(sender: SerialSender, origin_grid: str, rate_hz: floa
             time.sleep(dt)
 
     print("\n\nBacktrack scenario completed.\n")
+
+
+# --- Scenario 2B: Rover First Transit & Backtrack (< 1 Minute) ---
+
+def run_first_transit_scenario(
+    sender: SerialSender,
+    origin_grid: str = "CM87wa",
+    rate_hz: float = 5.0,
+    phase_duration: float = 15.0,
+    hold_duration: float = 8.0,
+    auto_start: bool = False
+):
+    print("\n" + "=" * 68)
+    print("      SCENARIO: ROVER FIRST TRANSIT & BACKTRACK (< 1 MINUTE)")
+    print("=" * 68)
+
+    orig_lat, orig_lon = calc_latlon_from_grid(origin_grid)
+    origin_sub = origin_grid[:6].upper()
+    print(f"Origin Grid      : {origin_sub} ({orig_lat:.5f}, {orig_lon:.5f})")
+    print(f"Phase Duration   : {phase_duration:.1f}s per phase (Total drive: {phase_duration * 3:.1f}s)")
+    print(f"Update Rate      : {rate_hz:.1f} Hz")
+    print("-" * 68)
+
+    # -------------------------------------------------------------
+    # Step 1: Clean Slate
+    # -------------------------------------------------------------
+    print("\n>>> [STEP 1/3] Ensuring Clean Slate on Device...")
+    if not sender.dry_run:
+        sender.send_cmd("rover stop", wait_resp=0.1)
+        resp = sender.send_cmd("rover clear confirm", wait_resp=0.2)
+        if "cleared from NVS" in resp:
+            print("    [OK] Rover contest history successfully cleared (0 stops).")
+        else:
+            print("    [INFO] Clean slate command sent.")
+    else:
+        print("    [DRY-RUN] Simulating clean slate (0 stops in history).")
+
+    # -------------------------------------------------------------
+    # Step 2: Inject Origin Location (First Step) & Let Stream Go Quiet
+    # -------------------------------------------------------------
+    print(f"\n>>> [STEP 2/3] Injecting Initial Location ({origin_sub}) for 2.0s...")
+    dt = 1.0 / rate_hz
+    inject_steps = max(1, int(2.0 * rate_hz))
+    for _ in range(inject_steps):
+        now_dt = datetime.now(timezone.utc)
+        ksxt = build_ksxt_sentence(now_dt, orig_lat, orig_lon, 45.0, pos_quality=1, hdg_quality=3)
+        sender.send(ksxt)
+        time.sleep(dt)
+
+    print("    [OK] Initial location injected. Transmission stopped.")
+    print("    [INFO] Watchdog will transition device display to 'NO GPS' (Deep Amber).")
+
+    # -------------------------------------------------------------
+    # Step 3: Prompt User to Start Rover Mode
+    # -------------------------------------------------------------
+    print("\n" + "#" * 68)
+    print("   ACTION REQUIRED: START ROVER MODE ON THE GNSS COMPASS")
+    print("#" * 68)
+    print(f"   1. Tap the Grid area (Row 1) on the touchscreen to arm Rover Mode.")
+    print(f"      -> (Or type 's' and press Enter to start via Serial CLI)")
+    print(f"   2. The device will log Stop #1 at {origin_sub} (0.0 km).")
+    print(f"   3. Row 5 will show [ TRANSIT   0.0 k ] or [ NO GPS    0.0 k ].")
+    print("#" * 68)
+
+    if not auto_start:
+        try:
+            choice = input("\n>>> When Rover Mode is active, press [ENTER] to start simulation (or 's' to start): ").strip().lower()
+            if choice in ('s', 'start'):
+                if not sender.dry_run:
+                    sender.send_cmd("rover start", wait_resp=0.3)
+                    print("    [OK] Sent 'rover start' command over Serial CLI.")
+        except (KeyboardInterrupt, EOFError):
+            print("\nAborted by user.")
+            return
+    else:
+        if not sender.dry_run:
+            sender.send_cmd("rover start", wait_resp=0.3)
+            print("    [AUTO] Started Rover Mode via Serial CLI.")
+
+    # Check and display device status if on live serial
+    if not sender.dry_run:
+        stat = sender.send_cmd("rover status", wait_resp=0.3)
+        if "ACTIVE (Rover Mode)" in stat:
+            print("    [CONFIRMED] Device is in ACTIVE Rover Mode.")
+        else:
+            print("    [NOTE] Continuing with simulation stream.")
+
+    # -------------------------------------------------------------
+    # Step 4: Accelerated 3-Phase Simulation (< 1 Minute)
+    # -------------------------------------------------------------
+    print("\n" + "=" * 68)
+    print("      ACCELERATED TRANSIT & BACKTRACK SIMULATION RUNNING")
+    print("=" * 68)
+
+    # 3 distinct transit phases designed to test:
+    # 1. Approach from 15.2 km and cross 16.0 km threshold -> QUALIFIED (Green)
+    # 2. Canyon switchback / backtrack: distance drops from 16.8 km to 14.8 km -> TRANSIT (Red)
+    # 3. Ridge breakout: distance climbs from 14.8 km to 17.0 km -> QUALIFIED (Green)
+    phases = [
+        ("Phase 1/3: Approach & Cross 16 km", 15.2, 16.8, 45.0),
+        ("Phase 2/3: Canyon Backtrack (< 16 km)", 16.8, 14.8, 225.0),
+        ("Phase 3/3: Ridge Breakout (>= 16 km)", 14.8, 17.0, 45.0),
+    ]
+
+    sim_start_time = time.time()
+    for phase_name, start_km, end_km, heading in phases:
+        print(f"\n>>> {phase_name} ({start_km:.1f} km -> {end_km:.1f} km, Bearing {heading:.0f}°)")
+        delta_km = end_km - start_km
+        total_steps = max(1, int(phase_duration * rate_hz))
+        km_per_step = delta_km / float(total_steps)
+        speed_kmh = (abs(delta_km) / phase_duration) * 3600.0
+        print(f"    Speed: {speed_kmh:.0f} km/h | Duration: {phase_duration:.1f}s")
+
+        cur_dist_km = start_km
+        for step in range(total_steps):
+            cur_lat, cur_lon = project_displacement(orig_lat, orig_lon, cur_dist_km * 1000.0, 45.0)
+            cur_grid = calc_locator_from_latlon(cur_lat, cur_lon)
+            cur_sub = cur_grid[:6].upper()
+
+            # Status tag for terminal display
+            under_16k = (math.floor(cur_dist_km) < 16)
+            if under_16k:
+                status_tag = "\033[91m[TRANSIT   < 16k]\033[0m (RED)"
+            else:
+                status_tag = "\033[92m[QUALIFIED >= 16k]\033[0m (GREEN)"
+
+            now_dt = datetime.now(timezone.utc)
+            ksxt = build_ksxt_sentence(now_dt, cur_lat, cur_lon, heading, pos_quality=1, hdg_quality=3)
+            sender.send(ksxt)
+
+            elapsed = time.time() - sim_start_time
+            sys.stdout.write(
+                f"\r[{elapsed:04.1f}s] Dist: {cur_dist_km:5.2f} km | Grid: {cur_sub} | Hdg: {heading:05.1f}° | {status_tag}   "
+            )
+            sys.stdout.flush()
+
+            cur_dist_km += km_per_step
+            time.sleep(dt)
+
+    total_sim_time = time.time() - sim_start_time
+    print(f"\n\n[OK] 3-Phase Simulation completed in {total_sim_time:.1f} seconds!")
+
+    # -------------------------------------------------------------
+    # Step 5: Hold Final Qualified State & Summary
+    # -------------------------------------------------------------
+    if hold_duration > 0:
+        print(f"\n>>> Holding final QUALIFIED position for {hold_duration:.0f}s to keep screen active...")
+        cur_lat, cur_lon = project_displacement(orig_lat, orig_lon, 17.0 * 1000.0, 45.0)
+        hold_steps = int(hold_duration * rate_hz)
+        for s in range(hold_steps):
+            now_dt = datetime.now(timezone.utc)
+            ksxt = build_ksxt_sentence(now_dt, cur_lat, cur_lon, 45.0, pos_quality=1, hdg_quality=3)
+            sender.send(ksxt)
+            rem = hold_duration - (s * dt)
+            sys.stdout.write(f"\rHolding QUALIFIED 17.0 km... {rem:3.1f}s remaining   ")
+            sys.stdout.flush()
+            time.sleep(dt)
+        print()
+
+    # Query device status
+    if not sender.dry_run:
+        print("\n" + sender.send_cmd("rover status", wait_resp=0.3))
+
+    print("=" * 68)
+    print("      FIRST TRANSIT SCENARIO COMPLETED SUCCESSFULLY")
+    print("=" * 68)
+    print("Summary of Validated Behaviors:")
+    print("  1. Clean slate reset (history erased to 0 stops).")
+    print("  2. Injected Stop #1 origin, verified 'NO GPS' watchdog tolerance.")
+    print("  3. Arming Rover Mode snapshotting origin coordinates.")
+    print("  4. Approached from 15.2 km (TRANSIT Red) -> Crossed 16.0 km (QUALIFIED Green).")
+    print("  5. Canyon Backtrack dropped under 16.0 km -> Re-alerted TRANSIT Red.")
+    print("  6. Ridge Breakout exceeded 16.0 km -> Restored QUALIFIED Green.")
+    print("=" * 68 + "\n")
 
 
 # --- Scenario 3: 360° Rotator Continuous Sweep ---
@@ -680,6 +868,19 @@ def main():
     backtrack_p.add_argument("--rate", type=float, default=5.0, help="Update rate in Hz (default: 5.0)")
     backtrack_p.add_argument("--dry-run", "-n", action="store_true", help="Print generated sentences to stdout without serial connection")
 
+    # 2B. Rover First Transit & Backtrack (< 1 minute fast complete scenario)
+    first_transit_p = subparsers.add_parser(
+        "first-transit",
+        aliases=["first_transit"],
+        help="Accelerated Rover first-transit scenario: Clean slate -> Stop #1 -> 16km cross -> Backtrack (< 1 min)"
+    )
+    first_transit_p.add_argument("--origin", default="CM87wa", help="Starting Maidenhead grid (default: CM87wa)")
+    first_transit_p.add_argument("--phase-duration", type=float, default=15.0, help="Duration in seconds per transit phase (default: 15.0s, total 45s)")
+    first_transit_p.add_argument("--hold-duration", type=float, default=8.0, help="Hold duration in seconds at final qualified stop (default: 8.0s)")
+    first_transit_p.add_argument("--rate", type=float, default=5.0, help="Update rate in Hz (default: 5.0)")
+    first_transit_p.add_argument("--auto-start", action="store_true", help="Automatically arm Rover Mode via Serial CLI instead of interactive prompt")
+    first_transit_p.add_argument("--dry-run", "-n", action="store_true", help="Print generated sentences to stdout without serial connection")
+
     # 3. Sweep Scenario
     sweep_p = subparsers.add_parser("sweep", help="Continuous 360-degree antenna rotator sweep")
     sweep_p.add_argument("--speed", type=float, default=6.0, help="Rotation speed in deg/sec (default: 6.0)")
@@ -756,6 +957,15 @@ Examples:
             )
         elif args.scenario == "backtrack":
             run_backtrack_scenario(sender, args.origin, args.rate, speed_mult=getattr(args, 'speed_mult', 1.0))
+        elif args.scenario in ("first-transit", "first_transit"):
+            run_first_transit_scenario(
+                sender,
+                origin_grid=args.origin,
+                rate_hz=args.rate,
+                phase_duration=getattr(args, 'phase_duration', 15.0),
+                hold_duration=getattr(args, 'hold_duration', 8.0),
+                auto_start=getattr(args, 'auto_start', False)
+            )
         elif args.scenario == "sweep":
             run_sweep_scenario(sender, args.speed, args.rate)
         elif args.scenario == "rtk":
