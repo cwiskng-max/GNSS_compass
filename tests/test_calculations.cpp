@@ -164,6 +164,26 @@ void test_locator_round_trip() {
     ASSERT_TRUE(geoPointToGrid(lat8, lon8, result8, 8));
     ASSERT_TRUE(std::strcmp(result8, "EN40AB56") == 0);
 
+    // Extreme pole and antimeridian bounds safety
+    char poleBuf[9];
+    ASSERT_TRUE(geoPointToGrid(90.0, 0.0, poleBuf, 8));
+    ASSERT_TRUE(poleBuf[1] == 'R'); // Field clamped to 'R' (never illegal 'S')
+    ASSERT_TRUE(geoPointToGrid(-90.0, 0.0, poleBuf, 8));
+    ASSERT_TRUE(poleBuf[1] == 'A');
+
+    char antiBuf[9];
+    ASSERT_TRUE(geoPointToGrid(0.0, 180.0, antiBuf, 8));
+    ASSERT_TRUE(antiBuf[0] >= 'A' && antiBuf[0] <= 'R');
+    ASSERT_TRUE(geoPointToGrid(0.0, -180.0, antiBuf, 8));
+    ASSERT_TRUE(antiBuf[0] >= 'A' && antiBuf[0] <= 'R');
+
+    // Out-of-bounds coordinates clamped safely
+    char clampBuf[9];
+    ASSERT_TRUE(geoPointToGrid(95.0, 200.0, clampBuf, 8));
+    ASSERT_TRUE(clampBuf[0] <= 'R' && clampBuf[1] <= 'R');
+    ASSERT_TRUE(geoPointToGrid(-95.0, -200.0, clampBuf, 8));
+    ASSERT_TRUE(clampBuf[0] >= 'A' && clampBuf[1] >= 'A');
+
     PASS();
 }
 
@@ -1722,6 +1742,21 @@ void test_rover_card_formatting_and_colors() {
     ASSERT_TRUE(std::strlen(buf) == 16);
     ASSERT_STR_EQ(buf, "QUALIFIED999.9 k");
 
+    // Boundary floor-truncation assertions:
+    // 15.96 km must truncate to 15.9 k (never round up to 16.0 k while still under 16 km)
+    ASSERT_TRUE(formatRoverCard(RoverState::InTransitUnder16k, 15.96, buf, sizeof(buf)));
+    ASSERT_TRUE(std::strlen(buf) == 16);
+    ASSERT_STR_EQ(buf, "TRANSIT   15.9 k");
+
+    ASSERT_TRUE(formatRoverCard(RoverState::InTransitUnder16k, 15.999, buf, sizeof(buf)));
+    ASSERT_TRUE(std::strlen(buf) == 16);
+    ASSERT_STR_EQ(buf, "TRANSIT   15.9 k");
+
+    // Exactly 16.0 km renders 16.0 k
+    ASSERT_TRUE(formatRoverCard(RoverState::QualifiedNewGrid, 16.0, buf, sizeof(buf)));
+    ASSERT_TRUE(std::strlen(buf) == 16);
+    ASSERT_STR_EQ(buf, "QUALIFIED 16.0 k");
+
     // Buffer safety checks
     char smallBuf[16]; // Too small (needs 17 for 16 chars + null terminator)
     ASSERT_TRUE(!formatRoverCard(RoverState::InTransitUnder16k, 6.4, smallBuf, sizeof(smallBuf)));
@@ -1852,23 +1887,33 @@ void test_rover_app_controller_transitions_and_natural_exit() {
     AppController app(board, displayUi, inputManager, gpsManager, calibration, gpsSimulator, serialCli);
     app.begin();
 
-    // Set starting position at Mount Diablo (CM87wa)
+    // 0. Arming Rover Mode without GPS location fix must be rejected!
+    UserEvent evTapMyGrid;
+    evTapMyGrid.type = UserEventType::TouchLocalGrid;
+    app.handleUserEvent(evTapMyGrid, 500);
+    ASSERT_TRUE(!app.isRoverMode());
+    ASSERT_TRUE(app.getRoverLogManager().isEmpty());
+
+    // Set starting position at Mount Diablo (CM87wa) and set remote target grid
     GeoPoint startPos(37.421998, -122.084000, true);
     app.setCurrentPosition(startPos);
+    app.setTargetGrid("CM97BE");
     ASSERT_STR_EQ(app.getMyGrid(), "CM87WK91");
+    ASSERT_STR_EQ(app.getTargetGrid(), "CM97BE");
     ASSERT_TRUE(app.getOperationalMode() == OperationalMode::Bearing);
     ASSERT_TRUE(!app.isRoverMode());
     ASSERT_TRUE(app.getRoverLogManager().isEmpty());
 
     // 1. One-Tap Origin Capture: Tap Row 1 (My Grid)
-    UserEvent evTapMyGrid;
-    evTapMyGrid.type = UserEventType::TouchLocalGrid;
     app.handleUserEvent(evTapMyGrid, 1000);
 
     // Rover Mode engaged
     ASSERT_TRUE(app.getOperationalMode() == OperationalMode::Rover);
     ASSERT_TRUE(app.isRoverMode());
     ASSERT_TRUE(!app.getGridEditor().isEditing()); // Bezel locked out
+
+    // Origin grid is captured into target grid slot (disarmed)
+    ASSERT_STR_EQ(app.getTargetGrid(), "CM87WK");
 
     // History stack has Stop #1 (ORIGIN, 0.0 km)
     ASSERT_TRUE(app.getRoverLogManager().getStopCount() == 1);
@@ -1879,6 +1924,13 @@ void test_rover_app_controller_transitions_and_natural_exit() {
     ASSERT_NEAR(app.getOriginPoint().latitude, startPos.latitude, 1e-6);
     ASSERT_NEAR(app.getOriginPoint().longitude, startPos.longitude, 1e-6);
     ASSERT_STR_EQ(app.getOriginGrid(), "CM87WK91");
+
+    // Knob press while driving in Rover Mode: locked out to enforce 2-step natural exit
+    UserEvent evKnobPress;
+    evKnobPress.type = UserEventType::EncoderButtonPressed;
+    app.handleUserEvent(evKnobPress, 1050);
+    ASSERT_TRUE(!app.getGridEditor().isEditing());
+    ASSERT_TRUE(app.isRoverMode());
 
     // Road vibration bezel bumps while driving: no character rolling and does NOT exit Rover Mode
     UserEvent evBump;
@@ -2232,9 +2284,20 @@ void test_serial_cli_rover_commands() {
     ASSERT_TRUE(logMgr.isEmpty());
     cliOut.clear();
 
-    // Single-line 'rover clear confirm' and 'rover clear yes'
+    // Verify non-sticky confirmation: typing an unrelated command aborts pending clear
     logMgr.appendStop(dummy);
     ASSERT_TRUE(logMgr.getStopCount() == 1);
+    cli.executeCommand("rover clear");
+    cliOut.clear();
+    cli.executeCommand("rover"); // Unrelated command
+    ASSERT_TRUE(cliOut.find("Rover clear aborted") != std::string::npos);
+    cliOut.clear();
+    // Subsequent 'yes' must NOT clear history
+    cli.executeCommand("yes");
+    ASSERT_TRUE(logMgr.getStopCount() == 1); // History safe!
+    cliOut.clear();
+
+    // Single-line 'rover clear confirm' and 'rover clear yes'
     cli.executeCommand("rover clear confirm");
     ASSERT_TRUE(cliOut.find("Rover location history cleared from NVS") != std::string::npos);
     ASSERT_TRUE(logMgr.isEmpty());

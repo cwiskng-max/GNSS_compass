@@ -42,6 +42,17 @@ bool gridToGeoPoint(const char *grid, GeoPoint &outPoint) {
 bool geoPointToGrid(double lat, double lon, char *outGrid, uint8_t length) {
     if (!outGrid || length < 4 || length > 8 || (length % 2 != 0)) return false;
 
+    // Clamp latitude to valid Maidenhead domain [-90.0, +90.0]
+    // +90.0 is clamped just below +90 to avoid out-of-bounds field 'S' (max field is 'R')
+    if (lat >= 90.0) lat = 89.999999;
+    if (lat < -90.0) lat = -90.0;
+
+    // Normalize longitude to [-180.0, +180.0)
+    while (lon >= 180.0) lon -= 360.0;
+    while (lon < -180.0) lon += 360.0;
+    if (lon >= 180.0) lon = 179.999999;
+    if (lon < -180.0) lon = -180.0;
+
     int o1, o2, o3, o4;
     int a1, a2, a3, a4;
     double remainder;
@@ -49,22 +60,30 @@ bool geoPointToGrid(double lat, double lon, char *outGrid, uint8_t length) {
     // longitude
     remainder = lon + 180.0;
     o1 = (int)(remainder / 20.0);
+    if (o1 > 17) o1 = 17;
     remainder = remainder - (double)o1 * 20.0;
     o2 = (int)(remainder / 2.0);
+    if (o2 > 9) o2 = 9;
     remainder = remainder - 2.0 * (double)o2;
     o3 = (int)(12.0 * remainder);
+    if (o3 > 23) o3 = 23;
     remainder = 12.0 * remainder - (double)o3;
     o4 = (int)(10.0 * remainder);
+    if (o4 > 9) o4 = 9;
 
     // latitude
     remainder = lat + 90.0;
     a1 = (int)(remainder / 10.0);
+    if (a1 > 17) a1 = 17;
     remainder = remainder - (double)a1 * 10.0;
     a2 = (int)(remainder);
+    if (a2 > 9) a2 = 9;
     remainder = remainder - (double)a2;
     a3 = (int)(24.0 * remainder);
+    if (a3 > 23) a3 = 23;
     remainder = 24.0 * remainder - (double)a3;
     a4 = (int)(10.0 * remainder);
+    if (a4 > 9) a4 = 9;
 
     char full[9];
     full[0] = (char)o1 + 'A';

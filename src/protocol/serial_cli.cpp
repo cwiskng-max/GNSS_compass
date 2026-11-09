@@ -166,15 +166,15 @@ void SerialCli::executeCommand(const char *cmdLine, unsigned long nowMs) {
     if (*cmdLine == '\0') return;
 
     if (pendingRoverClear_) {
+        pendingRoverClear_ = false;
         if (equalsIgnoreCase(cmdLine, "yes") || equalsIgnoreCase(cmdLine, "y") ||
             equalsIgnoreCase(cmdLine, "confirm")) {
-            pendingRoverClear_ = false;
             doRoverClear();
             return;
-        } else if (equalsIgnoreCase(cmdLine, "no") || equalsIgnoreCase(cmdLine, "n") ||
-                   equalsIgnoreCase(cmdLine, "cancel")) {
-            pendingRoverClear_ = false;
-            println("[ROVER] Rover clear aborted.");
+        }
+        println("[ROVER] Rover clear aborted.");
+        if (equalsIgnoreCase(cmdLine, "no") || equalsIgnoreCase(cmdLine, "n") ||
+            equalsIgnoreCase(cmdLine, "cancel")) {
             return;
         }
     }
@@ -652,25 +652,31 @@ void SerialCli::handleRoverStart(unsigned long nowMs) {
     if (roverStartCb_) {
         roverStartCb_(roverActionContext_, nowMs);
     } else {
+        if (!gpsManager_.hasLocation()) {
+            println("[ROVER ERROR] Cannot start Rover Mode: No valid GPS position fix.");
+            return;
+        }
         fallbackNavContext_.isRoverMode = true;
-        if (gpsManager_.hasLocation()) {
-            GeoPoint loc = gpsManager_.getLocation();
-            fallbackNavContext_.originLat = loc.latitude;
-            fallbackNavContext_.originLon = loc.longitude;
-            geoPointToGrid(loc, fallbackNavContext_.originGrid);
-            if (fallbackNavContext_.currentGrid[0] == '\0') {
-                snprintf(fallbackNavContext_.currentGrid, sizeof(fallbackNavContext_.currentGrid), "%s", fallbackNavContext_.originGrid);
-            }
-            if (roverLogManager_ && roverLogManager_->isEmpty()) {
-                RoverStop stop1(0, loc.latitude, loc.longitude, fallbackNavContext_.originGrid, 0.0f, false);
-                roverLogManager_->appendStop(stop1);
-            }
+        GeoPoint loc = gpsManager_.getLocation();
+        fallbackNavContext_.originLat = loc.latitude;
+        fallbackNavContext_.originLon = loc.longitude;
+        geoPointToGrid(loc, fallbackNavContext_.originGrid);
+        if (fallbackNavContext_.currentGrid[0] == '\0') {
+            snprintf(fallbackNavContext_.currentGrid, sizeof(fallbackNavContext_.currentGrid), "%s", fallbackNavContext_.originGrid);
+        }
+        if (roverLogManager_ && roverLogManager_->isEmpty()) {
+            RoverStop stop1(0, loc.latitude, loc.longitude, fallbackNavContext_.originGrid, 0.0f, false);
+            roverLogManager_->appendStop(stop1);
         }
     }
     if (stateChangedCb_) {
         stateChangedCb_(stateChangedContext_);
     }
     CliNavContext nav = getNavContext();
+    if (!nav.isRoverMode) {
+        println("[ROVER ERROR] Cannot start Rover Mode: No valid GPS position fix.");
+        return;
+    }
     printFormat("[ROVER] Rover mode started at %s (%9.5f, %9.5f)\r\n",
                 nav.originGrid[0] ? nav.originGrid : "Unknown",
                 nav.originLat, nav.originLon);

@@ -53,7 +53,9 @@ bool formatRoverCard(RoverState state, double displacementKm, char *outBuf, size
         displacementKm = 999.9;
     }
 
+    // Floor-truncate to tenths (0.1 km) to prevent rounding up unearned distance
+    double displayKm = std::floor(displacementKm * 10.0 + 1e-9) / 10.0;
     const char *statusWord = getRoverStateStatusWord(state);
-    int written = snprintf(outBuf, bufSize, "%-9s%5.1f k", statusWord, displacementKm);
+    int written = snprintf(outBuf, bufSize, "%-9s%5.1f k", statusWord, displayKm);
     return (written == 16);
 }

@@ -88,6 +88,12 @@ void AppController::startRoverMode(unsigned long nowMs) {
 #endif
     if (nowMs > 0) currentNowMs_ = nowMs;
 
+    // Guard: Do not allow arming Rover Mode without a valid GPS location fix!
+    if (!hasLocation_) {
+        displayUi_.showStatusCard("WAIT GPS FIX", BLACK, RED);
+        return;
+    }
+
     // Initial Contest Departure Log (Stop #1): If contest history is empty,
     // record starting site as Stop #1 (0.0 km, ORIGIN).
     if (roverLogManagerRef_->isEmpty()) {
@@ -481,7 +487,12 @@ void AppController::handleUserEvent(const UserEvent &event, unsigned long nowMs)
             break;
 
         case UserEventType::EncoderButtonPressed:
-            // Toggle edit mode on knob press
+            // Toggle edit mode on knob press in Bearing Mode only.
+            // In Rover Mode, knob press is locked out to enforce 2-step natural exit
+            // (touch character selection followed by physical rotary knob rotation).
+            if (operationalMode_ == OperationalMode::Rover) {
+                break;
+            }
             gridEditor_.setEditing(!gridEditor_.isEditing());
             gridEditor_.recordActivity(nowMs);
             displayUi_.renderTargetGrid(gridEditor_.getGrid(), gridEditor_.getCursorColumn(), gridEditor_.isEditing());
