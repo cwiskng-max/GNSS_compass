@@ -129,7 +129,8 @@ int SelfTest::runAssertions(int *failedTests, int maxFails) {
 
 void SelfTest::run(AppController &app) {
 #if defined(ARDUINO)
-    Serial.println(F("\n=== Starting Visual Display Self-Test Demo ==="));
+    auto &cli = app.getSerialCli();
+    cli.broadcastln("\n=== Starting Visual Display Self-Test Demo ===");
 
     // Suppress live UI callbacks while self-test runs
     app.setSelfTesting(true);
@@ -155,7 +156,7 @@ void SelfTest::run(AppController &app) {
     app.getGridEditor().setEditing(false);
 
     // Stage 1: Same Grid (ARRL 1.0 km minimum rule)
-    Serial.println(F("[Test 1/9] Same Grid (ARRL 1.0 km rule)"));
+    cli.broadcastln("[Test 1/9] Same Grid (ARRL 1.0 km rule)");
     app.getDisplayUi().showFooterText("TEST 1: SAME GRID", CYAN);
     app.setMyGrid("CM87wa00");
     app.setTargetGrid("CM87wa");
@@ -171,7 +172,7 @@ void SelfTest::run(AppController &app) {
     selfTestDelay(app, 2500);
 
     // Stage 2: Mid-range distance (< 1,000 km, ~600 km)
-    Serial.println(F("[Test 2/9] Under 1,000 km formatting (~600 km)"));
+    cli.broadcastln("[Test 2/9] Under 1,000 km formatting (~600 km)");
     app.getDisplayUi().showFooterText("TEST 2: DIST < 1000K", CYAN);
     app.setTargetGrid("DN13ab");
     app.setHeadingState(true, BEARING_FIXED);
@@ -181,7 +182,7 @@ void SelfTest::run(AppController &app) {
     selfTestDelay(app, 2500);
 
     // Stage 3: Long-range distance (> 1,000 km, ~2,500 km)
-    Serial.println(F("[Test 3/9] Over 1,000 km formatting (~2,500 km)"));
+    cli.broadcastln("[Test 3/9] Over 1,000 km formatting (~2,500 km)");
     app.getDisplayUi().showFooterText("TEST 3: DIST > 1000K", CYAN);
     app.setTargetGrid("EL29ja");
     app.setHeadingState(true, BEARING_FIXED);
@@ -190,34 +191,34 @@ void SelfTest::run(AppController &app) {
     selfTestDelay(app, 2500);
 
     // Stage 4: Extreme distance (> 10,000 km) and Recovery to 1.0 km
-    Serial.println(F("[Test 4/9] Extreme distance (> 10,000 km) & Ghost Recovery"));
+    cli.broadcastln("[Test 4/9] Extreme distance (> 10,000 km) & Ghost Recovery");
     app.getDisplayUi().showFooterText("TEST 4: GHOST RECOVERY", CYAN);
     app.setTargetGrid("ZA00AA");
     app.getDisplayUi().renderTargetGrid(app.getTargetGrid(), app.getGridEditor().getCursorColumn(), app.getGridEditor().isEditing());
     app.updateNavigation();
     selfTestDelay(app, 1500);
 
-    Serial.println(F("  -> Dropping back to 1.0 km (verifying no ghost characters)"));
+    cli.broadcastln("  -> Dropping back to 1.0 km (verifying no ghost characters)");
     app.setTargetGrid("CM87wa");
     app.getDisplayUi().renderTargetGrid(app.getTargetGrid(), app.getGridEditor().getCursorColumn(), app.getGridEditor().isEditing());
     app.updateNavigation();
     selfTestDelay(app, 1500);
 
     // Stage 5: Antenna Heading Quality Color States
-    Serial.println(F("[Test 5/9] Antenna Heading Quality Color States"));
-    Serial.println(F("  -> Bearing Color: Pure White (RTK Fixed)"));
+    cli.broadcastln("[Test 5/9] Antenna Heading Quality Color States");
+    cli.broadcastln("  -> Bearing Color: Pure White (RTK Fixed)");
     app.getDisplayUi().showFooterText("TEST 5: BEARING WHITE", WHITE);
     app.setHeadingState(true, BEARING_FIXED);
     app.drawCurrentBearing();
     selfTestDelay(app, 1000);
 
-    Serial.println(F("  -> Bearing Color: Bright Yellow (RTK Float / Degraded)"));
+    cli.broadcastln("  -> Bearing Color: Bright Yellow (RTK Float / Degraded)");
     app.getDisplayUi().showFooterText("TEST 5: BEARING YELLOW", RICH_YELLOW);
     app.setHeadingState(true, BEARING_FLOAT);
     app.drawCurrentBearing();
     selfTestDelay(app, 1000);
 
-    Serial.println(F("  -> Bearing Color: Bright Red (Lost / Stale)"));
+    cli.broadcastln("  -> Bearing Color: Bright Red (Lost / Stale)");
     app.getDisplayUi().showFooterText("TEST 5: BEARING RED", RED);
     app.setHeadingState(true, BEARING_LOST);
     app.drawCurrentBearing();
@@ -228,12 +229,12 @@ void SelfTest::run(AppController &app) {
     app.drawCurrentBearing();
 
     // Stage 6: Live GNSS Receiver Stream Diagnostic
-    Serial.println(F("[Test 6/9] Live GNSS Receiver Stream Diagnostic"));
+    cli.broadcastln("[Test 6/9] Live GNSS Receiver Stream Diagnostic");
     app.getDisplayUi().showFooterText("TEST 6: GPS STREAM", CYAN);
 
     // Ensure serial port is pumped and up to date
     app.getGpsManager().update(millis());
-    app.getSerialCli().printGpsStatus();
+    cli.printGpsStatus();
 
     GpsLinkVerdict liveVerdict = app.getGpsManager().evaluateStreamHealth(millis());
     if (liveVerdict == GPS_LINK_OK_FIXED) {
@@ -249,22 +250,22 @@ void SelfTest::run(AppController &app) {
     app.getDisplayUi().getGfx()->fillRect(40, 215, 400, 52, BLACK);
 
     // Stage 7: Antenna Calibration Status & Modal Demo
-    Serial.println(F("[Test 7/9] Antenna Calibration Pill & Modal Display Demo"));
-    Serial.println(F("  -> Testing Calibration Pill Display (Uncalibrated: OFF)"));
+    cli.broadcastln("[Test 7/9] Antenna Calibration Pill & Modal Display Demo");
+    cli.broadcastln("  -> Testing Calibration Pill Display (Uncalibrated: OFF)");
     app.getDisplayUi().showFooterText("TEST 7: CAL PILL OFF", CYAN);
     app.getCalibration().setOffset(0.0f, false);
     app.getDisplayUi().renderCalibrationPill(app.getCalibration().getOffset(), app.getCalibration().isCalibrated());
     app.drawCurrentBearing();
     selfTestDelay(app, 1200);
 
-    Serial.println(F("  -> Testing Calibration Pill Display (Calibrated: +4.2 deg)"));
+    cli.broadcastln("  -> Testing Calibration Pill Display (Calibrated: +4.2 deg)");
     app.getDisplayUi().showFooterText("TEST 7: CAL PILL +4.2", GREEN);
     app.getCalibration().setOffset(4.2f, false);
     app.getDisplayUi().renderCalibrationPill(app.getCalibration().getOffset(), app.getCalibration().isCalibrated());
     app.drawCurrentBearing();
     selfTestDelay(app, 1200);
 
-    Serial.println(F("  -> Demonstrating Calibration Modal Dialog"));
+    cli.broadcastln("  -> Demonstrating Calibration Modal Dialog");
     app.getDisplayUi().showFooterText("TEST 7: CAL MODAL", RICH_YELLOW);
     app.getCalibration().stageProposedOffset(4.2f);
     app.setUiMode(UiMode::Calibrating);
@@ -282,29 +283,29 @@ void SelfTest::run(AppController &app) {
     app.redrawMainScreen();
 
     // Stage 8: Rover Mode 4-State Qualification Matrix (Row 5 Card)
-    Serial.println(F("[Test 8/9] Rover Mode 4-State Qualification Matrix (Row 5 Card)"));
+    cli.broadcastln("[Test 8/9] Rover Mode 4-State Qualification Matrix (Row 5 Card)");
     app.setOperationalMode(OperationalMode::Rover);
 
     // State A: In Transit Under 16 km (Red on White)
-    Serial.println(F("  -> State A: In Transit (< 16.0 km, Red on White)"));
+    cli.broadcastln("  -> State A: In Transit (< 16.0 km, Red on White)");
     app.getDisplayUi().showFooterText("TEST 8: ROVER TRANSIT", RED);
     app.getDisplayUi().renderRoverCard(RoverState::InTransitUnder16k, 6.4, false);
     selfTestDelay(app, 1500);
 
     // State B: Qualified New Grid (>= 16.0 km, Forest Green on White)
-    Serial.println(F("  -> State B: Qualified New Grid (>= 16.0 km, Green on White)"));
+    cli.broadcastln("  -> State B: Qualified New Grid (>= 16.0 km, Green on White)");
     app.getDisplayUi().showFooterText("TEST 8: ROVER QUALIFIED", GREEN);
     app.getDisplayUi().renderRoverCard(RoverState::QualifiedNewGrid, 18.2, false);
     selfTestDelay(app, 1500);
 
     // State C: Qualified Revisited Grid (>= 16.0 km, Royal Blue on White)
-    Serial.println(F("  -> State C: Qualified Revisited Grid (>= 16.0 km, Blue on White)"));
+    cli.broadcastln("  -> State C: Qualified Revisited Grid (>= 16.0 km, Blue on White)");
     app.getDisplayUi().showFooterText("TEST 8: ROVER REVISIT", COLOR_ROVER_REVISIT_BLUE);
     app.getDisplayUi().renderRoverCard(RoverState::QualifiedRevisitedGrid, 18.2, true);
     selfTestDelay(app, 1500);
 
     // State D: GPS Lost / Stale (Amber status on White, retaining qualified distance color)
-    Serial.println(F("  -> State D: GPS Lost / Stale (Amber status on White)"));
+    cli.broadcastln("  -> State D: GPS Lost / Stale (Amber status on White)");
     app.getDisplayUi().showFooterText("TEST 8: ROVER GPS LOST", RICH_YELLOW);
     app.getDisplayUi().renderRoverCard(RoverState::GpsLostStale, 18.2, false);
     selfTestDelay(app, 1500);
@@ -312,7 +313,7 @@ void SelfTest::run(AppController &app) {
     app.getDisplayUi().clearRoverCard();
 
     // Stage 9: Rover Contest Location History & 1-Touch Undo Modal
-    Serial.println(F("[Test 9/9] Rover Contest Location History & 1-Touch Undo Modal"));
+    cli.broadcastln("[Test 9/9] Rover Contest Location History & 1-Touch Undo Modal");
     app.getDisplayUi().showFooterText("TEST 9: ROVER MODAL", RICH_YELLOW);
     app.setUiMode(UiMode::RoverHistory);
 
@@ -338,18 +339,46 @@ void SelfTest::run(AppController &app) {
     int failedTests[16];
     int failedCount = runAssertions(failedTests, sizeof(failedTests) / sizeof(failedTests[0]));
 
+    static const char* const TEST_NAMES[9] = {
+        "Same Grid (ARRL 1.0 km rule)",
+        "Under 1,000 km formatting",
+        "Over 1,000 km formatting",
+        "Extreme distance (> 10,000 km)",
+        "Heading quality color states",
+        "Live GNSS stream diagnostic",
+        "Antenna calibration pill & modal",
+        "Rover Mode 4-state matrix card",
+        "Rover history log & undo modal"
+    };
+
+    cli.broadcastln();
+    cli.broadcastln("==================================================");
+    cli.broadcastln("             Visual Self-Test Summary             ");
+    cli.broadcastln("==================================================");
+    for (int t = 1; t <= 9; ++t) {
+        bool passed = true;
+        for (int f = 0; f < failedCount; ++f) {
+            if (failedTests[f] == t) {
+                passed = false;
+                break;
+            }
+        }
+        cli.broadcastFormat("  [%d/9] %-33s : %s\r\n", t, TEST_NAMES[t - 1], passed ? "PASS" : "FAIL");
+    }
+    cli.broadcastln("--------------------------------------------------");
+
     if (failedCount == 0) {
-        Serial.println(F("Result: PASS"));
+        cli.broadcastln("Overall Verdict: ALL 9 TESTS PASSED [PASS]");
         app.getDisplayUi().showStatusCard("SELF-TEST PASSED", GREEN, BLACK);
         selfTestDelay(app, 2500);
     } else {
         char failMsg[32];
         DisplayUi::formatSelfTestFailure(failedTests, failedCount, failMsg, sizeof(failMsg));
-        Serial.print(F("Result: FAIL -> "));
-        Serial.println(failMsg);
+        cli.broadcastFormat("Overall Verdict: FAILED (%s) [FAIL]\r\n", failMsg);
         app.getDisplayUi().showStatusCard(failMsg, RED, WHITE);
         selfTestDelay(app, 4000);
     }
+    cli.broadcastln("==================================================");
     app.getDisplayUi().getGfx()->fillRect(40, 215, 400, 52, BLACK);
 
     // Restore live state and re-enable UI callbacks
@@ -366,7 +395,7 @@ void SelfTest::run(AppController &app) {
     app.updateNavigation();
     app.redrawMainScreen();
 
-    Serial.println(F("=== Visual Self-Test Complete (Live state restored) ===\n"));
+    cli.broadcastln("=== Visual Self-Test Complete (Live state restored) ===\n");
 #else
     (void)app;
 #endif

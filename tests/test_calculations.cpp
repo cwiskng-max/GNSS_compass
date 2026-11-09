@@ -19,6 +19,7 @@
 #include "../src/system/board.h"
 #include "../src/system/app_controller.h"
 #include "../src/system/rover_log_manager.h"
+#include "../src/protocol/ble_serial_manager.h"
 #include "../src/system/self_test.h"
 
 int tests_run = 0;
@@ -2762,6 +2763,126 @@ void test_legacy_nmea_end_to_end() {
     PASS();
 }
 
+void test_ble_serial_manager() {
+    TEST("BleSerialManager lifecycle, callbacks, and TX buffering");
+
+    BleSerialManager ble;
+    ASSERT_TRUE(!ble.isConnected());
+    ble.begin("Compass-Test");
+    ASSERT_STR_EQ(ble.getDeviceName(), "Compass-Test");
+
+    bool connState = false;
+    ble.setConnectionCallback([](bool connected, void *ctx) {
+        *static_cast<bool*>(ctx) = connected;
+    }, &connState);
+
+    ble.setConnected(true);
+    ASSERT_TRUE(ble.isConnected());
+    ASSERT_TRUE(connState == true);
+
+    ble.print("Hello ");
+    ble.println("BLE");
+    ASSERT_STR_EQ(ble.getTxBuffer().c_str(), "Hello BLE\r\n");
+
+    ble.clearTxBuffer();
+    ble.printFormat("Value: %d", 42);
+    ASSERT_STR_EQ(ble.getTxBuffer().c_str(), "Value: 42");
+
+    std::string receivedData;
+    ble.setDataReceivedCallback([](const char *data, size_t len, void *ctx) {
+        static_cast<std::string*>(ctx)->append(data, len);
+    }, &receivedData);
+
+    ble.simulateRx("status\n", 7);
+    ASSERT_STR_EQ(receivedData.c_str(), "status\n");
+
+    ble.setConnected(false);
+    ASSERT_TRUE(!ble.isConnected());
+    ASSERT_TRUE(connState == false);
+
+    PASS();
+}
+
+void test_serial_cli_dual_transport() {
+    TEST("SerialCli dual-transport isolation, BLE command routing, and broadcast");
+
+    GpsManager gps;
+    Calibration cal;
+    GpsSimulator sim;
+    RoverLogManager mgr;
+    BleSerialManager ble;
+    SerialCli cli(gps, cal, sim, &mgr, &ble);
+
+    cli.begin();
+    ble.setConnected(true);
+
+    // 1. Verify BLE execution of 'status'
+    ble.clearTxBuffer();
+    ble.simulateRx("status\r\n", 8);
+    ASSERT_TRUE(cli.getActiveSource() == CLI_SOURCE_BLE);
+    ASSERT_TRUE(ble.getTxBuffer().find("GNSS Receiver Stream Diagnosis") != std::string::npos);
+
+    // 2. Verify independent line buffering: partial keystrokes on BLE and USB do not collide
+    ble.clearTxBuffer();
+    cli.handleBleInput("ro", 2); // Partial command on BLE
+    // Meanwhile, execute a command from USB directly
+    std::string usbOutput;
+    cli.setOutputHandler([](const char *s, void *ctx) {
+        static_cast<std::string*>(ctx)->append(s);
+    }, &usbOutput);
+    cli.executeCommand("cal", 0, CLI_SOURCE_USB);
+    ASSERT_TRUE(cli.getActiveSource() == CLI_SOURCE_USB);
+    ASSERT_TRUE(usbOutput.find("Antenna Calibration Status") != std::string::npos);
+
+    // Now complete the BLE command "ver status\r\n"
+    cli.setOutputHandler(nullptr); // restore default output routing
+    cli.handleBleInput("ver status\r\n", 12);
+    ASSERT_TRUE(cli.getActiveSource() == CLI_SOURCE_BLE);
+    ASSERT_TRUE(ble.getTxBuffer().find("Rover Transit Status") != std::string::npos);
+
+    // 3. Verify broadcast reaches both USB and BLE
+    ble.clearTxBuffer();
+    std::string broadcastCapture;
+    cli.setOutputHandler([](const char *s, void *ctx) {
+        static_cast<std::string*>(ctx)->append(s);
+    }, &broadcastCapture);
+    cli.broadcastln("SYSTEM BOOT COMPLETED");
+    ASSERT_TRUE(broadcastCapture.find("SYSTEM BOOT COMPLETED\r\n") != std::string::npos);
+    ASSERT_TRUE(ble.getTxBuffer().find("SYSTEM BOOT COMPLETED\r\n") != std::string::npos);
+
+    PASS();
+}
+
+void test_app_controller_ble_integration() {
+    TEST("AppController BLE lifecycle and UI connection state");
+
+    Board board;
+    DisplayUi display;
+    InputManager input;
+    GpsManager gps;
+    Calibration cal;
+    GpsSimulator sim;
+    BleSerialManager ble;
+    SerialCli cli(gps, cal, sim, nullptr, &ble);
+    AppController app(board, display, input, gps, cal, sim, cli, nullptr, &ble);
+
+    app.begin();
+    ASSERT_TRUE(app.getBleManager() == &ble);
+
+    // Verify initial disconnected state
+    ASSERT_TRUE(!ble.isConnected());
+
+    // Connect BLE
+    ble.setConnected(true);
+    ASSERT_TRUE(ble.isConnected());
+
+    // Disconnect BLE
+    ble.setConnected(false);
+    ASSERT_TRUE(!ble.isConnected());
+
+    PASS();
+}
+
 int main() {
     std::cout << "========================================" << std::endl;
     std::cout << "  GNSS Compass Unit Test Suite" << std::endl;
@@ -2809,6 +2930,9 @@ int main() {
     test_serial_cli_rover_commands();
     test_rover_simulation_scenarios_e2e();
     test_legacy_nmea_end_to_end();
+    test_ble_serial_manager();
+    test_serial_cli_dual_transport();
+    test_app_controller_ble_integration();
 
     std::cout << "========================================" << std::endl;
     std::cout << "  All " << tests_passed << " / " << tests_run << " tests PASSED successfully!" << std::endl;

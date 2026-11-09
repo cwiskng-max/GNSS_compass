@@ -13,7 +13,8 @@ AppController::AppController(Board &board,
                              Calibration &calibration,
                              GpsSimulator &gpsSimulator,
                              SerialCli &serialCli,
-                             RoverLogManager *roverLogManager)
+                             RoverLogManager *roverLogManager,
+                             BleSerialManager *bleManager)
     : board_(board),
       displayUi_(displayUi),
       inputManager_(inputManager),
@@ -22,6 +23,8 @@ AppController::AppController(Board &board,
       gpsSimulator_(gpsSimulator),
       serialCli_(serialCli),
       roverLogManagerRef_(roverLogManager ? roverLogManager : &roverLogManagerOwned_),
+      bleManager_(bleManager),
+      bleConnected_(false),
       hasLocation_(false),
       hasTime_(false),
       hours_(0),
@@ -312,8 +315,16 @@ void AppController::redrawMainScreen() {
     s.hours = hours_;
     s.minutes = minutes_;
     s.hasTime = hasTime_;
+    s.bleConnected = bleConnected_;
 
     displayUi_.redrawMainScreen(s);
+}
+
+void AppController::handleBleConnectionChanged(bool connected) {
+    bleConnected_ = connected;
+    if (currentUiMode_ == UiMode::Normal) {
+        displayUi_.renderBleStatus(connected);
+    }
 }
 
 void AppController::runVisualSelfTest() {
@@ -367,6 +378,14 @@ void AppController::begin() {
 
     // Wire Serial CLI callbacks (passing this as context)
     serialCli_.begin();
+    if (bleManager_) {
+        bleManager_->begin();
+        bleManager_->setConnectionCallback([](bool connected, void *ctx) {
+            auto *self = static_cast<AppController*>(ctx);
+            if (self) self->handleBleConnectionChanged(connected);
+        }, this);
+        serialCli_.setBleManager(bleManager_);
+    }
     serialCli_.setRoverLogManager(roverLogManagerRef_);
     serialCli_.setRoverCallbacks(
         [](void *ctx, unsigned long nowMs) {
@@ -462,10 +481,10 @@ void AppController::begin() {
 
 #if defined(ARDUINO)
         int rdist = (int)std::floor(self->distance_ / 1000.0);
-        Serial.printf("[SIM ROVER] Origin: %s (%.5f, %.5f) | Current: %s (%.5f, %.5f)\r\n",
+        self->serialCli_.broadcastFormat("[SIM ROVER] Origin: %s (%.5f, %.5f) | Current: %s (%.5f, %.5f)\r\n",
                       self->gridEditor_.getGrid(), self->targetPosition_.latitude, self->targetPosition_.longitude,
                       self->myGrid_, self->currentPosition_.latitude, self->currentPosition_.longitude);
-        Serial.printf("[SIM ROVER] Distance: %5.1f km (%d km) | Alert: %s\r\n",
+        self->serialCli_.broadcastFormat("[SIM ROVER] Distance: %5.1f km (%d km) | Alert: %s\r\n",
                       self->distance_ / 1000.0, rdist, (rdist < 16) ? "ACTIVE (RED on WHITE)" : "CLEAR (>= 16 km)");
 #endif
     }, this);

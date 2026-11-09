@@ -8,6 +8,7 @@
 #include "../gnss/simulator.h"
 #include "../ui/rover_card.h"
 #include "../system/rover_log_manager.h"
+#include "ble_serial_manager.h"
 
 // Forward declaration of listener callback types
 typedef void (*CliCommandOutputFn)(const char *str, void *context);
@@ -15,6 +16,15 @@ typedef void (*CliRunTestCallback)(void *context);
 typedef void (*CliStateChangedCallback)(void *context);
 typedef void (*CliRoverSimCallback)(const char *originGrid, double distKm, void *context);
 typedef void (*CliRoverActionCallback)(void *context, unsigned long nowMs);
+
+/**
+ * @brief Input source of the CLI command
+ */
+enum CliSource {
+    CLI_SOURCE_USB = 0,
+    CLI_SOURCE_BLE,
+    CLI_SOURCE_INTERNAL
+};
 
 /**
  * @brief Navigation domain context query for live CLI reports, calibration snap,
@@ -40,7 +50,9 @@ typedef CliNavContext (*CliNavContextProviderFn)(void *context);
  */
 class SerialCli {
 public:
-    SerialCli(GpsManager &gpsManager, Calibration &calibration, GpsSimulator &simulator, RoverLogManager *roverLogManager = nullptr);
+    SerialCli(GpsManager &gpsManager, Calibration &calibration, GpsSimulator &simulator,
+              RoverLogManager *roverLogManager = nullptr,
+              BleSerialManager *bleManager = nullptr);
 
     // Initializes CLI state
     void begin();
@@ -48,8 +60,24 @@ public:
     // Non-blocking character ingest from host USB Serial
     void update(unsigned long nowMs = 0);
 
-    // Directly execute a command line (from serial stream, scripts, or unit tests)
-    void executeCommand(const char *cmdLine, unsigned long nowMs = 0);
+    // Ingest data from wireless BLE connection
+    void handleBleInput(const char *data, size_t len, unsigned long nowMs = 0);
+    void handleBleChar(char c, unsigned long nowMs = 0);
+
+    // Directly execute a command line (from serial stream, BLE, scripts, or unit tests)
+    void executeCommand(const char *cmdLine, unsigned long nowMs = 0, CliSource source = CLI_SOURCE_USB);
+
+    // Transport configuration
+    void setBleManager(BleSerialManager *mgr);
+    BleSerialManager* getBleManager() const { return bleManager_; }
+
+    CliSource getActiveSource() const { return activeSource_; }
+    void setActiveSource(CliSource src) { activeSource_ = src; }
+
+    // Broadcast messages (sends to USB and connected BLE simultaneously)
+    void broadcast(const char *str);
+    void broadcastln(const char *str = "");
+    void broadcastFormat(const char *fmt, ...);
 
     // Callbacks & listeners
     void setRunTestCallback(CliRunTestCallback cb, void *context = nullptr) { runTestCb_ = cb; runTestContext_ = context; }
@@ -123,6 +151,8 @@ private:
     Calibration &calibration_;
     GpsSimulator &simulator_;
     RoverLogManager *roverLogManager_;
+    BleSerialManager *bleManager_;
+    CliSource activeSource_;
 
     CliNavContextProviderFn navContextFn_;
     void *navContext_;
@@ -144,5 +174,7 @@ private:
     bool pendingRoverClear_;
     char inputBuffer_[256];
     size_t inputIndex_;
+    char bleInputBuffer_[256];
+    size_t bleInputIndex_;
 };
 

@@ -90,6 +90,10 @@
 #define LOC_X                144
 #define LOC_Y                35
 
+// Bluetooth Status Indicator Icon (Row 1 right flank)
+#define BLE_ICON_X           348
+#define BLE_ICON_Y           44
+
 // Row 2: Target Grid
 #define REMSIZE              8
 #define REMSTARTX            80

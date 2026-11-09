@@ -10,6 +10,7 @@ g++ -O2 -Wall -Wextra -I"$REPO_DIR" \
     "$REPO_DIR/src/geo/maidenhead.cpp" \
     "$REPO_DIR/src/geo/bearing_filter.cpp" \
     "$REPO_DIR/src/protocol/nmea_parser.cpp" \
+    "$REPO_DIR/src/protocol/ble_serial_manager.cpp" \
     "$REPO_DIR/src/protocol/serial_cli.cpp" \
     "$REPO_DIR/src/system/board.cpp" \
     "$REPO_DIR/src/system/calibration.cpp" \

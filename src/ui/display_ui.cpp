@@ -298,6 +298,23 @@ void DisplayUi::renderUtcTime(int hours, int minutes, bool hasTime) {
     gfx_->print(tbuf);
 }
 
+void DisplayUi::renderBleStatus(bool connected) {
+    if (!gfx_) return;
+    int x = BLE_ICON_X;
+    int y = BLE_ICON_Y;
+    gfx_->fillRect(x - 5, y - 2, 12, 18, BLACK);
+    if (!connected) return;
+
+    uint16_t color = CYAN;
+    gfx_->drawFastVLine(x, y, 14, color);
+    gfx_->drawLine(x, y, x + 4, y + 4, color);
+    gfx_->drawLine(x + 4, y + 4, x, y + 7, color);
+    gfx_->drawLine(x, y + 7, x + 4, y + 10, color);
+    gfx_->drawLine(x + 4, y + 10, x, y + 14, color);
+    gfx_->drawLine(x, y + 7, x - 3, y + 4, color);
+    gfx_->drawLine(x, y + 7, x - 3, y + 10, color);
+}
+
 void DisplayUi::showFooterText(const char *msg, uint16_t color) {
     if (!gfx_ || !msg) return;
     gfx_->fillRect(0, VER_Y, SCREEN_WIDTH, CHAR_H(VER_SZ) + 4, BLACK);
@@ -345,6 +362,7 @@ void DisplayUi::redrawMainScreen(const MainScreenState &s) {
     }
     renderArrlDistance(s.myGrid, s.targetGrid);
     renderUtcTime(s.hours, s.minutes, s.hasTime);
+    renderBleStatus(s.bleConnected);
     showFooterText(FW_VERSION, DIM_GRAY_TEXT);
 }
 #else
@@ -363,6 +381,7 @@ void DisplayUi::renderRoverCardMessage(const char *, uint16_t) {}
 void DisplayUi::clearRoverCard() {}
 void DisplayUi::renderArrlDistance(const char *, const char *) {}
 void DisplayUi::renderUtcTime(int, int, bool) {}
+void DisplayUi::renderBleStatus(bool) {}
 void DisplayUi::showFooterText(const char *, uint16_t) {}
 void DisplayUi::showStatusCard(const char *, uint16_t, uint16_t) {}
 void DisplayUi::redrawMainScreen(const MainScreenState &) {}

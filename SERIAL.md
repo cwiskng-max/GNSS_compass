@@ -1,10 +1,12 @@
 # ESP32 Serial Interface & CLI Guide
 
-The GNSS Compass firmware features an interactive command-line interface (CLI) accessible over the USB-C serial port. The CLI provides real-time GNSS receiver diagnostics, display self-test triggers, and antenna heading offset calibration stored in non-volatile storage (NVS).
+The GNSS Compass firmware features an interactive command-line interface (CLI) accessible concurrently over both the physical **USB-C serial port** and wireless **Bluetooth Low Energy (BLE UART)**. The CLI provides real-time GNSS receiver diagnostics, display self-test triggers, Rover Mode transit tracking, and antenna heading offset calibration stored in non-volatile storage (NVS).
 
 ---
 
-## 1. Connection Settings
+## 1. Connection Options
+
+### 1.1 Physical USB-C Connection
 
 Connect the ESP32-S3 rotary display to your computer using a USB-C data cable.
 
@@ -17,12 +19,47 @@ Connect the ESP32-S3 rotary display to your computer using a USB-C data cable.
 | **Flow Control** | None | Hardware and software flow control disabled |
 | **Line Endings** | Any (`\r`, `\n`, or `\r\n`) | Firmware handles CR, LF, and CRLF transparently |
 
-### Terminal Emulator Recommendations
+#### Terminal Emulator Recommendations (USB)
 * **Linux / macOS:** `tio /dev/ttyACM0 -b 115200`, `picocom -b 115200 /dev/ttyACM0`, or `minicom -D /dev/ttyACM0 -b 115200`
 * **Windows:** PuTTY, Tera Term, or Arduino Serial Monitor
 * **Cross-Platform:** Visual Studio Code Serial Monitor extension
 
 The CLI includes **local character echoing** and supports **backspace/DEL** editing directly in terminal emulators.
+
+---
+
+### 1.2 Wireless Bluetooth (BLE UART / Nordic NUS)
+
+Because the Elecrow 2.1" display is often mounted on a mast, tripod, or vehicle dash with delicate rear cabling, the firmware provides a wireless Bluetooth interface using the industry-standard **Nordic UART Service (NUS)**.
+
+> [!NOTE]
+> The ESP32-S3 microcontroller utilizes **Bluetooth 5.0 Low Energy (BLE)**. BLE UART requires no pairing PIN, connects in under a second, and works natively across iOS, Android, and desktop browsers.
+
+* **Advertised Device Name:** `GNSS-Compass-xxxxxx` (where `xxxxxx` is the last 6 lowercase hex digits of the Bluetooth MAC address, e.g. `GNSS-Compass-8a4f2b`).
+* **Service UUID:** `6E400001-B5A3-F393-E0A9-E50E24DCCA9E`
+* **RX Characteristic (Write to ESP32):** `6E400002-B5A3-F393-E0A9-E50E24DCCA9E`
+* **TX Characteristic (Notify from ESP32):** `6E400003-B5A3-F393-E0A9-E50E24DCCA9E`
+
+#### Android Mobile Connection
+1. Install **[Serial Bluetooth Terminal](https://play.google.com/store/apps/details?id=de.kai_morich.serial_bluetooth_terminal)** by Kai Morich from Google Play.
+2. Open sidebar -> **Devices** -> **Bluetooth LE** tab -> Scan -> Select `GNSS-Compass-xxxxxx`.
+3. Tap Connect. The terminal connects immediately.
+4. **Recommended Field Macro Buttons:** In the app, long-press the `M1`–`M6` macro buttons along the bottom to configure 1-tap commands:
+   * **M1 (`status`):** `status\n` (Live GNSS receiver stream & lock diagnostics)
+   * **M2 (`rover`):** `rover status\n` (16 km transit displacement & qualification)
+   * **M3 (`cal snap`):** `cal snap\n` (1-touch antenna heading alignment snapshot)
+   * **M4 (`history`):** `rover history\n` (Display visited contest grid roster)
+   * **M5 (`undo`):** `rover undo\n` (Discard accidental stop and re-arm)
+
+#### iPhone / iPad Connection
+1. Install **[BLE Terminal HM-10](https://apps.apple.com/us/app/ble-terminal-hm-10/id1398703795)** or **[Adafruit Bluefruit Connect](https://apps.apple.com/us/app/adafruit-bluefruit-connect/id830125974)** from the App Store.
+2. Scan and tap `GNSS-Compass-xxxxxx`.
+3. Select **UART** mode. Bidirectional terminal access is active.
+
+#### Laptop / Desktop (Web Bluetooth — Zero Software Installation)
+1. Open Google Chrome, Microsoft Edge, or Chromium on macOS, Linux, Windows, or ChromeOS.
+2. Open any Web Bluetooth terminal (or a local HTML/JS Web Bluetooth page).
+3. Click **Connect**, select `GNSS-Compass-xxxxxx`, and communicate directly from your browser tab.
 
 ---
 
@@ -96,31 +133,60 @@ Overall Verdict:        [PASS] FULLY OPERATIONAL (RTK Fixed)
 ---
 
 ### 3.3 Visual Display Self-Test (`test`, `demo`, `t`)
-Triggers an automated visual demonstration on the round LCD screen. Runs sequentially through 7 test phases:
+Triggers an automated visual demonstration on the round LCD screen. Runs sequentially through 9 test phases:
 
-1. **Test 1: Primary UI Framework** (Grid layout and static elements)
-2. **Test 2: Maidenhead Grid Resolution** (Local & remote grid squares)
-3. **Test 3: Dual-Antenna Bearing Angles** (Cardinal headings $0^\circ \to 90^\circ \to 180^\circ \to 270^\circ$)
-4. **Test 4: ARRL VHF/Microwave Distance** (Geodetic distance calculation)
-5. **Test 5: Live Satellite Clock** (UTC time display)
-6. **Test 6: Bearing Quality & Live Stream** (Color coding check and hardware link test)
-7. **Test 7: Antenna Offset Calibration** (Pill rendering and modal dialog demo)
+1. **Test 1: Same Grid Clamp** (ARRL 1.0 km minimum rule)
+2. **Test 2: Under 1,000 km formatting** (~600 km geodetic distance)
+3. **Test 3: Over 1,000 km formatting** (~2,500 km geodetic distance)
+4. **Test 4: Extreme distance (> 10,000 km)** and recovery without ghost characters
+5. **Test 5: Antenna Heading Quality Color States** (White / Yellow / Red)
+6. **Test 6: Live GNSS Receiver Stream Diagnostic** (Direct hardware UART check)
+7. **Test 7: Antenna Calibration Pill & Modal** (Offset fine-tuning & snap demo)
+8. **Test 8: Rover Mode 4-State Qualification Matrix** (Transit, Qualified, Revisit, Lost)
+9. **Test 9: Rover Location History & 1-Touch Undo Modal** (Discard progress demo)
 
-After completion, the self-test prints `Result: PASS` or `Result: FAIL` to the serial console and automatically restores previous live compass operation.
+After completion, the self-test prints a complete summary table with individual stage verdicts and an overall pass/fail status, then automatically restores live compass operation.
 
 ```text
 > test
 
-=== Running GNSS Compass Visual Self-Test ===
-  -> Testing Primary UI Layout Framework
-  -> Testing Maidenhead Grid Calculations
-  -> Testing Bearing Needle Color Transitions
-  -> Testing ARRL Contest Distance Computations
-  -> Testing UTC Time Sync Display
-  -> Testing Live GNSS Link & NMEA Parser
+=== Starting Visual Display Self-Test Demo ===
+[Test 1/9] Same Grid (ARRL 1.0 km rule)
+[Test 2/9] Under 1,000 km formatting (~600 km)
+[Test 3/9] Over 1,000 km formatting (~2,500 km)
+[Test 4/9] Extreme distance (> 10,000 km) & Ghost Recovery
+  -> Dropping back to 1.0 km (verifying no ghost characters)
+[Test 5/9] Antenna Heading Quality Color States
+  -> Bearing Color: Pure White (RTK Fixed)
+  -> Bearing Color: Bright Yellow (RTK Float / Degraded)
+  -> Bearing Color: Bright Red (Lost / Stale)
+[Test 6/9] Live GNSS Receiver Stream Diagnostic
+[Test 7/9] Antenna Calibration Pill & Modal Display Demo
+  -> Testing Calibration Pill Display (Uncalibrated: OFF)
   -> Testing Calibration Pill Display (Calibrated: +4.2 deg)
   -> Demonstrating Calibration Modal Dialog
-Result: PASS
+[Test 8/9] Rover Mode 4-State Qualification Matrix (Row 5 Card)
+  -> State A: In Transit (< 16.0 km, Red on White)
+  -> State B: Qualified New Grid (>= 16.0 km, Green on White)
+  -> State C: Qualified Revisited Grid (>= 16.0 km, Blue on White)
+  -> State D: GPS Lost / Stale (Amber status on White)
+[Test 9/9] Rover Contest Location History & 1-Touch Undo Modal
+
+==================================================
+             Visual Self-Test Summary             
+==================================================
+  [1/9] Same Grid (ARRL 1.0 km rule)      : PASS
+  [2/9] Under 1,000 km formatting         : PASS
+  [3/9] Over 1,000 km formatting          : PASS
+  [4/9] Extreme distance (> 10,000 km)    : PASS
+  [5/9] Heading quality color states      : PASS
+  [6/9] Live GNSS stream diagnostic       : PASS
+  [7/9] Antenna calibration pill & modal  : PASS
+  [8/9] Rover Mode 4-state matrix card    : PASS
+  [9/9] Rover history log & undo modal    : PASS
+--------------------------------------------------
+Overall Verdict: ALL 9 TESTS PASSED [PASS]
+==================================================
 === Visual Self-Test Complete (Live state restored) ===
 ```
 
