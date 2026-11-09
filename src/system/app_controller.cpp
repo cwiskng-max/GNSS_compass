@@ -253,7 +253,7 @@ void AppController::renderNavigationRows() {
         bool isRevisit = roverLogManagerRef_->hasVisitedGrid(myGrid_);
         lastRoverState_ = evaluateRoverState(dispKm, isRevisit, isFresh);
         if (roverWarningUntilMs_ == 0 || (currentNowMs_ > 0 && currentNowMs_ >= roverWarningUntilMs_)) {
-            displayUi_.renderRoverCard(lastRoverState_, dispKm);
+            displayUi_.renderRoverCard(lastRoverState_, dispKm, isRevisit);
         }
     } else {
         if (lastRenderedMode_ == OperationalMode::Rover) {
@@ -294,9 +294,11 @@ void AppController::redrawMainScreen() {
         }
         s.roverState = lastRoverState_;
         s.roverDisplacementKm = isFresh ? (distance_ / 1000.0) : lastValidDisplacementKm_;
+        s.isRoverRevisit = roverLogManagerRef_->hasVisitedGrid(myGrid_);
     } else {
         s.roverState = lastRoverState_;
         s.roverDisplacementKm = 0.0;
+        s.isRoverRevisit = false;
     }
     s.currentHeading = bf.getCalibratedHeading(calibration_.getOffset());
     s.bearingQuality = currentBearingQuality_;
@@ -694,9 +696,10 @@ void AppController::update(unsigned long nowMs) {
 
     // 6. In Rover Mode, evaluate GPS watchdog staleness and warning expiration
     if (operationalMode_ == OperationalMode::Rover && currentUiMode_ == UiMode::Normal) {
+        bool isRevisit = roverLogManagerRef_->hasVisitedGrid(myGrid_);
         if (roverWarningUntilMs_ > 0 && nowMs >= roverWarningUntilMs_) {
             roverWarningUntilMs_ = 0;
-            displayUi_.renderRoverCard(lastRoverState_, lastValidDisplacementKm_);
+            displayUi_.renderRoverCard(lastRoverState_, lastValidDisplacementKm_, isRevisit);
         }
 
         bool isFresh = hasLocation_ && (lastLocationUpdate_ > 0) && (nowMs >= lastLocationUpdate_) && ((nowMs - lastLocationUpdate_) <= 3000);
@@ -704,7 +707,7 @@ void AppController::update(unsigned long nowMs) {
             if (lastRoverState_ != RoverState::GpsLostStale) {
                 lastRoverState_ = RoverState::GpsLostStale;
                 if (roverWarningUntilMs_ == 0) {
-                    displayUi_.renderRoverCard(RoverState::GpsLostStale, lastValidDisplacementKm_);
+                    displayUi_.renderRoverCard(RoverState::GpsLostStale, lastValidDisplacementKm_, isRevisit);
                 }
             }
         }

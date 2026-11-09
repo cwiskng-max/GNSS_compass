@@ -1716,6 +1716,16 @@ void test_rover_card_formatting_and_colors() {
     ASSERT_TRUE(getRoverStateTextColor(RoverState::QualifiedRevisitedGrid) == 0x011C);
     ASSERT_TRUE(getRoverStateTextColor(RoverState::GpsLostStale) == 0xDC00);
 
+    // Distance Field Colors: calculated directly from displacement and revisit status
+    ASSERT_TRUE(calculateRoverDistanceColor(0.0, false) == COLOR_ROVER_TRANSIT_RED);
+    ASSERT_TRUE(calculateRoverDistanceColor(6.4, false) == COLOR_ROVER_TRANSIT_RED);
+    ASSERT_TRUE(calculateRoverDistanceColor(15.9, false) == COLOR_ROVER_TRANSIT_RED);
+    ASSERT_TRUE(calculateRoverDistanceColor(15.99, true) == COLOR_ROVER_TRANSIT_RED); // Revisit under 16km is still Transit Red
+    ASSERT_TRUE(calculateRoverDistanceColor(16.0, false) == COLOR_ROVER_QUALIFIED_GREEN);
+    ASSERT_TRUE(calculateRoverDistanceColor(18.2, false) == COLOR_ROVER_QUALIFIED_GREEN);
+    ASSERT_TRUE(calculateRoverDistanceColor(16.0, true) == COLOR_ROVER_REVISIT_BLUE);
+    ASSERT_TRUE(calculateRoverDistanceColor(22.4, true) == COLOR_ROVER_REVISIT_BLUE);
+
     // Status Words (9 characters)
     ASSERT_STR_EQ(getRoverStateStatusWord(RoverState::InTransitUnder16k), "TRANSIT  ");
     ASSERT_STR_EQ(getRoverStateStatusWord(RoverState::QualifiedNewGrid), "QUALIFIED");
@@ -2188,6 +2198,8 @@ void test_rover_history_undo_modal_and_autorearm() {
     formatRoverCard(app.getCurrentRoverState(), app.getLastValidDisplacementKm(), cardBuf, sizeof(cardBuf));
     ASSERT_STR_EQ(cardBuf, "NO GPS    28.0 k");
     ASSERT_TRUE(getRoverStateTextColor(app.getCurrentRoverState()) == COLOR_ROVER_NOGPS_AMBER);
+    bool isRevisit28 = app.getRoverLogManager().hasVisitedGrid(app.getMyGrid());
+    ASSERT_TRUE(calculateRoverDistanceColor(app.getLastValidDisplacementKm(), isRevisit28) == COLOR_ROVER_QUALIFIED_GREEN);
 
     PASS();
 }
@@ -2533,6 +2545,9 @@ void test_rover_simulation_scenarios_e2e() {
     // Signal drop in dense canopy: advance time by 3.6 seconds (> 3000 ms watchdog) without GPS update
     app.update(18600);
     ASSERT_TRUE(app.getCurrentRoverState() == RoverState::GpsLostStale);
+    ASSERT_TRUE(getRoverStateTextColor(app.getCurrentRoverState()) == COLOR_ROVER_NOGPS_AMBER);
+    bool isRevisit19 = app.getRoverLogManager().hasVisitedGrid(app.getMyGrid());
+    ASSERT_TRUE(calculateRoverDistanceColor(app.getLastValidDisplacementKm(), isRevisit19) == COLOR_ROVER_QUALIFIED_GREEN);
 
     serialCli.executeCommand("rover status", 18600);
     ASSERT_TRUE(cliOut.find("STATE D: NO GPS") != std::string::npos);
@@ -2569,7 +2584,18 @@ void test_rover_simulation_scenarios_e2e() {
     // Assert State C (REVISITED)
     ASSERT_TRUE(app.getCurrentRoverState() == RoverState::QualifiedRevisitedGrid);
 
-    serialCli.executeCommand("rover status", 21000);
+    // Signal drop during State C (REVISITED): "NO GPS" in Amber, distance retains Royal Blue
+    app.update(24500); // 3500 ms (> 3000 ms watchdog) without GPS update
+    ASSERT_TRUE(app.getCurrentRoverState() == RoverState::GpsLostStale);
+    ASSERT_TRUE(getRoverStateTextColor(app.getCurrentRoverState()) == COLOR_ROVER_NOGPS_AMBER);
+    bool isRevisitOrigin = app.getRoverLogManager().hasVisitedGrid(app.getMyGrid());
+    ASSERT_TRUE(calculateRoverDistanceColor(app.getLastValidDisplacementKm(), isRevisitOrigin) == COLOR_ROVER_REVISIT_BLUE);
+
+    // Re-acquire GPS fix: returns to State C
+    injectKsxt(originSite, 45.0f, BEARING_FIXED, 24600);
+    ASSERT_TRUE(app.getCurrentRoverState() == RoverState::QualifiedRevisitedGrid);
+
+    serialCli.executeCommand("rover status", 24600);
     ASSERT_TRUE(cliOut.find("STATE C: REVISITED") != std::string::npos);
     ASSERT_TRUE(cliOut.find("Previously Visited") != std::string::npos);
     cliOut.clear();

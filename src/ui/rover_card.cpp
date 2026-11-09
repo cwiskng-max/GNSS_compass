@@ -29,6 +29,16 @@ uint16_t getRoverStateTextColor(RoverState state) {
     return COLOR_ROVER_TRANSIT_RED;
 }
 
+uint16_t calculateRoverDistanceColor(double displacementKm, bool isRevisit) {
+    if (displacementKm < ROVER_ALERT_THRESHOLD_KM) {
+        return COLOR_ROVER_TRANSIT_RED;
+    }
+    if (isRevisit) {
+        return COLOR_ROVER_REVISIT_BLUE;
+    }
+    return COLOR_ROVER_QUALIFIED_GREEN;
+}
+
 const char* getRoverStateStatusWord(RoverState state) {
     switch (state) {
         case RoverState::InTransitUnder16k:

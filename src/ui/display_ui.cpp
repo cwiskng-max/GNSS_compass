@@ -202,26 +202,42 @@ void DisplayUi::renderReverseBearingAndDistance(double revBearing, double distan
     gfx_->print(buf);
 }
 
-void DisplayUi::renderRoverCard(RoverState state, double displacementKm) {
+void DisplayUi::renderRoverCard(RoverState state, double displacementKm, bool isRevisit) {
     if (!gfx_) return;
 
     char buf[20];
     formatRoverCard(state, displacementKm, buf, sizeof(buf));
 
-    if (state == lastRoverCardState_ && std::strcmp(buf, lastRoverCardBuf_) == 0) {
+    bool revisit = isRevisit || (state == RoverState::QualifiedRevisitedGrid);
+    uint16_t distColor = calculateRoverDistanceColor(displacementKm, revisit);
+
+    if (state == lastRoverCardState_ && distColor == lastRoverCardDistColor_ && std::strcmp(buf, lastRoverCardBuf_) == 0) {
         return;
     }
     lastRoverCardState_ = state;
+    lastRoverCardDistColor_ = distColor;
     std::strncpy(lastRoverCardBuf_, buf, sizeof(lastRoverCardBuf_) - 1);
     lastRoverCardBuf_[sizeof(lastRoverCardBuf_) - 1] = '\0';
 
     gfx_->fillRoundRect(ROVER_CARD_X, ROVER_CARD_Y, ROVER_CARD_W, ROVER_CARD_H, ROVER_CARD_R, WHITE);
 
-    uint16_t textColor = getRoverStateTextColor(state);
-    gfx_->setTextColor(textColor, WHITE);
+    char statusBuf[10];
+    std::strncpy(statusBuf, buf, 9);
+    statusBuf[9] = '\0';
+    const char *distBuf = buf + 9;
+
+    uint16_t statusColor = getRoverStateTextColor(state);
+
     gfx_->setTextSize(ROVER_CARD_SZ);
+
+    gfx_->setTextColor(statusColor, WHITE);
     gfx_->setCursor(ROVER_CARD_TEXT_X, ROVER_CARD_TEXT_Y);
-    gfx_->print(buf);
+    gfx_->print(statusBuf);
+
+    gfx_->setTextColor(distColor, WHITE);
+    gfx_->setCursor(ROVER_CARD_TEXT_X + 9 * CHAR_W(ROVER_CARD_SZ), ROVER_CARD_TEXT_Y);
+    gfx_->print(distBuf);
+
     gfx_->setTextColor(WHITE, BLACK);
 }
 
@@ -229,6 +245,7 @@ void DisplayUi::renderRoverCardMessage(const char *msg, uint16_t textColor) {
     if (!gfx_ || !msg) return;
 
     lastRoverCardState_ = static_cast<RoverState>(-1);
+    lastRoverCardDistColor_ = 0xFFFF;
     lastRoverCardBuf_[0] = '\0';
 
     gfx_->fillRoundRect(ROVER_CARD_X, ROVER_CARD_Y, ROVER_CARD_W, ROVER_CARD_H, ROVER_CARD_R, WHITE);
@@ -250,6 +267,7 @@ void DisplayUi::renderRoverCardMessage(const char *msg, uint16_t textColor) {
 void DisplayUi::clearRoverCard() {
     if (!gfx_) return;
     lastRoverCardState_ = static_cast<RoverState>(-1);
+    lastRoverCardDistColor_ = 0xFFFF;
     lastRoverCardBuf_[0] = '\0';
     gfx_->fillRect(0, ROVER_CARD_Y - 4, SCREEN_WIDTH, ROVER_CARD_H + 8, BLACK);
 }
@@ -312,6 +330,7 @@ void DisplayUi::clearScreen(uint16_t color) {
 void DisplayUi::redrawMainScreen(const MainScreenState &s) {
     if (!gfx_) return;
     lastRoverCardState_ = static_cast<RoverState>(-1);
+    lastRoverCardDistColor_ = 0xFFFF;
     lastRoverCardBuf_[0] = '\0';
     clearScreen(BLACK);
     renderMyGrid(s.myGrid);
@@ -320,7 +339,7 @@ void DisplayUi::redrawMainScreen(const MainScreenState &s) {
     renderCalibrationPill(s.calOffset, s.isCalibrated);
     renderTargetBearing(s.targetBearing);
     if (s.isRoverMode) {
-        renderRoverCard(s.roverState, s.roverDisplacementKm);
+        renderRoverCard(s.roverState, s.roverDisplacementKm, s.isRoverRevisit);
     } else {
         renderReverseBearingAndDistance(s.revBearing, s.distanceMeters);
     }
@@ -339,7 +358,7 @@ void DisplayUi::renderCurrentBearing(double, BearingQuality, bool) {}
 void DisplayUi::renderCalibrationPill(float, bool) {}
 void DisplayUi::renderTargetBearing(double) {}
 void DisplayUi::renderReverseBearingAndDistance(double, double) {}
-void DisplayUi::renderRoverCard(RoverState, double) {}
+void DisplayUi::renderRoverCard(RoverState, double, bool) {}
 void DisplayUi::renderRoverCardMessage(const char *, uint16_t) {}
 void DisplayUi::clearRoverCard() {}
 void DisplayUi::renderArrlDistance(const char *, const char *) {}

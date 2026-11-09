@@ -26,9 +26,22 @@ enum class RoverState {
 RoverState evaluateRoverState(double displacementKm, bool isRevisit, bool isGpsFresh);
 
 /**
- * @brief Returns the RGB565 text foreground color for a RoverState.
+ * @brief Returns the RGB565 text foreground color for a RoverState status word.
  */
 uint16_t getRoverStateTextColor(RoverState state);
+
+/**
+ * @brief Calculates the RGB565 text foreground color for the Rover Card distance field.
+ *
+ * - Displacement < 16.0 km: Red (COLOR_ROVER_TRANSIT_RED)
+ * - Displacement >= 16.0 km in previously visited grid: Royal Blue (COLOR_ROVER_REVISIT_BLUE)
+ * - Displacement >= 16.0 km in unvisited grid: Forest Green (COLOR_ROVER_QUALIFIED_GREEN)
+ *
+ * @param displacementKm Geodesic straight-line displacement in km.
+ * @param isRevisit True if current grid was visited earlier in the contest log.
+ * @return uint16_t RGB565 color for the distance text.
+ */
+uint16_t calculateRoverDistanceColor(double displacementKm, bool isRevisit);
 
 /**
  * @brief Returns the 9-character padded status word for a RoverState.

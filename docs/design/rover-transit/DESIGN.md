@@ -105,14 +105,14 @@ In stationary Bearing Mode, Row 5 renders reverse bearing on the left and contes
 
 In Rover Mode, Row 5 seamlessly transforms into the dedicated **Rover Qualification Card** on a solid white background (`0xFFFF`). Rather than showing the back-azimuth to the previous summit (which has no operational utility while driving), the left slot displays an explicit textual status word, and the right slot displays continuous decimal displacement (`%5.1f k`):
 
-* **State A (In-Transit Under 16k):** `TRANSIT  6.4 k ` (Red text on White `0xF800` / `0xFFFF`)
+* **State A (In-Transit Under 16k):** `TRANSIT    6.4 k` (Red text on White `0xF800` / `0xFFFF`)
 * **State B (Qualified New Grid):** `QUALIFIED 18.2 k` (Forest Green on White `0x03E0` / `0xFFFF`)
-* **State C (Qualified Revisited Grid):** `REVISIT  22.4 k ` (Royal Blue on White `0x011C` / `0xFFFF`)
-* **State D (GPS Lost / Stale):** `NO GPS   11.2 k ` (Deep Amber on White `0xDC00` / `0xFFFF` — holds last known value)
+* **State C (Qualified Revisited Grid):** `REVISIT   22.4 k` (Royal Blue on White `0x011C` / `0xFFFF`)
+* **State D (GPS Lost / Stale):** `NO GPS    11.2 k` (Deep Amber `NO GPS` `0xDC00` on White `0xFFFF`, distance retaining last qualification color — holds last known value)
 
 This provides instant, unambiguous clarity for drivers, eliminating any confusion between states (especially between New Grid and Revisited Grid) without relying solely on color recognition while watching the road.
 
-When entering a tunnel, dense canopy, or deep mountain canyon where GPS signal is temporarily lost, **State D preserves and holds the last known valid distance** (e.g. `11.2 k`) rather than blanking with dashes (`--.- k`). A driver cannot remember the exact fraction of a kilometer when signal drops, so holding the last known reading in Deep Amber provides critical context until satellites are re-acquired.
+When entering a tunnel, dense canopy, or deep mountain canyon where GPS signal is temporarily lost, **State D preserves and holds the last known valid distance** (e.g. `11.2 k`) rather than blanking with dashes (`--.- k`). While the "NO GPS" warning is displayed in Deep Amber, the distance field retains the color of the state it represented at the last GPS reading (Red for Transit, Green for Qualified New Grid, or Royal Blue for Revisited Grid) to preserve qualification context until satellites are re-acquired.
 
 ---
 

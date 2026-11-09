@@ -27,6 +27,7 @@ struct MainScreenState {
     bool isRoverMode = false;
     RoverState roverState = RoverState::InTransitUnder16k;
     double roverDisplacementKm = 0.0;
+    bool isRoverRevisit = false;
     double currentHeading = 0.0;
     BearingQuality bearingQuality = BearingQuality::None;
     bool hasHeading = false;
@@ -52,7 +53,7 @@ public:
     void renderCalibrationPill(float offset, bool isCalibrated);
     void renderTargetBearing(double targetBearing);
     void renderReverseBearingAndDistance(double revBearing, double distanceMeters);
-    void renderRoverCard(RoverState state, double displacementKm);
+    void renderRoverCard(RoverState state, double displacementKm, bool isRevisit = false);
     void renderRoverCardMessage(const char *msg, uint16_t textColor = COLOR_ROVER_TRANSIT_RED);
     void clearRoverCard();
     void renderArrlDistance(const char *myGrid, const char *targetGrid);
@@ -82,6 +83,7 @@ private:
     RoverHistoryModal roverHistoryModal_;
     char lastRoverCardBuf_[24] = {0};
     RoverState lastRoverCardState_ = static_cast<RoverState>(-1);
+    uint16_t lastRoverCardDistColor_ = 0xFFFF;
 
 #if defined(ARDUINO)
     Arduino_ESP32RGBPanel *bus_ = nullptr;
