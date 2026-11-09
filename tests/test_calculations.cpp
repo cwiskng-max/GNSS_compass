@@ -324,11 +324,20 @@ void test_ksxt_time_and_location() {
     ASSERT_TRUE(h == 18);
     ASSERT_TRUE(m == 57);
 
+    // Full Date & Time and Epoch Extraction
+    int yr = 0, mo = 0, dy = 0, hr = 0, mn = 0, sc = 0;
+    ASSERT_TRUE(parseKsxtDateTime(ksxt_full, yr, mo, dy, hr, mn, sc));
+    ASSERT_TRUE(yr == 2026 && mo == 10 && dy == 24 && hr == 18 && mn == 57 && sc == 30);
+    uint32_t epoch = 0;
+    ASSERT_TRUE(parseKsxtEpochTime(ksxt_full, epoch));
+    ASSERT_TRUE(epoch == 1792868250);
+
     // 2. Short 6-digit UTC timestamp (hhmmss.ss)
     const char *ksxt_short_time = "$KSXT,091545.00,116.23662400,40.07897925,68.3830,299.22,-67.03,190.28,0.022,,1,3,46,28*27";
     ASSERT_TRUE(parseKSXTTime(ksxt_short_time, &h, &m));
     ASSERT_TRUE(h == 9);
     ASSERT_TRUE(m == 15);
+    ASSERT_TRUE(!parseKsxtEpochTime(ksxt_short_time, epoch)); // Short time lacks calendar date
 
     // 3. Date only (8-digit yyyymmdd) - must return false (no time)
     const char *ksxt_date_only = "$KSXT,20261024.00,116.23662400,40.07897925,68.3830,299.22,-67.03,190.28,0.022,,1,3,46,28*27";
@@ -954,14 +963,14 @@ void test_input_manager_hit_testing() {
     ASSERT_TRUE(!InputManager::isLocalGridTouched(341, 35));
     ASSERT_TRUE(!InputManager::isLocalGridTouched(220, 76));
 
-    // Target Grid Hit Area (50..430, 70..235)
+    // Target Grid Hit Area (50..430, 70..200)
     ASSERT_TRUE(InputManager::isTargetGridTouched(50, 70));
-    ASSERT_TRUE(InputManager::isTargetGridTouched(430, 235));
+    ASSERT_TRUE(InputManager::isTargetGridTouched(430, 200));
     ASSERT_TRUE(InputManager::isTargetGridTouched(200, 150));
     ASSERT_TRUE(!InputManager::isTargetGridTouched(49, 150));
     ASSERT_TRUE(!InputManager::isTargetGridTouched(431, 150));
     ASSERT_TRUE(!InputManager::isTargetGridTouched(200, 69));
-    ASSERT_TRUE(!InputManager::isTargetGridTouched(200, 236));
+    ASSERT_TRUE(!InputManager::isTargetGridTouched(200, 201));
 
     // Target Grid Character Column Mapping (REMSTARTX=80, CHAR_W(REMSIZE)=48)
     ASSERT_TRUE(InputManager::getTargetGridCharFromTouch(80) == 0);
@@ -971,13 +980,13 @@ void test_input_manager_hit_testing() {
     ASSERT_TRUE(InputManager::getTargetGridCharFromTouch(30) == 0);   // Underflow clamp
     ASSERT_TRUE(InputManager::getTargetGridCharFromTouch(450) == 5);  // Overflow clamp
 
-    // Calibration Pill Hit Area (180..300, 210..280)
-    ASSERT_TRUE(InputManager::isCalPillTouched(180, 210));
+    // Calibration Pill Hit Area (180..300, 205..280)
+    ASSERT_TRUE(InputManager::isCalPillTouched(180, 205));
     ASSERT_TRUE(InputManager::isCalPillTouched(300, 280));
     ASSERT_TRUE(InputManager::isCalPillTouched(240, 245));
     ASSERT_TRUE(!InputManager::isCalPillTouched(179, 245));
     ASSERT_TRUE(!InputManager::isCalPillTouched(301, 245));
-    ASSERT_TRUE(!InputManager::isCalPillTouched(240, 209));
+    ASSERT_TRUE(!InputManager::isCalPillTouched(240, 204));
     ASSERT_TRUE(!InputManager::isCalPillTouched(240, 281));
 
     // Footer Hit Area (100..380, >= 435)
@@ -2348,6 +2357,7 @@ void test_rover_simulation_scenarios_e2e() {
     ASSERT_TRUE(app.isRoverMode());
     ASSERT_TRUE(cliOut.find("Rover mode started at CM87WK91") != std::string::npos);
     ASSERT_TRUE(app.getRoverLogManager().getStopCount() == 1);
+    ASSERT_TRUE(app.getRoverLogManager().getStop(0)->timestamp == utcCalendarToEpoch(2026, 11, 8, 16, 0, 0));
     cliOut.clear();
 
     // Status at origin: State A, SAME GRID, 0.0 km

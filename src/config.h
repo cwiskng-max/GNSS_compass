@@ -99,7 +99,7 @@
 #define TOUCH_X_MIN          50
 #define TOUCH_X_MAX          430
 #define TOUCH_Y_MIN          70
-#define TOUCH_Y_MAX          235
+#define TOUCH_Y_MAX          200
 
 // Row 3: Antenna Heading & Target Bearing
 #define BEARSZ               6
@@ -114,7 +114,7 @@
 #define CAL_PILL_H           44
 #define CAL_TOUCH_X_MIN      180
 #define CAL_TOUCH_X_MAX      300
-#define CAL_TOUCH_Y_MIN      210
+#define CAL_TOUCH_Y_MIN      205
 #define CAL_TOUCH_Y_MAX      280
 
 // Set to 1 to show ARRL contest distance (Row 6), 0 to hide
@@ -127,8 +127,8 @@
 #define TIME_Y               290
 
 // Row 5: Reverse Bearing & Distance
-#define REVBEAR_SZ           4
-#define REVBEAR_X            90
+#define REVBEAR_SZ           3
+#define REVBEAR_X            105
 #define REVBEAR_Y            352
 
 // Row 6: ARRL Contest Distance
@@ -142,8 +142,8 @@
 #define TIME_Y               300
 
 // Row 5: Reverse Bearing & Distance
-#define REVBEAR_SZ           4
-#define REVBEAR_X            90
+#define REVBEAR_SZ           3
+#define REVBEAR_X            105
 #define REVBEAR_Y            376
 #endif
 

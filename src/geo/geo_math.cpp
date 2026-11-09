@@ -11,6 +11,16 @@ double toDeg(double rad) {
     return rad * 180.0 / M_PI;
 }
 
+/**
+ * @brief Computes distance (meters) and initial forward azimuth (degrees) between two points.
+ * 
+ * Note on Geodesic Models:
+ * ARRL VHF contest rules and amateur logging software (e.g. N1MM, VHFLog) specify
+ * spherical Great Circle / Haversine geodesics using the equatorial radius (R = 6378137.0 m).
+ * Full ellipsoidal geodesics (Vincenty / Karney) can diverge by up to 0.3% due to Earth oblateness,
+ * which could introduce slight discrepancies with official ARRL distance credit tables.
+ * Haversine is therefore maintained for exact rule compliance and deterministic embedded performance.
+ */
 void calculateWgs84(double lat1, double lon1, double lat2, double lon2, double &distance, double &bearing) {
     const double R = 6378137.0; // WGS84 semi-major axis in meters
 

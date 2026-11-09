@@ -748,7 +748,7 @@ Examples:
 
     try:
         if args.scenario == "rover":
-            revisit_mode = getattr(args, 'revisit', False) or (getattr(args, 'dest', None) is not None and args.dest[:6].upper() != args.origin[:6].upper())
+            revisit_mode = getattr(args, 'revisit', False)
             run_rover_scenario(
                 sender, args.origin, args.bearing, args.speed, args.distance, args.rate,
                 dest_grid=getattr(args, 'dest', None),

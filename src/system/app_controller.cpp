@@ -97,7 +97,8 @@ void AppController::startRoverMode(unsigned long nowMs) {
     // Initial Contest Departure Log (Stop #1): If contest history is empty,
     // record starting site as Stop #1 (0.0 km, ORIGIN).
     if (roverLogManagerRef_->isEmpty()) {
-        uint32_t ts = (hasTime_ ? (hours_ * 3600 + minutes_ * 60) : static_cast<uint32_t>(nowMs / 1000));
+        uint32_t epoch = gpsManager_.getEpochTime();
+        uint32_t ts = (epoch > 0) ? epoch : (hasTime_ ? (hours_ * 3600 + minutes_ * 60) : static_cast<uint32_t>(nowMs / 1000));
         RoverStop stop1(ts, currentPosition_.latitude, currentPosition_.longitude, myGrid_, 0.0f, false);
         roverLogManagerRef_->appendStop(stop1);
     }
@@ -130,7 +131,8 @@ void AppController::onTargetEdited(unsigned long nowMs) {
         float finalDistKm = static_cast<float>(finalDistMeters / 1000.0);
         bool qualified = (finalDistKm >= ROVER_ALERT_THRESHOLD_KM);
 
-        uint32_t ts = (hasTime_ ? (hours_ * 3600 + minutes_ * 60) : static_cast<uint32_t>(nowMs / 1000));
+        uint32_t epoch = gpsManager_.getEpochTime();
+        uint32_t ts = (epoch > 0) ? epoch : (hasTime_ ? (hours_ * 3600 + minutes_ * 60) : static_cast<uint32_t>(nowMs / 1000));
         RoverStop stop(ts, currentPosition_.latitude, currentPosition_.longitude, myGrid_, finalDistKm, qualified);
         roverLogManagerRef_->appendStop(stop);
 

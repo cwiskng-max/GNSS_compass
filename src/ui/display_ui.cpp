@@ -229,7 +229,7 @@ void DisplayUi::clearRoverCard() {
     if (!gfx_) return;
     lastRoverCardState_ = static_cast<RoverState>(-1);
     lastRoverCardBuf_[0] = '\0';
-    gfx_->fillRect(ROVER_CARD_X - 2, ROVER_CARD_Y - 2, ROVER_CARD_W + 4, ROVER_CARD_H + 4, BLACK);
+    gfx_->fillRect(0, ROVER_CARD_Y - 4, SCREEN_WIDTH, ROVER_CARD_H + 8, BLACK);
 }
 
 void DisplayUi::renderArrlDistance(const char *myGrid, const char *targetGrid) {
