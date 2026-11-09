@@ -72,8 +72,16 @@ bool parseKSXT(const char *sentence, float *heading_out, BearingQuality *quality
     }
 
     const char *q_field = getNthField(sentence, 11);
+    if (q_field == nullptr || *q_field == '*' || *q_field == '\0' || *q_field == '\r' || *q_field == '\n') {
+        // Backward compatibility: If KSXT sentence does not include the RTK quality field
+        // (e.g. legacy/compact KSXT configurations), default to FIXED (consistent with $GNHDT).
+        *heading_out = strtof(h_field, nullptr);
+        *quality_out = BEARING_FIXED;
+        return true;
+    }
+
     int qual = 0;
-    if (q_field != nullptr && *q_field >= '0' && *q_field <= '9') {
+    if (*q_field >= '0' && *q_field <= '9') {
         qual = *q_field - '0';
     }
 
@@ -185,7 +193,8 @@ bool parseKSXTLocation(const char *sentence, double *lat_out, double *lon_out) {
     if (!sentence || !lat_out || !lon_out) return false;
 
     const char *q_field = getNthField(sentence, 10);
-    if (q_field == nullptr || *q_field <= '0' || *q_field > '9') {
+    // If field 10 exists, require valid fix status (> '0')
+    if (q_field != nullptr && *q_field != '*' && (*q_field <= '0' || *q_field > '9')) {
         return false;
     }
 

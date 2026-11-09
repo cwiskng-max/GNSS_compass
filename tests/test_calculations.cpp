@@ -423,6 +423,19 @@ void test_legacy_hdt_ths_parsing() {
     ASSERT_NEAR(thsHdg, 312.4, 1e-2);
     ASSERT_TRUE(thsQual == BearingQuality::Fixed);
 
+    // KSXT configured the old way without quality fields (compact sentence)
+    const char *ksxt_no_quality = "$KSXT,20261024185730.00,-122.084000,37.421998,15.2,142.50*2A";
+    float noqHdg = 0.0f;
+    BearingQuality noqQual = BearingQuality::None;
+    ASSERT_TRUE(parseHeadingSentence(ksxt_no_quality, &noqHdg, &noqQual));
+    ASSERT_NEAR(noqHdg, 142.50, 1e-2);
+    ASSERT_TRUE(noqQual == BearingQuality::Fixed);
+
+    double noqLat = 0.0, noqLon = 0.0;
+    ASSERT_TRUE(parseKSXTLocation(ksxt_no_quality, &noqLat, &noqLon));
+    ASSERT_NEAR(noqLat, 37.421998, 1e-6);
+    ASSERT_NEAR(noqLon, -122.084000, 1e-6);
+
     PASS();
 }
 
@@ -2541,6 +2554,89 @@ void test_rover_simulation_scenarios_e2e() {
     PASS();
 }
 
+void test_legacy_nmea_end_to_end() {
+    TEST("Legacy NMEA ($GPHDT + $GNGLL) end-to-end compatibility and Rover Mode");
+
+    RoverLogManager::resetHostStorage();
+
+    Board board;
+    DisplayUi displayUi;
+    InputManager inputManager;
+    GpsManager gpsManager;
+    Calibration calibration;
+    GpsSimulator gpsSimulator;
+    SerialCli serialCli(gpsManager, calibration, gpsSimulator);
+
+    AppController app(board, displayUi, inputManager, gpsManager, calibration, gpsSimulator, serialCli);
+    app.begin();
+
+    // 1. Feed pure legacy $GPHDT (5 samples to fill filter window) and $GNGLL messages
+    for (int i = 0; i < 5; i++) {
+        gpsManager.feedSentence("$GPHDT,225.4,T*2B", 1000 + i * 200);
+    }
+    gpsManager.feedSentence("$GNGLL,3725.3199,N,12205.0400,W,164500.00,A,A*50", 1800);
+    app.update(1800);
+
+    // Assert Heading parsed with FIXED quality (white, with 270 deg perpendicular antenna offset), position parsed, time synced
+    ASSERT_TRUE(gpsManager.hasHeading());
+    ASSERT_NEAR(gpsManager.getHeading(), std::fmod(225.4 + 270.0, 360.0), 0.1);
+    ASSERT_TRUE(gpsManager.getBearingQuality() == BEARING_FIXED);
+
+    ASSERT_TRUE(gpsManager.hasLocation());
+    ASSERT_NEAR(gpsManager.getLocation().latitude, 37.421998, 1e-4);
+    ASSERT_NEAR(gpsManager.getLocation().longitude, -122.084000, 1e-4);
+    ASSERT_STR_EQ(app.getMyGrid(), "CM87WK91");
+
+    ASSERT_TRUE(gpsManager.hasTime());
+    ASSERT_TRUE(gpsManager.getHours() == 16);
+    ASSERT_TRUE(gpsManager.getMinutes() == 45);
+
+    // Stream health evaluation: OK_FIXED
+    ASSERT_TRUE(gpsManager.evaluateStreamHealth(1800) == GPS_LINK_OK_FIXED);
+
+    // 2. Rover Mode with pure legacy messages
+    UserEvent evTapMyGrid;
+    evTapMyGrid.type = UserEventType::TouchLocalGrid;
+    app.handleUserEvent(evTapMyGrid, 1100);
+    ASSERT_TRUE(app.isRoverMode());
+    ASSERT_TRUE(app.getRoverLogManager().getStopCount() == 1);
+    // Verified timestamp falls back to seconds-into-the-day (16*3600 + 45*60)
+    ASSERT_TRUE(app.getRoverLogManager().getStop(0)->timestamp == 16 * 3600 + 45 * 60);
+
+    // Drive 20 km North (lat moves from 37.4220 to ~37.6020)
+    // 37 deg 36.1200' N = 37.6020 N
+    gpsManager.feedSentence("$GPHDT,0.0,T*1F", 2000);
+    gpsManager.feedSentence("$GNGLL,3736.1200,N,12205.0400,W,170500.00,A,A*57", 2000);
+    app.update(2000);
+
+    // Rover card must qualify State B (>= 16 km, new grid)
+    ASSERT_TRUE(app.getCurrentRoverState() == RoverState::QualifiedNewGrid);
+
+    // Natural exit via target edit
+    UserEvent evTouchChar;
+    evTouchChar.type = UserEventType::TouchGridCharacter;
+    evTouchChar.gridIndex = 2;
+    app.handleUserEvent(evTouchChar, 2500);
+
+    UserEvent evRollKnob;
+    evRollKnob.type = UserEventType::RotateClockwise;
+    app.handleUserEvent(evRollKnob, 2600);
+
+    ASSERT_TRUE(!app.isRoverMode());
+    ASSERT_TRUE(app.getRoverLogManager().getStopCount() == 2);
+    const RoverStop *stop2 = app.getRoverLogManager().getStop(1);
+    ASSERT_TRUE(stop2 != nullptr);
+    ASSERT_TRUE(stop2->qualified_16km);
+    ASSERT_NEAR(stop2->displacement_km, 20.0f, 0.5f);
+
+    // 3. Lost signal on legacy stream: empty $GPHDT triggers BEARING_LOST
+    gpsManager.feedSentence("$GPHDT,,T*2B", 3000);
+    app.update(3000);
+    ASSERT_TRUE(gpsManager.getBearingQuality() == BEARING_LOST);
+
+    PASS();
+}
+
 int main() {
     std::cout << "========================================" << std::endl;
     std::cout << "  GNSS Compass Unit Test Suite" << std::endl;
@@ -2586,6 +2682,7 @@ int main() {
     test_rover_history_undo_modal_and_autorearm();
     test_serial_cli_rover_commands();
     test_rover_simulation_scenarios_e2e();
+    test_legacy_nmea_end_to_end();
 
     std::cout << "========================================" << std::endl;
     std::cout << "  All " << tests_passed << " / " << tests_run << " tests PASSED successfully!" << std::endl;
