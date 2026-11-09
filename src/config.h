@@ -276,6 +276,7 @@
 #define CAL_MODAL_TIMEOUT_MS      15000
 #define LONG_PRESS_MS             1500
 #define ROVER_ALERT_THRESHOLD_KM  16.0
+#define ROVER_WARNING_DURATION_MS 3000
 
 // ==============================================================================
 // Character Rolling Helpers (for Target Grid manual editing)

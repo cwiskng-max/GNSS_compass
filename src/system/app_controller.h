@@ -68,6 +68,10 @@ public:
     OperationalMode getOperationalMode() const { return operationalMode_; }
     void setOperationalMode(OperationalMode mode);
     bool isRoverMode() const { return operationalMode_ == OperationalMode::Rover; }
+    bool isRoverWarningActive(unsigned long nowMs = 0) const {
+        if (roverWarningUntilMs_ == 0) return false;
+        return (nowMs == 0 ? currentNowMs_ : nowMs) < roverWarningUntilMs_;
+    }
 
     const GeoPoint& getOriginPoint() const { return originPoint_; }
     const char* getOriginGrid() const { return originGrid_; }
@@ -146,6 +150,7 @@ private:
     unsigned long lastLocationUpdate_;
     RoverState lastRoverState_;
     unsigned long currentNowMs_;
+    unsigned long roverWarningUntilMs_;
 
     GeoPoint currentPosition_;
     GeoPoint targetPosition_;

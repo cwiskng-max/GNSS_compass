@@ -649,6 +649,12 @@ void SerialCli::handleRoverCommand(const char *arg, unsigned long nowMs) {
 }
 
 void SerialCli::handleRoverStart(unsigned long nowMs) {
+    CliNavContext preNav = getNavContext();
+    if (preNav.isRoverMode) {
+        println("[ROVER] Rover mode is already active. Ignoring restart.");
+        return;
+    }
+
     if (roverStartCb_) {
         roverStartCb_(roverActionContext_, nowMs);
     } else {

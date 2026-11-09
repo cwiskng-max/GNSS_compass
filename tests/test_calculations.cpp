@@ -2001,10 +2001,31 @@ void test_rover_app_controller_transitions_and_natural_exit() {
     app.update(4000);
     ASSERT_TRUE(app.getCurrentRoverState() == RoverState::InTransitUnder16k);
 
+    // 4B. Accidental MyGrid Tap in Rover Mode: Block restart and trigger 3-second warning
+    app.handleUserEvent(evTapMyGrid, 4500);
+    ASSERT_TRUE(app.isRoverMode()); // Still in Rover Mode
+    ASSERT_TRUE(app.getRoverLogManager().getStopCount() == 1); // Origin stop not duplicated
+    ASSERT_NEAR(app.getOriginPoint().latitude, startPos.latitude, 1e-6); // Origin NOT overwritten
+    ASSERT_NEAR(app.getOriginPoint().longitude, startPos.longitude, 1e-6);
+    ASSERT_TRUE(app.isRoverWarningActive(4500)); // Warning is active
+
+    // 1.5 seconds later (timestamp 6000): GPS updates continue, warning remains active
+    GeoPoint pos15_5km = GpsSimulator::calculateRoverDisplacement(startPos, 15.5, 45.0);
+    app.setCurrentPosition(pos15_5km);
+    app.update(6000);
+    ASSERT_TRUE(app.isRoverMode());
+    ASSERT_TRUE(app.isRoverWarningActive(6000));
+
+    // 3.0 seconds after tap (timestamp 7500): Warning automatically expires without user input
+    app.update(7500);
+    ASSERT_TRUE(!app.isRoverWarningActive(7500));
+    ASSERT_TRUE(app.isRoverMode());
+    ASSERT_NEAR(app.getDistance() / 1000.0, 15.5, 0.1);
+
     // Resume forward driving to 25.0 km -> immediately recovers to State B
     GeoPoint pos25km = GpsSimulator::calculateRoverDisplacement(startPos, 25.0, 45.0);
     app.setCurrentPosition(pos25km);
-    app.update(5000);
+    app.update(8500);
     ASSERT_TRUE(app.getCurrentRoverState() == RoverState::QualifiedNewGrid);
 
     // 5. Two-Step Natural Target Exit Protection
@@ -2012,7 +2033,7 @@ void test_rover_app_controller_transitions_and_natural_exit() {
     UserEvent evTouchChar;
     evTouchChar.type = UserEventType::TouchGridCharacter;
     evTouchChar.gridIndex = 2;
-    app.handleUserEvent(evTouchChar, 6000);
+    app.handleUserEvent(evTouchChar, 9000);
 
     // Character selected and editing armed, BUT Rover Mode is NOT exited!
     ASSERT_TRUE(app.getGridEditor().isEditing());
@@ -2020,19 +2041,19 @@ void test_rover_app_controller_transitions_and_natural_exit() {
     ASSERT_TRUE(app.isRoverMode()); // Still in Rover Mode!
 
     // Inactivity timeout (5 seconds = EDIT_TIMEOUT_MS): driver didn't turn knob
-    app.update(11050); // 6000 + 5050 ms
+    app.update(14050); // 9000 + 5050 ms
     ASSERT_TRUE(!app.getGridEditor().isEditing()); // Cursor hidden, edit auto-locked
     ASSERT_TRUE(app.isRoverMode()); // Still in Rover Mode!
 
     // Step 1 again: Driver intentionally touches character to tune distant station
-    app.handleUserEvent(evTouchChar, 12000);
+    app.handleUserEvent(evTouchChar, 15000);
     ASSERT_TRUE(app.getGridEditor().isEditing());
     ASSERT_TRUE(app.isRoverMode());
 
     // Step 2: Driver turns knob to roll character
     UserEvent evRollKnob;
     evRollKnob.type = UserEventType::RotateClockwise;
-    app.handleUserEvent(evRollKnob, 12200);
+    app.handleUserEvent(evRollKnob, 15200);
 
     // Commit Transition:
     // Rover Mode cleanly exited, stop committed to history, now in stationary Bearing Mode

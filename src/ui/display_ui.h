@@ -53,6 +53,7 @@ public:
     void renderTargetBearing(double targetBearing);
     void renderReverseBearingAndDistance(double revBearing, double distanceMeters);
     void renderRoverCard(RoverState state, double displacementKm);
+    void renderRoverCardMessage(const char *msg, uint16_t textColor = COLOR_ROVER_TRANSIT_RED);
     void clearRoverCard();
     void renderArrlDistance(const char *myGrid, const char *targetGrid);
     void renderUtcTime(int hours, int minutes, bool hasTime);

@@ -225,6 +225,28 @@ void DisplayUi::renderRoverCard(RoverState state, double displacementKm) {
     gfx_->setTextColor(WHITE, BLACK);
 }
 
+void DisplayUi::renderRoverCardMessage(const char *msg, uint16_t textColor) {
+    if (!gfx_ || !msg) return;
+
+    lastRoverCardState_ = static_cast<RoverState>(-1);
+    lastRoverCardBuf_[0] = '\0';
+
+    gfx_->fillRoundRect(ROVER_CARD_X, ROVER_CARD_Y, ROVER_CARD_W, ROVER_CARD_H, ROVER_CARD_R, WHITE);
+
+    char buf[17];
+    size_t len = std::strlen(msg);
+    if (len > 16) len = 16;
+    int padLeft = (16 - static_cast<int>(len)) / 2;
+    int padRight = 16 - static_cast<int>(len) - padLeft;
+    std::snprintf(buf, sizeof(buf), "%*s%.*s%*s", padLeft, "", static_cast<int>(len), msg, padRight, "");
+
+    gfx_->setTextColor(textColor, WHITE);
+    gfx_->setTextSize(ROVER_CARD_SZ);
+    gfx_->setCursor(ROVER_CARD_TEXT_X, ROVER_CARD_TEXT_Y);
+    gfx_->print(buf);
+    gfx_->setTextColor(WHITE, BLACK);
+}
+
 void DisplayUi::clearRoverCard() {
     if (!gfx_) return;
     lastRoverCardState_ = static_cast<RoverState>(-1);
@@ -318,6 +340,7 @@ void DisplayUi::renderCalibrationPill(float, bool) {}
 void DisplayUi::renderTargetBearing(double) {}
 void DisplayUi::renderReverseBearingAndDistance(double, double) {}
 void DisplayUi::renderRoverCard(RoverState, double) {}
+void DisplayUi::renderRoverCardMessage(const char *, uint16_t) {}
 void DisplayUi::clearRoverCard() {}
 void DisplayUi::renderArrlDistance(const char *, const char *) {}
 void DisplayUi::renderUtcTime(int, int, bool) {}
