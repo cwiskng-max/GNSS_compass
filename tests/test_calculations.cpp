@@ -1870,23 +1870,40 @@ void test_rover_input_gestures_and_hit_testing() {
     // RoverHistory mode button touch and release
     im.setUiMode(UiMode::RoverHistory);
 
-    // Press Discard button
+    // Press Discard button (short press does NOT discard, reports hold progress)
     im.injectTouch(true, ROVER_BTN_DISCARD_X + 20, ROVER_BTN_DISCARD_Y + 10, 4000);
+    im.injectTouch(true, ROVER_BTN_DISCARD_X + 20, ROVER_BTN_DISCARD_Y + 10, 4600); // 600 ms / 1500 ms = 0.4f progress
     ASSERT_TRUE(im.pollEvent(ev));
-    ASSERT_TRUE(ev.type == UserEventType::ModalButtonDown && ev.buttonId == ModalButtonId::Discard);
+    ASSERT_TRUE(ev.type == UserEventType::HoldDiscardButtonProgress);
+    ASSERT_NEAR(ev.progress, 0.4f, 0.05f);
 
-    // Release Discard button -> DiscardLastStopTriggered
-    im.injectTouch(false, 0, 0, 4100);
+    // Released early -> cancels hold, progress 0.0, NO discard!
+    im.injectTouch(false, 0, 0, 4700);
     ASSERT_TRUE(im.pollEvent(ev));
-    ASSERT_TRUE(ev.type == UserEventType::DiscardLastStopTriggered);
+    ASSERT_TRUE(ev.type == UserEventType::HoldDiscardButtonProgress && ev.progress == 0.0f);
+    ASSERT_TRUE(im.pollEvent(ev));
+    ASSERT_TRUE(ev.type == UserEventType::ModalButtonUp);
+
+    // Hold Discard for full LONG_PRESS_MS (1500 ms) -> DiscardLastStopTriggered committed
+    im.injectTouch(true, ROVER_BTN_DISCARD_X + 20, ROVER_BTN_DISCARD_Y + 10, 4800);
+    im.injectTouch(true, ROVER_BTN_DISCARD_X + 20, ROVER_BTN_DISCARD_Y + 10, 6400); // 1600 ms >= 1500 ms
+    bool gotDiscard = false;
+    while (im.pollEvent(ev)) {
+        if (ev.type == UserEventType::DiscardLastStopTriggered) gotDiscard = true;
+    }
+    ASSERT_TRUE(gotDiscard);
+
+    // Release finger after discard
+    im.injectTouch(false, 0, 0, 6450);
+    while (im.pollEvent(ev)) {}
 
     // Press Cancel button
-    im.injectTouch(true, ROVER_BTN_CANCEL_X + 20, ROVER_BTN_CANCEL_Y + 10, 5000);
+    im.injectTouch(true, ROVER_BTN_CANCEL_X + 20, ROVER_BTN_CANCEL_Y + 10, 6600);
     ASSERT_TRUE(im.pollEvent(ev));
     ASSERT_TRUE(ev.type == UserEventType::ModalButtonDown && ev.buttonId == ModalButtonId::Cancel);
 
     // Release Cancel button -> CancelModalTriggered
-    im.injectTouch(false, 0, 0, 5100);
+    im.injectTouch(false, 0, 0, 6700);
     ASSERT_TRUE(im.pollEvent(ev));
     ASSERT_TRUE(ev.type == UserEventType::CancelModalTriggered);
 
@@ -2128,6 +2145,28 @@ void test_rover_history_undo_modal_and_autorearm() {
     app.update(8000);
     ASSERT_TRUE(app.getCurrentRoverState() == RoverState::QualifiedNewGrid);
     ASSERT_NEAR(app.getDistance() / 1000.0, 28.0, 0.2);
+
+    // 5. Verify discard when GPS fix is stale (>3000 ms) or absent
+    // Natural exit to stationary mode at Site 3
+    app.handleUserEvent(evTouchChar, 8500);
+    app.handleUserEvent(evRoll, 8600);
+    ASSERT_TRUE(app.getRoverLogManager().getStopCount() == 2);
+
+    // Open history modal at 12000 ms (last GPS position was at 8000 ms, 4.0s ago -> stale)
+    app.handleUserEvent(evLongPress, 12000);
+    ASSERT_TRUE(app.getUiMode() == UiMode::RoverHistory);
+
+    // Trigger Discard at 12500 ms (stale GPS fix)
+    app.handleUserEvent(evDiscard, 12500);
+    ASSERT_TRUE(app.getUiMode() == UiMode::Normal);
+    ASSERT_TRUE(app.getOperationalMode() == OperationalMode::Rover);
+    // Because GPS is stale (> 3000 ms old), Rover Card must immediately be GpsLostStale ("NO GPS")
+    ASSERT_TRUE(app.getCurrentRoverState() == RoverState::GpsLostStale);
+    ASSERT_NEAR(app.getLastValidDisplacementKm(), 28.0, 0.2);
+    char cardBuf[32];
+    formatRoverCard(app.getCurrentRoverState(), app.getLastValidDisplacementKm(), cardBuf, sizeof(cardBuf));
+    ASSERT_STR_EQ(cardBuf, "NO GPS    28.0 k");
+    ASSERT_TRUE(getRoverStateTextColor(app.getCurrentRoverState()) == COLOR_ROVER_NOGPS_AMBER);
 
     PASS();
 }

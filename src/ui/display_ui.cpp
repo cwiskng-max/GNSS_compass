@@ -282,11 +282,15 @@ void DisplayUi::showStatusCard(const char *msg, uint16_t bgColor, uint16_t fgCol
 
 void DisplayUi::clearScreen(uint16_t color) {
     if (!gfx_) return;
+    lastRoverCardState_ = static_cast<RoverState>(-1);
+    lastRoverCardBuf_[0] = '\0';
     gfx_->fillScreen(color);
 }
 
 void DisplayUi::redrawMainScreen(const MainScreenState &s) {
     if (!gfx_) return;
+    lastRoverCardState_ = static_cast<RoverState>(-1);
+    lastRoverCardBuf_[0] = '\0';
     clearScreen(BLACK);
     renderMyGrid(s.myGrid);
     renderTargetGrid(s.targetGrid, s.cursorColumn, s.isEditing);

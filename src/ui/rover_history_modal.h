@@ -25,7 +25,7 @@ public:
 
     // Modal drawing methods
     void drawModal(const RoverStop *lastStop, size_t totalStops, size_t lastStopIndex);
-    void drawDiscardButton(bool highlighted);
+    void drawDiscardButton(bool isHolding, float progress = 0.0f);
     void drawCancelButton(bool highlighted);
 
     // Static text formatters (host testable)

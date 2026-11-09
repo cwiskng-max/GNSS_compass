@@ -73,6 +73,8 @@
 #define BUTTON_CANCEL_BG     0x2945
 #define BUTTON_SAVE_IDLE_BG  0x0320
 #define BUTTON_SAVE_HOLD_BG  0x0540
+#define BUTTON_DISCARD_IDLE_BG   0x4000
+#define BUTTON_DISCARD_HOLD_BG   0x6000
 
 // ==============================================================================
 // Display Dimensions & Layout (480 x 480 Round Display)

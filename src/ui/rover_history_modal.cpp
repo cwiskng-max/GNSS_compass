@@ -79,19 +79,24 @@ void RoverHistoryModal::drawModal(const RoverStop *lastStop, size_t totalStops, 
     gfx_->setTextColor(WHITE, BLACK);
 }
 
-void RoverHistoryModal::drawDiscardButton(bool highlighted) {
+void RoverHistoryModal::drawDiscardButton(bool isHolding, float progress) {
     if (!gfx_) return;
-    uint16_t bg = highlighted ? RED : BUTTON_RESET_BG;
-    uint16_t fg = WHITE;
-    uint16_t border = highlighted ? WHITE : RED;
+    uint16_t bg = isHolding ? BUTTON_DISCARD_HOLD_BG : BUTTON_DISCARD_IDLE_BG;
+    uint16_t border = RED;
 
     gfx_->fillRoundRect(ROVER_BTN_DISCARD_X, ROVER_BTN_DISCARD_Y, ROVER_BTN_DISCARD_W, ROVER_BTN_DISCARD_H, 8, bg);
     gfx_->drawRoundRect(ROVER_BTN_DISCARD_X, ROVER_BTN_DISCARD_Y, ROVER_BTN_DISCARD_W, ROVER_BTN_DISCARD_H, 8, border);
 
-    gfx_->setTextSize(2);
-    gfx_->setTextColor(fg, bg);
-    const char *lbl = "[ DISCARD LAST STOP ]";
+    if (isHolding && progress > 0.0f) {
+        int fillW = static_cast<int>((ROVER_BTN_DISCARD_W - 4) * progress);
+        if (fillW > ROVER_BTN_DISCARD_W - 4) fillW = ROVER_BTN_DISCARD_W - 4;
+        gfx_->fillRoundRect(ROVER_BTN_DISCARD_X + 2, ROVER_BTN_DISCARD_Y + 2, fillW, ROVER_BTN_DISCARD_H - 4, 6, RED);
+    }
+
+    const char *lbl = isHolding ? "HOLDING TO DISCARD..." : "HOLD TO DISCARD LAST STOP";
     int lw = strlen(lbl) * CHAR_W(2);
+    gfx_->setTextSize(2);
+    gfx_->setTextColor(WHITE, (isHolding && progress > 0.5f) ? RED : bg);
     gfx_->setCursor(ROVER_BTN_DISCARD_X + (ROVER_BTN_DISCARD_W - lw) / 2, ROVER_BTN_DISCARD_Y + 15);
     gfx_->print(lbl);
     gfx_->setTextColor(WHITE, BLACK);
@@ -115,7 +120,7 @@ void RoverHistoryModal::drawCancelButton(bool highlighted) {
 }
 #else
 void RoverHistoryModal::drawModal(const RoverStop *, size_t, size_t) {}
-void RoverHistoryModal::drawDiscardButton(bool) {}
+void RoverHistoryModal::drawDiscardButton(bool, float) {}
 void RoverHistoryModal::drawCancelButton(bool) {}
 #endif
 

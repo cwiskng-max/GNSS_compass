@@ -231,7 +231,8 @@ void AppController::renderNavigationRows() {
     }
 
     if (operationalMode_ == OperationalMode::Rover) {
-        bool isFresh = hasLocation_ && (currentNowMs_ == 0 || lastLocationUpdate_ == 0 || (currentNowMs_ - lastLocationUpdate_ <= 3000));
+        bool isFresh = hasLocation_ && (lastLocationUpdate_ > 0) &&
+                       (currentNowMs_ == 0 || (currentNowMs_ >= lastLocationUpdate_ && (currentNowMs_ - lastLocationUpdate_ <= 3000)));
         double dispKm = distance_ / 1000.0;
         if (isFresh) {
             lastValidDisplacementKm_ = dispKm;
@@ -272,8 +273,18 @@ void AppController::redrawMainScreen() {
     s.revBearing = revbearing_;
     s.distanceMeters = distance_;
     s.isRoverMode = (operationalMode_ == OperationalMode::Rover);
-    s.roverState = lastRoverState_;
-    s.roverDisplacementKm = (operationalMode_ == OperationalMode::Rover) ? (distance_ / 1000.0) : 0.0;
+    bool isFresh = hasLocation_ && (lastLocationUpdate_ > 0) &&
+                   (currentNowMs_ == 0 || (currentNowMs_ >= lastLocationUpdate_ && (currentNowMs_ - lastLocationUpdate_ <= 3000)));
+    if (s.isRoverMode) {
+        if (!isFresh) {
+            lastRoverState_ = RoverState::GpsLostStale;
+        }
+        s.roverState = lastRoverState_;
+        s.roverDisplacementKm = isFresh ? (distance_ / 1000.0) : lastValidDisplacementKm_;
+    } else {
+        s.roverState = lastRoverState_;
+        s.roverDisplacementKm = 0.0;
+    }
     s.currentHeading = bf.getCalibratedHeading(calibration_.getOffset());
     s.bearingQuality = currentBearingQuality_;
     s.hasHeading = hasHeading_;
@@ -550,9 +561,7 @@ void AppController::handleUserEvent(const UserEvent &event, unsigned long nowMs)
                     displayUi_.getCalModal().drawCancelButton(true);
                 }
             } else if (currentUiMode_ == UiMode::RoverHistory) {
-                if (event.buttonId == ModalButtonId::Discard) {
-                    displayUi_.getRoverHistoryModal().drawDiscardButton(true);
-                } else if (event.buttonId == ModalButtonId::Cancel) {
+                if (event.buttonId == ModalButtonId::Cancel) {
                     displayUi_.getRoverHistoryModal().drawCancelButton(true);
                 }
             }
@@ -564,7 +573,7 @@ void AppController::handleUserEvent(const UserEvent &event, unsigned long nowMs)
                 displayUi_.getCalModal().drawResetButton(false);
                 displayUi_.getCalModal().drawCancelButton(false);
             } else if (currentUiMode_ == UiMode::RoverHistory) {
-                displayUi_.getRoverHistoryModal().drawDiscardButton(false);
+                displayUi_.getRoverHistoryModal().drawDiscardButton(false, 0.0f);
                 displayUi_.getRoverHistoryModal().drawCancelButton(false);
             }
             break;
@@ -572,6 +581,11 @@ void AppController::handleUserEvent(const UserEvent &event, unsigned long nowMs)
         case UserEventType::HoldSaveButtonProgress:
             calModalOpenedMillis_ = nowMs;
             displayUi_.getCalModal().drawSaveButton(event.progress > 0.0f, event.progress);
+            break;
+
+        case UserEventType::HoldDiscardButtonProgress:
+            calModalOpenedMillis_ = nowMs;
+            displayUi_.getRoverHistoryModal().drawDiscardButton(event.progress > 0.0f, event.progress);
             break;
 
         case UserEventType::SaveButtonCommitted:
@@ -601,7 +615,7 @@ void AppController::handleUserEvent(const UserEvent &event, unsigned long nowMs)
             break;
 
         case UserEventType::DiscardLastStopTriggered:
-            displayUi_.getRoverHistoryModal().drawDiscardButton(true);
+            displayUi_.getRoverHistoryModal().drawDiscardButton(true, 1.0f);
             pendingModalButtonRelease_ = ModalButtonId::Discard;
             pendingModalButtonReleaseStartMillis_ = nowMs;
             discardLastStopAndRearm(nowMs);
@@ -667,7 +681,8 @@ void AppController::update(unsigned long nowMs) {
 
     // 6. In Rover Mode, evaluate GPS watchdog staleness
     if (operationalMode_ == OperationalMode::Rover && currentUiMode_ == UiMode::Normal) {
-        if (hasLocation_ && lastLocationUpdate_ > 0 && (nowMs - lastLocationUpdate_ > 3000)) {
+        bool isFresh = hasLocation_ && (lastLocationUpdate_ > 0) && (nowMs >= lastLocationUpdate_) && ((nowMs - lastLocationUpdate_) <= 3000);
+        if (!isFresh) {
             if (lastRoverState_ != RoverState::GpsLostStale) {
                 lastRoverState_ = RoverState::GpsLostStale;
                 displayUi_.renderRoverCard(RoverState::GpsLostStale, lastValidDisplacementKm_);

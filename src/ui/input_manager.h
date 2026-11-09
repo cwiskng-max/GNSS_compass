@@ -41,6 +41,7 @@ enum class UserEventType : uint8_t {
     ModalButtonUp,
     HoldSaveButtonProgress,
     SaveButtonCommitted,
+    HoldDiscardButtonProgress,
     SnapOffsetTriggered,
     ResetOffsetTriggered,
     CancelModalTriggered,
@@ -111,6 +112,7 @@ private:
     int16_t touchStartY_ = 0;
     bool longPressTriggered_ = false;
     bool holdingSaveBtn_ = false;
+    bool holdingDiscardBtn_ = false;
     unsigned long lastTouchReleaseTime_ = 0;
 
     // Event FIFO queue
