@@ -82,8 +82,8 @@ void RoverHistoryModal::drawModal(const RoverStop *lastStop, size_t totalStops, 
 void RoverHistoryModal::drawDiscardButton(bool highlighted) {
     if (!gfx_) return;
     uint16_t bg = highlighted ? RED : BUTTON_RESET_BG;
-    uint16_t fg = highlighted ? WHITE : RED;
-    uint16_t border = RED;
+    uint16_t fg = WHITE;
+    uint16_t border = highlighted ? WHITE : RED;
 
     gfx_->fillRoundRect(ROVER_BTN_DISCARD_X, ROVER_BTN_DISCARD_Y, ROVER_BTN_DISCARD_W, ROVER_BTN_DISCARD_H, 8, bg);
     gfx_->drawRoundRect(ROVER_BTN_DISCARD_X, ROVER_BTN_DISCARD_Y, ROVER_BTN_DISCARD_W, ROVER_BTN_DISCARD_H, 8, border);
