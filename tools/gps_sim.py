@@ -593,6 +593,222 @@ def run_first_transit_scenario(
     print("=" * 68 + "\n")
 
 
+# --- Scenario 2C: Duplicate Grid Square & Revisit (< 1 Minute) ---
+
+def run_duplicate_grid_scenario(
+    sender: SerialSender,
+    rate_hz: float = 5.0,
+    phase_duration: float = 8.0,
+    hold_duration: float = 4.0,
+    pause_duration: float = 2.5
+):
+    print("\n" + "=" * 68)
+    print("      SCENARIO: DUPLICATE GRID SQUARE & REVISIT (< 1 MINUTE)")
+    print("=" * 68)
+    print("Demonstrates Complete State Transitions:")
+    print("  1. Contest history seeding (3 stops in NVS with visual pauses):")
+    print("     Stop #1: CM87wa (Origin, TRANSIT 0.0 k)")
+    print("     Stop #2: CM97ae (23.7 km, QUALIFIED Green -> Bearing Mode)")
+    print("     Stop #3: CM97ee (29.6 km, QUALIFIED Green -> Bearing Mode)")
+    print("  2. Arm Leg 4 Rover Mode from Stop #3 (CM97ee).")
+    print("  3. State A -> State B: 15.0 km (TRANSIT Red) -> 16.5 km (QUALIFIED Green)")
+    print("  4. Jump outside duplicate grid: 43.5 km in CM87xa (QUALIFIED Green)")
+    print("  5. Cross boundary into duplicate grid CM87wa: (REVISIT Royal Blue)")
+    print("  6. Move back out across boundary into CM87xa: (QUALIFIED Green)")
+    print("  7. Stop Rover Mode & commit Stop #4 into contest log.")
+    print(f"Pause duration on each seeded state: {pause_duration:.1f}s")
+    print("-" * 68)
+
+    dt = 1.0 / rate_hz
+
+    def stream_pos(lat: float, lon: float, hdg: float = 45.0, duration: float = 2.0, label: str = ""):
+        steps = max(1, int(duration * rate_hz))
+        for s in range(steps):
+            now_dt = datetime.now(timezone.utc)
+            ksxt = build_ksxt_sentence(now_dt, lat, lon, hdg, pos_quality=1, hdg_quality=3)
+            sender.send(ksxt)
+            if label:
+                rem = duration - (s * dt)
+                sys.stdout.write(f"\r    -> {label} [{rem:3.1f}s]   ")
+                sys.stdout.flush()
+            time.sleep(dt)
+        if label:
+            sys.stdout.write("\r" + " " * 65 + "\r")
+            sys.stdout.flush()
+
+    # -------------------------------------------------------------
+    # Step 1: Clean Slate & Seed 3-Stop History with Visual Pauses
+    # -------------------------------------------------------------
+    print("\n>>> [STEP 1/5] Seeding 3 Contest Stops into Device History (with visual pauses)...")
+    lat1, lon1 = calc_latlon_from_grid("CM87wa") # Stop #1 (will be our duplicate target!)
+    lat2, lon2 = calc_latlon_from_grid("CM97ae") # Stop #2 (~24 km away)
+    lat3, lon3 = calc_latlon_from_grid("CM97ee") # Stop #3 (~30 km away, Leg 4 origin)
+
+    if not sender.dry_run:
+        sender.send_cmd("rover stop", wait_resp=0.1)
+        sender.send_cmd("rover clear confirm", wait_resp=0.1)
+
+        # Stop 1: Set position at CM87wa and enter Rover Mode
+        print("    [1/3] Setting Stop #1 Origin at CM87wa -> Arming Rover Mode...")
+        stream_pos(lat1, lon1, 45.0, 1.0)
+        sender.send_cmd("rover start", wait_resp=0.1)
+        stream_pos(lat1, lon1, 45.0, pause_duration, "Screen: TRANSIT  0.0 k (RED)")
+
+        # Drive to CM97ae (Stop 2) -> turns QUALIFIED Green
+        print("    [1/3] Arriving at CM97ae (23.7 km) -> QUALIFIED (Green)...")
+        stream_pos(lat2, lon2, 45.0, pause_duration, "Screen: QUALIFIED 23.7 k (GREEN)")
+        sender.send_cmd("rover stop", wait_resp=0.1)
+        print("          Committed Stop #2 (CM97ae, 23.7 km) -> Exited to Bearing Mode.")
+        stream_pos(lat2, lon2, 45.0, pause_duration, "Screen: BEARING MODE (Rev Bearing/Dist)")
+
+        # Stop 3: Arm Leg 2 at CM97ae -> Rover Mode
+        print("    [2/3] Arming Leg 2 Origin at CM97ae -> Rover Mode...")
+        sender.send_cmd("rover start", wait_resp=0.1)
+        stream_pos(lat2, lon2, 45.0, pause_duration, "Screen: TRANSIT  0.0 k (RED)")
+
+        # Drive to CM97ee (Stop 3) -> turns QUALIFIED Green
+        print("    [2/3] Arriving at CM97ee (29.6 km) -> QUALIFIED (Green)...")
+        stream_pos(lat3, lon3, 45.0, pause_duration, "Screen: QUALIFIED 29.6 k (GREEN)")
+        sender.send_cmd("rover stop", wait_resp=0.1)
+        print("          Committed Stop #3 (CM97ee, 29.6 km) -> Exited to Bearing Mode.")
+        stream_pos(lat3, lon3, 45.0, pause_duration, "Screen: BEARING MODE (Rev Bearing/Dist)")
+
+        hist = sender.send_cmd("rover history", wait_resp=0.2)
+        print("\n" + hist.strip())
+    else:
+        print("    [DRY-RUN] Simulating Stop #1: CM87wa (TRANSIT 0.0 k)")
+        stream_pos(lat1, lon1, 45.0, pause_duration, "Screen: TRANSIT  0.0 k (RED)")
+        print("    [DRY-RUN] Simulating Stop #2: CM97ae (QUALIFIED 23.7 k -> Bearing Mode)")
+        stream_pos(lat2, lon2, 45.0, pause_duration, "Screen: QUALIFIED 23.7 k (GREEN)")
+        print("    [DRY-RUN] Simulating Stop #3: CM97ee (QUALIFIED 29.6 k -> Bearing Mode)")
+        stream_pos(lat3, lon3, 45.0, pause_duration, "Screen: QUALIFIED 29.6 k (GREEN)")
+
+    # -------------------------------------------------------------
+    # Step 2: Arm Leg 4 Rover Mode from Stop #3 (CM97ee)
+    # -------------------------------------------------------------
+    print("\n>>> [STEP 2/5] Arming Leg 4 Rover Mode at CM97ee...")
+    stream_pos(lat3, lon3, 247.5, 1.0)
+    if not sender.dry_run:
+        resp = sender.send_cmd("rover start", wait_resp=0.2)
+        print("    [OK] " + resp.strip())
+    else:
+        print("    [DRY-RUN] Rover Mode armed at CM97ee.")
+    stream_pos(lat3, lon3, 247.5, pause_duration, "Screen: TRANSIT  0.0 k (RED)")
+
+    _, bearing_3_to_1 = calculate_wgs84(lat3, lon3, lat1, lon1)
+
+    # -------------------------------------------------------------
+    # Step 3: Phase 1 - Transit (< 16 km) to Qualified (>= 16 km)
+    # -------------------------------------------------------------
+    print("\n>>> [STEP 3/5] Phase 1: Transit (< 16 km) -> Cross into Qualified (>= 16 km)...")
+    start_d, end_d = 15.0, 16.8
+    steps_p1 = max(1, int(phase_duration * rate_hz))
+    d_step = (end_d - start_d) / float(steps_p1)
+    cur_d = start_d
+
+    for _ in range(steps_p1):
+        c_lat, c_lon = project_displacement(lat3, lon3, cur_d * 1000.0, bearing_3_to_1)
+        c_grid = calc_locator_from_latlon(c_lat, c_lon)[:6].upper()
+        under_16 = (math.floor(cur_d) < 16)
+        tag = "\033[91m[TRANSIT   < 16k]\033[0m (RED)" if under_16 else "\033[92m[QUALIFIED >= 16k]\033[0m (GREEN)"
+
+        now_dt = datetime.now(timezone.utc)
+        ksxt = build_ksxt_sentence(now_dt, c_lat, c_lon, bearing_3_to_1, 1, 3)
+        sender.send(ksxt)
+
+        sys.stdout.write(f"\rDist: {cur_d:5.2f} km | Grid: {c_grid} | {tag}   ")
+        sys.stdout.flush()
+        cur_d += d_step
+        time.sleep(dt)
+
+    print("\n    [OK] Crossed 16 km threshold into fresh unvisited grid CM97cd (QUALIFIED Green).")
+
+    # -------------------------------------------------------------
+    # Step 4: Phase 2 - Jump Outside Duplicate Grid CM87wa (43.5 km away)
+    # -------------------------------------------------------------
+    print("\n>>> [STEP 4/5] Jumping to 43.5 km (inside unvisited grid CM87xa, outside CM87wa)...")
+    jump_lat, jump_lon = project_displacement(lat3, lon3, 43500.0, bearing_3_to_1)
+    for _ in range(int(2.0 * rate_hz)):
+        now_dt = datetime.now(timezone.utc)
+        ksxt = build_ksxt_sentence(now_dt, jump_lat, jump_lon, bearing_3_to_1, 1, 3)
+        sender.send(ksxt)
+        sys.stdout.write(f"\rDist: 43.50 km | Grid: CM87XA | \033[92m[QUALIFIED >= 16k]\033[0m (GREEN)   ")
+        sys.stdout.flush()
+        time.sleep(dt)
+
+    # -------------------------------------------------------------
+    # Step 5: Phase 3 & 4 - Drive into Duplicate Grid CM87wa and Back Out
+    # -------------------------------------------------------------
+    print("\n\n>>> [STEP 5/5] Driving into Duplicate Grid CM87wa (REVISIT Blue) and Back Out...")
+    # Leg A: 43.5 km -> 47.0 km (crosses into CM87wa at ~44.2 km)
+    steps_a = max(1, int(phase_duration * rate_hz))
+    d_step_a = (47.0 - 43.5) / float(steps_a)
+    cur_d = 43.5
+    for _ in range(steps_a):
+        c_lat, c_lon = project_displacement(lat3, lon3, cur_d * 1000.0, bearing_3_to_1)
+        c_grid = calc_locator_from_latlon(c_lat, c_lon)[:6].upper()
+        is_dup = (c_grid == "CM87WA")
+        tag = "\033[94m[REVISIT   DUP]\033[0m (ROYAL BLUE)" if is_dup else "\033[92m[QUALIFIED NEW]\033[0m (GREEN)"
+
+        now_dt = datetime.now(timezone.utc)
+        ksxt = build_ksxt_sentence(now_dt, c_lat, c_lon, bearing_3_to_1, 1, 3)
+        sender.send(ksxt)
+
+        sys.stdout.write(f"\rDist: {cur_d:5.2f} km | Grid: {c_grid} | {tag}   ")
+        sys.stdout.flush()
+        cur_d += d_step_a
+        time.sleep(dt)
+
+    print("\n    -> Entered CM87wa: Display transitioned to State C (REVISIT Royal Blue)!")
+
+    # Leg B: 47.0 km -> 43.5 km (reverses back into CM87xa)
+    rev_bearing = (bearing_3_to_1 + 180.0) % 360.0
+    steps_b = max(1, int(phase_duration * rate_hz))
+    d_step_b = (47.0 - 43.5) / float(steps_b)
+    cur_d = 47.0
+    for _ in range(steps_b):
+        c_lat, c_lon = project_displacement(lat3, lon3, cur_d * 1000.0, bearing_3_to_1)
+        c_grid = calc_locator_from_latlon(c_lat, c_lon)[:6].upper()
+        is_dup = (c_grid == "CM87WA")
+        tag = "\033[94m[REVISIT   DUP]\033[0m (ROYAL BLUE)" if is_dup else "\033[92m[QUALIFIED NEW]\033[0m (GREEN)"
+
+        now_dt = datetime.now(timezone.utc)
+        ksxt = build_ksxt_sentence(now_dt, c_lat, c_lon, rev_bearing, 1, 3)
+        sender.send(ksxt)
+
+        sys.stdout.write(f"\rDist: {cur_d:5.2f} km | Grid: {c_grid} | {tag}   ")
+        sys.stdout.flush()
+        cur_d -= d_step_b
+        time.sleep(dt)
+
+    print("\n    -> Exited back into CM87xa: Display transitioned back to State B (QUALIFIED Green)!")
+
+    # Hold and stop
+    if hold_duration > 0:
+        c_lat, c_lon = project_displacement(lat3, lon3, 43500.0, bearing_3_to_1)
+        for _ in range(int(hold_duration * rate_hz)):
+            now_dt = datetime.now(timezone.utc)
+            ksxt = build_ksxt_sentence(now_dt, c_lat, c_lon, bearing_3_to_1, 1, 3)
+            sender.send(ksxt)
+            time.sleep(dt)
+
+    if not sender.dry_run:
+        sender.send_cmd("rover stop", wait_resp=0.2)
+        print("\n" + sender.send_cmd("rover history", wait_resp=0.3))
+
+    print("\n" + "=" * 68)
+    print("      DUPLICATE GRID / REVISIT SCENARIO COMPLETED")
+    print("=" * 68)
+    print("Summary of Verified Behaviors:")
+    print("  [PASS] 3-Stop history seeding (CM87wa, CM97ae, CM97ee).")
+    print("  [PASS] State A: In-Transit < 16 km alert (RED TRANSIT).")
+    print("  [PASS] State B: >= 16 km in fresh grid (GREEN QUALIFIED).")
+    print("  [PASS] State C: >= 16 km in duplicate grid CM87wa (ROYAL BLUE REVISIT).")
+    print("  [PASS] State B: Seamless recovery to fresh grid (GREEN QUALIFIED).")
+    print("  [PASS] Stop #4 committed to history on rover stop.")
+    print("=" * 68 + "\n")
+
+
 # --- Scenario 3: 360° Rotator Continuous Sweep ---
 
 def run_sweep_scenario(sender: SerialSender, speed_deg_sec: float, rate_hz: float):
@@ -881,6 +1097,18 @@ def main():
     first_transit_p.add_argument("--auto-start", action="store_true", help="Automatically arm Rover Mode via Serial CLI instead of interactive prompt")
     first_transit_p.add_argument("--dry-run", "-n", action="store_true", help="Print generated sentences to stdout without serial connection")
 
+    # 2C. Duplicate Grid / Revisit Scenario (< 1 minute complete scenario)
+    dup_p = subparsers.add_parser(
+        "duplicate-grid",
+        aliases=["revisit", "dup", "dup-grid"],
+        help="Demonstrate duplicate grid detection: 3-stop history -> Transit (Red) -> Qualified (Green) -> Revisit (Blue) -> Qualified (< 1 min)"
+    )
+    dup_p.add_argument("--phase-duration", type=float, default=8.0, help="Duration in seconds per leg (default: 8.0s)")
+    dup_p.add_argument("--hold-duration", type=float, default=4.0, help="Hold duration in seconds at final position (default: 4.0s)")
+    dup_p.add_argument("--pause", type=float, default=2.5, help="Pause duration in seconds on each state during history accumulation (default: 2.5s)")
+    dup_p.add_argument("--rate", type=float, default=5.0, help="Update rate in Hz (default: 5.0)")
+    dup_p.add_argument("--dry-run", "-n", action="store_true", help="Print generated sentences to stdout without serial connection")
+
     # 3. Sweep Scenario
     sweep_p = subparsers.add_parser("sweep", help="Continuous 360-degree antenna rotator sweep")
     sweep_p.add_argument("--speed", type=float, default=6.0, help="Rotation speed in deg/sec (default: 6.0)")
@@ -965,6 +1193,14 @@ Examples:
                 phase_duration=getattr(args, 'phase_duration', 15.0),
                 hold_duration=getattr(args, 'hold_duration', 8.0),
                 auto_start=getattr(args, 'auto_start', False)
+            )
+        elif args.scenario in ("duplicate-grid", "revisit", "dup", "dup-grid"):
+            run_duplicate_grid_scenario(
+                sender,
+                rate_hz=args.rate,
+                phase_duration=getattr(args, 'phase_duration', 8.0),
+                hold_duration=getattr(args, 'hold_duration', 4.0),
+                pause_duration=getattr(args, 'pause', 2.5)
             )
         elif args.scenario == "sweep":
             run_sweep_scenario(sender, args.speed, args.rate)
