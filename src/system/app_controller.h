@@ -60,6 +60,7 @@ public:
 
     // Rover mode transitions & gestures
     void startRoverMode(unsigned long nowMs = 0);
+    void stopRoverMode(unsigned long nowMs = 0);
     void onTargetEdited(unsigned long nowMs = 0);
     void discardLastStopAndRearm(unsigned long nowMs = 0);
 
@@ -138,6 +139,7 @@ private:
     unsigned long lastHeadingUpdate_;
 
     OperationalMode operationalMode_;
+    OperationalMode lastRenderedMode_;
     GeoPoint originPoint_;
     char originGrid_[9];
     double lastValidDisplacementKm_;

@@ -267,7 +267,9 @@ def run_rover_scenario(
     bearing: float,
     speed_kmh: float,
     target_dist_km: float,
-    rate_hz: float
+    rate_hz: float,
+    dest_grid: str | None = None,
+    revisit: bool = False
 ):
     print("\n" + "=" * 65)
     print("      SCENARIO: ROVER TRANSIT JOURNEY (ARRL 16 KM RULE)")
@@ -275,7 +277,18 @@ def run_rover_scenario(
     orig_lat, orig_lon = calc_latlon_from_grid(origin_grid)
     origin_sub = origin_grid[:6].upper()
 
-    print(f"Origin Grid      : {origin_sub} ({orig_lat:.5f}, {orig_lon:.5f})")
+    if dest_grid:
+        dest_lat, dest_lon = calc_latlon_from_grid(dest_grid)
+        dest_sub = dest_grid[:6].upper()
+        target_dist_m, bearing = calculate_wgs84(orig_lat, orig_lon, dest_lat, dest_lon)
+        target_dist_km = target_dist_m / 1000.0
+        print(f"Origin Grid      : {origin_sub} ({orig_lat:.5f}, {orig_lon:.5f})")
+        print(f"Destination Grid : {dest_sub} ({dest_lat:.5f}, {dest_lon:.5f})")
+        if revisit:
+            print("Course Mode      : Loop Course Revisit (State C Assertion)")
+    else:
+        print(f"Origin Grid      : {origin_sub} ({orig_lat:.5f}, {orig_lon:.5f})")
+
     print(f"Driving Bearing  : {bearing:.1f} deg")
     print(f"Driving Speed    : {speed_kmh:.1f} km/h")
     print(f"Target Distance  : {target_dist_km:.1f} km")
@@ -302,13 +315,15 @@ def run_rover_scenario(
         under_16k = (math.floor(dist_km) < 16)
 
         if same_grid and under_16k:
-            status_tag = "[ILLEGAL] < 16 km, Same Grid (RED on WHITE Alert)"
+            status_tag = "[ILLEGAL]   < 16 km, Same Grid (RED on WHITE - State A)"
         elif not same_grid and under_16k:
-            status_tag = "[WARN]    < 16 km, Traversed Grid (Amber Alert)"
+            status_tag = "[WARN]      < 16 km, Traversed Grid (Amber - State A)"
         elif same_grid and not under_16k:
-            status_tag = "[WARN]    >= 16 km, Same Grid (Keep driving)"
+            status_tag = "[WARN]      >= 16 km, Same Grid (Keep driving)"
+        elif revisit:
+            status_tag = "[REVISIT]   >= 16 km, Revisited Grid (ROYAL BLUE - State C)"
         else:
-            status_tag = "[QUALIFIED] >= 16 km & New Grid (LEGAL OPERATING SITE)"
+            status_tag = "[QUALIFIED] >= 16 km & New Grid (FOREST GREEN - State B)"
 
         # Build and send sentence
         now_dt = datetime.now(timezone.utc)
@@ -336,7 +351,7 @@ def run_rover_scenario(
 
 # --- Scenario 2: Mountain Backtrack / Switchbacks ---
 
-def run_backtrack_scenario(sender: SerialSender, origin_grid: str, rate_hz: float):
+def run_backtrack_scenario(sender: SerialSender, origin_grid: str, rate_hz: float, speed_mult: float = 1.0):
     print("\n" + "=" * 65)
     print("      SCENARIO: MOUNTAIN CANYON SWITCHBACK & BACKTRACK")
     print("=" * 65)
@@ -349,9 +364,9 @@ def run_backtrack_scenario(sender: SerialSender, origin_grid: str, rate_hz: floa
 
     phases = [
         # (name, start_km, end_km, bearing, speed_kmh)
-        ("Climbing mountain road", 0.0, 14.5, 30.0, 70.0),
-        ("Canyon turn (distance decreases)", 14.5, 11.2, 210.0, 50.0),
-        ("Ridge breakout past 16 km", 11.2, 20.0, 45.0, 80.0),
+        ("Climbing mountain road", 0.0, 14.5, 30.0, 70.0 * speed_mult),
+        ("Canyon turn (distance decreases)", 14.5, 11.2, 210.0, 50.0 * speed_mult),
+        ("Ridge breakout past 16 km", 11.2, 20.0, 45.0, 80.0 * speed_mult),
     ]
 
     cur_lat = orig_lat
@@ -423,7 +438,7 @@ def run_sweep_scenario(sender: SerialSender, speed_deg_sec: float, rate_hz: floa
 
 # --- Scenario 4: RTK Quality Transitions & Watchdog ---
 
-def run_rtk_scenario(sender: SerialSender):
+def run_rtk_scenario(sender: SerialSender, duration_mult: float = 1.0):
     print("\n" + "=" * 65)
     print("      SCENARIO: RTK QUALITY TRANSITIONS & WATCHDOG")
     print("=" * 65)
@@ -432,11 +447,11 @@ def run_rtk_scenario(sender: SerialSender):
 
     lat, lon, hdg = 38.3540, -119.4580, 145.2
     stages = [
-        ("RTK FIXED (Pure White High-Precision)", 3, 1, 6.0),
-        ("RTK FLOAT (Bright Yellow Degraded Reception)", 2, 1, 5.0),
-        ("RTK LOST (Red Lost Carrier Ambiguity)", 0, 1, 4.0),
-        ("STREAM SILENCE (Testing 1500 ms Staleness Watchdog)", None, None, 4.0),
-        ("RE-ACQUIRED RTK FIXED", 3, 1, 6.0)
+        ("RTK FIXED (State B Qualified / Pure White)", 3, 1, 6.0 * duration_mult),
+        ("RTK FLOAT (Bright Yellow Degraded Reception)", 2, 1, 5.0 * duration_mult),
+        ("RTK LOST (Red Lost Carrier Ambiguity)", 0, 1, 4.0 * duration_mult),
+        ("STREAM SILENCE (Testing 3000 ms Watchdog -> State D Deep Amber Holding Distance)", None, None, 4.0 * duration_mult),
+        ("RE-ACQUIRED RTK FIXED (State B Restored)", 3, 1, 6.0 * duration_mult)
     ]
 
     for desc, hdg_q, pos_q, duration in stages:
@@ -650,23 +665,31 @@ def main():
     # 1. Rover Scenario
     rover_p = subparsers.add_parser("rover", help="Simulate rover transit journey from an origin grid across 16 km threshold")
     rover_p.add_argument("--origin", default="CM87wa", help="Starting Maidenhead grid (default: CM87wa)")
+    rover_p.add_argument("--dest", help="Destination Maidenhead grid (e.g. CM87wb or CM87wa) for point-to-point transit / loop course")
+    rover_p.add_argument("--revisit", action="store_true", help="Simulate returning to an activated grid (State C REVISIT)")
     rover_p.add_argument("--bearing", type=float, default=45.0, help="Travel bearing heading in degrees (default: 45.0)")
     rover_p.add_argument("--speed", type=float, default=65.0, help="Driving speed in km/h (default: 65.0)")
     rover_p.add_argument("--distance", type=float, default=25.0, help="Total travel distance in km (default: 25.0)")
     rover_p.add_argument("--rate", type=float, default=5.0, help="Update rate in Hz (default: 5.0)")
+    rover_p.add_argument("--dry-run", "-n", action="store_true", help="Print generated sentences to stdout without serial connection")
 
     # 2. Backtrack Scenario
     backtrack_p = subparsers.add_parser("backtrack", help="Simulate mountain canyon switchbacks where distance temporarily decreases")
     backtrack_p.add_argument("--origin", default="CM87wa", help="Starting Maidenhead grid (default: CM87wa)")
+    backtrack_p.add_argument("--speed-mult", type=float, default=1.0, help="Speed multiplier for simulation (default: 1.0)")
     backtrack_p.add_argument("--rate", type=float, default=5.0, help="Update rate in Hz (default: 5.0)")
+    backtrack_p.add_argument("--dry-run", "-n", action="store_true", help="Print generated sentences to stdout without serial connection")
 
     # 3. Sweep Scenario
     sweep_p = subparsers.add_parser("sweep", help="Continuous 360-degree antenna rotator sweep")
     sweep_p.add_argument("--speed", type=float, default=6.0, help="Rotation speed in deg/sec (default: 6.0)")
     sweep_p.add_argument("--rate", type=float, default=5.0, help="Update rate in Hz (default: 5.0)")
+    sweep_p.add_argument("--dry-run", "-n", action="store_true", help="Print generated sentences to stdout without serial connection")
 
     # 4. RTK Quality Cycle
-    subparsers.add_parser("rtk", help="Cycle through RTK Fixed, Float, Lost, and Staleness Watchdog timeout")
+    rtk_p = subparsers.add_parser("rtk", help="Cycle through RTK Fixed, Float, Lost, and Staleness Watchdog timeout")
+    rtk_p.add_argument("--duration-mult", type=float, default=1.0, help="Duration multiplier for simulation (default: 1.0)")
+    rtk_p.add_argument("--dry-run", "-n", action="store_true", help="Print generated sentences to stdout without serial connection")
 
     # 5. Interactive Drive
     drive_p = subparsers.add_parser("drive", help="Interactive terminal keyboard drive controller (WASD)")
@@ -720,17 +743,23 @@ Examples:
         parser.print_help()
         sys.exit(1)
 
-    sender = SerialSender(args.port, args.baud, args.dry_run)
+    is_dry_run = getattr(args, 'dry_run', False)
+    sender = SerialSender(args.port, args.baud, is_dry_run)
 
     try:
         if args.scenario == "rover":
-            run_rover_scenario(sender, args.origin, args.bearing, args.speed, args.distance, args.rate)
+            revisit_mode = getattr(args, 'revisit', False) or (getattr(args, 'dest', None) is not None and args.dest[:6].upper() != args.origin[:6].upper())
+            run_rover_scenario(
+                sender, args.origin, args.bearing, args.speed, args.distance, args.rate,
+                dest_grid=getattr(args, 'dest', None),
+                revisit=revisit_mode
+            )
         elif args.scenario == "backtrack":
-            run_backtrack_scenario(sender, args.origin, args.rate)
+            run_backtrack_scenario(sender, args.origin, args.rate, speed_mult=getattr(args, 'speed_mult', 1.0))
         elif args.scenario == "sweep":
             run_sweep_scenario(sender, args.speed, args.rate)
         elif args.scenario == "rtk":
-            run_rtk_scenario(sender)
+            run_rtk_scenario(sender, duration_mult=getattr(args, 'duration_mult', 1.0))
         elif args.scenario == "drive":
             run_interactive_drive(sender, args.origin, args.rate)
         elif args.scenario == "inject":

@@ -30,6 +30,7 @@ AppController::AppController(Board &board,
       currentBearingQuality_(BEARING_NONE),
       lastHeadingUpdate_(0),
       operationalMode_(OperationalMode::Bearing),
+      lastRenderedMode_(OperationalMode::Bearing),
       lastValidDisplacementKm_(0.0),
       lastLocationUpdate_(0),
       lastRoverState_(RoverState::InTransitUnder16k),
@@ -70,6 +71,9 @@ void AppController::setCurrentPosition(const GeoPoint &pos) {
 }
 
 void AppController::setOperationalMode(OperationalMode mode) {
+    if (operationalMode_ == OperationalMode::Rover && mode != OperationalMode::Rover) {
+        displayUi_.clearRoverCard();
+    }
     operationalMode_ = mode;
     updateNavigation();
 }
@@ -120,7 +124,21 @@ void AppController::onTargetEdited(unsigned long nowMs) {
         RoverStop stop(ts, currentPosition_.latitude, currentPosition_.longitude, myGrid_, finalDistKm, qualified);
         roverLogManagerRef_->appendStop(stop);
 
+        displayUi_.clearRoverCard();
         operationalMode_ = OperationalMode::Bearing;
+    }
+}
+
+void AppController::stopRoverMode(unsigned long nowMs) {
+#if defined(ARDUINO)
+    if (nowMs == 0) nowMs = millis();
+#endif
+    if (nowMs > 0) currentNowMs_ = nowMs;
+
+    if (operationalMode_ == OperationalMode::Rover) {
+        onTargetEdited(nowMs);
+        updateNavigation();
+        redrawMainScreen();
     }
 }
 
@@ -209,8 +227,12 @@ void AppController::renderNavigationRows() {
         lastRoverState_ = evaluateRoverState(dispKm, isRevisit, isFresh);
         displayUi_.renderRoverCard(lastRoverState_, dispKm);
     } else {
+        if (lastRenderedMode_ == OperationalMode::Rover) {
+            displayUi_.clearRoverCard();
+        }
         displayUi_.renderReverseBearingAndDistance(revbearing_, distance_);
     }
+    lastRenderedMode_ = operationalMode_;
 
     drawCurrentBearing();
     displayUi_.renderCalibrationPill(calibration_.getOffset(), calibration_.isCalibrated());
@@ -224,6 +246,7 @@ void AppController::updateNavigation() {
 }
 
 void AppController::redrawMainScreen() {
+    lastRenderedMode_ = operationalMode_;
     BearingFilter &bf = gpsManager_.getBearingFilter();
     MainScreenState s;
     s.myGrid = myGrid_;
@@ -299,6 +322,23 @@ void AppController::begin() {
 
     // Wire Serial CLI callbacks (passing this as context)
     serialCli_.begin();
+    serialCli_.setRoverLogManager(roverLogManagerRef_);
+    serialCli_.setRoverCallbacks(
+        [](void *ctx, unsigned long nowMs) {
+            auto *self = static_cast<AppController*>(ctx);
+            if (self) self->startRoverMode(nowMs);
+        },
+        [](void *ctx, unsigned long nowMs) {
+            auto *self = static_cast<AppController*>(ctx);
+            if (self) self->stopRoverMode(nowMs);
+        },
+        [](void *ctx, unsigned long nowMs) {
+            auto *self = static_cast<AppController*>(ctx);
+            if (self) self->discardLastStopAndRearm(nowMs);
+        },
+        this
+    );
+
     serialCli_.setNavigationContextProvider([](void *ctx) -> CliNavContext {
         CliNavContext nctx;
         auto *self = static_cast<AppController*>(ctx);
@@ -306,6 +346,18 @@ void AppController::begin() {
             nctx.targetBearing = self->bearing_;
             nctx.isRoverMode = self->isRoverMode();
             nctx.roverDistanceMeters = self->distance_;
+            nctx.originLat = self->originPoint_.latitude;
+            nctx.originLon = self->originPoint_.longitude;
+            std::snprintf(nctx.originGrid, sizeof(nctx.originGrid), "%s", self->originGrid_);
+            std::snprintf(nctx.currentGrid, sizeof(nctx.currentGrid), "%s", self->myGrid_);
+            nctx.roverState = self->lastRoverState_;
+            nctx.lastValidDisplacementKm = self->lastValidDisplacementKm_;
+            unsigned long now = self->currentNowMs_;
+#if defined(ARDUINO)
+            if (now == 0) now = millis();
+#endif
+            nctx.isGpsFresh = self->hasLocation_ && (now >= self->lastLocationUpdate_) &&
+                              ((now - self->lastLocationUpdate_) <= 3000);
         }
         return nctx;
     }, this);

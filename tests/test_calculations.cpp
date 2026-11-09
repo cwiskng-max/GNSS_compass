@@ -2055,6 +2055,407 @@ void test_rover_history_undo_modal_and_autorearm() {
     PASS();
 }
 
+void test_serial_cli_rover_commands() {
+    TEST("SerialCli extended rover commands: status, history, undo, max, clear, help");
+
+    RoverLogManager::resetHostStorage();
+
+    GpsManager gm;
+    Calibration cal;
+    GpsSimulator sim;
+    RoverLogManager logMgr;
+    logMgr.begin();
+
+    SerialCli cli(gm, cal, sim, &logMgr);
+
+    static std::string cliOut;
+    cliOut.clear();
+    cli.setOutputHandler([](const char *str, void *ctx) {
+        auto *out = static_cast<std::string*>(ctx);
+        if (out) *out += str;
+    }, &cliOut);
+
+    // 1. Rover Help
+    cli.executeCommand("rover help");
+    ASSERT_TRUE(cliOut.find("Rover Mode Serial Commands") != std::string::npos);
+    ASSERT_TRUE(cliOut.find("rover [status]") != std::string::npos);
+    ASSERT_TRUE(cliOut.find("rover start") != std::string::npos);
+    ASSERT_TRUE(cliOut.find("rover stop") != std::string::npos);
+    ASSERT_TRUE(cliOut.find("rover history") != std::string::npos);
+    ASSERT_TRUE(cliOut.find("rover undo") != std::string::npos);
+    ASSERT_TRUE(cliOut.find("rover max") != std::string::npos);
+    ASSERT_TRUE(cliOut.find("rover clear") != std::string::npos);
+    cliOut.clear();
+
+    // 2. Initial Rover Status (Inactive, No Origin)
+    cli.executeCommand("rover status");
+    ASSERT_TRUE(cliOut.find("Rover Transit Status") != std::string::npos);
+    ASSERT_TRUE(cliOut.find("INACTIVE (Bearing Mode)") != std::string::npos);
+    ASSERT_TRUE(cliOut.find("Not set") != std::string::npos);
+    cliOut.clear();
+
+    // 3. Rover History (Empty)
+    cli.executeCommand("rover history");
+    ASSERT_TRUE(cliOut.find("ROVER LOCATION HISTORY (0 stops / max 100)") != std::string::npos);
+    ASSERT_TRUE(cliOut.find("(No stops recorded)") != std::string::npos);
+    cliOut.clear();
+
+    // 4. Standalone Rover Start & Status (with simulated location)
+    gm.setLocation(GeoPoint(37.421998, -122.084000, true));
+    cli.executeCommand("rover start");
+    ASSERT_TRUE(cliOut.find("Rover mode started at CM87WK91") != std::string::npos);
+    ASSERT_TRUE(cli.isRoverMode());
+    ASSERT_TRUE(logMgr.getStopCount() == 1); // Auto-logged Stop 1 (ORIGIN)
+    cliOut.clear();
+
+    // Set displacement to 8.5 km (State A: In-Transit < 16.0 km)
+    cli.setRoverDistance(8500.0);
+    cli.setRoverState(RoverState::InTransitUnder16k);
+    cli.setCurrentGrid("CM87WK91");
+    cli.setGpsFresh(true);
+
+    cli.executeCommand("rover status");
+    ASSERT_TRUE(cliOut.find("ACTIVE (Rover Mode)") != std::string::npos);
+    ASSERT_TRUE(cliOut.find("37.421998, -122.084000") != std::string::npos);
+    ASSERT_TRUE(cliOut.find("8.5 km") != std::string::npos);
+    ASSERT_TRUE(cliOut.find("SAME GRID") != std::string::npos);
+    ASSERT_TRUE(cliOut.find("STATE A: In-Transit") != std::string::npos);
+    cliOut.clear();
+
+    // Move to 24.5 km into new grid CM87wb (State B: QUALIFIED)
+    cli.setRoverDistance(24500.0);
+    cli.setRoverState(RoverState::QualifiedNewGrid);
+    cli.setCurrentGrid("CM87WB02");
+    cli.executeCommand("rover status");
+    ASSERT_TRUE(cliOut.find("24.5 km") != std::string::npos);
+    ASSERT_TRUE(cliOut.find("TRAVERSED GRID") != std::string::npos);
+    ASSERT_TRUE(cliOut.find("STATE B: QUALIFIED") != std::string::npos);
+    cliOut.clear();
+
+    // 5. Standalone Rover Stop -> commits stop to history
+    gm.setLocation(GeoPoint(37.581204, -122.215401, true));
+    cli.executeCommand("rover stop");
+    ASSERT_TRUE(cliOut.find("Rover mode stopped. Position committed to history.") != std::string::npos);
+    ASSERT_TRUE(!cli.isRoverMode());
+    ASSERT_TRUE(logMgr.getStopCount() == 2);
+    cliOut.clear();
+
+    // Stop again when already inactive -> warning
+    cli.executeCommand("rover stop");
+    ASSERT_TRUE(cliOut.find("not currently active") != std::string::npos);
+    cliOut.clear();
+
+    // 6. Rover History Formatted ASCII Table Dump
+    cli.executeCommand("rover history");
+    ASSERT_TRUE(cliOut.find("ROVER LOCATION HISTORY (2 stops / max 100)") != std::string::npos);
+    ASSERT_TRUE(cliOut.find("# | UTC Timestamp       | Latitude   | Longitude    | Grid     | Disp (km) | Status") != std::string::npos);
+    ASSERT_TRUE(cliOut.find("1 |") != std::string::npos);
+    ASSERT_TRUE(cliOut.find("ORIGIN") != std::string::npos);
+    ASSERT_TRUE(cliOut.find("2 |") != std::string::npos);
+    ASSERT_TRUE(cliOut.find("24.5 k") != std::string::npos);
+    ASSERT_TRUE(cliOut.find("QUALIFIED") != std::string::npos);
+    cliOut.clear();
+
+    // Also check alias 'rover log'
+    cli.executeCommand("rover log");
+    ASSERT_TRUE(cliOut.find("ROVER LOCATION HISTORY (2 stops / max 100)") != std::string::npos);
+    cliOut.clear();
+
+    // 7. Rover Undo -> pops top stop, auto-rearms
+    cli.executeCommand("rover undo");
+    ASSERT_TRUE(cliOut.find("Discarded last stop") != std::string::npos);
+    ASSERT_TRUE(logMgr.getStopCount() == 1);
+    ASSERT_TRUE(cli.isRoverMode());
+    cliOut.clear();
+
+    // Undo initial stop -> stack now empty
+    cli.executeCommand("rover undo");
+    ASSERT_TRUE(cliOut.find("Rover history is now empty") != std::string::npos);
+    ASSERT_TRUE(logMgr.isEmpty());
+    cliOut.clear();
+
+    // Undo on empty stack -> protected
+    cli.executeCommand("rover undo");
+    ASSERT_TRUE(cliOut.find("No stops to undo (history is empty)") != std::string::npos);
+    cliOut.clear();
+
+    // 8. Rover Max Stops Configuration
+    cli.executeCommand("rover max");
+    ASSERT_TRUE(cliOut.find("Max stops capacity: 100") != std::string::npos);
+    cliOut.clear();
+
+    cli.executeCommand("rover max 50");
+    ASSERT_TRUE(cliOut.find("Max stops capacity set to 50") != std::string::npos);
+    ASSERT_TRUE(logMgr.getMaxStops() == 50);
+    cliOut.clear();
+
+    // Clamping to MIN_ROVER_STOPS (10)
+    cli.executeCommand("rover max 5");
+    ASSERT_TRUE(cliOut.find("Max stops capacity set to 10") != std::string::npos);
+    ASSERT_TRUE(logMgr.getMaxStops() == 10);
+    cliOut.clear();
+
+    // Clamping to ABS_MAX_ROVER_STOPS (500)
+    cli.executeCommand("rover max 999");
+    ASSERT_TRUE(cliOut.find("Max stops capacity set to 500") != std::string::npos);
+    ASSERT_TRUE(logMgr.getMaxStops() == 500);
+    cliOut.clear();
+
+    cli.executeCommand("rover max 100");
+    cliOut.clear();
+
+    // 9. Rover Clear with confirmation prompt and abort
+    RoverStop dummy(1000, 37.0, -122.0, "CM87wa", 0.0f, false);
+    logMgr.appendStop(dummy);
+    ASSERT_TRUE(logMgr.getStopCount() == 1);
+
+    // Unconfirmed 'rover clear' sets pendingClear_ and prompts warning
+    cli.executeCommand("rover clear");
+    ASSERT_TRUE(cliOut.find("WARNING: This will permanently erase") != std::string::npos);
+    ASSERT_TRUE(logMgr.getStopCount() == 1); // Not cleared yet!
+    cliOut.clear();
+
+    // Abort with 'no'
+    cli.executeCommand("no");
+    ASSERT_TRUE(cliOut.find("Rover clear aborted") != std::string::npos);
+    ASSERT_TRUE(logMgr.getStopCount() == 1);
+    cliOut.clear();
+
+    // Trigger clear again and confirm with 'yes'
+    cli.executeCommand("rover clear");
+    cliOut.clear();
+    cli.executeCommand("yes");
+    ASSERT_TRUE(cliOut.find("Rover location history cleared from NVS") != std::string::npos);
+    ASSERT_TRUE(logMgr.isEmpty());
+    cliOut.clear();
+
+    // Single-line 'rover clear confirm' and 'rover clear yes'
+    logMgr.appendStop(dummy);
+    ASSERT_TRUE(logMgr.getStopCount() == 1);
+    cli.executeCommand("rover clear confirm");
+    ASSERT_TRUE(cliOut.find("Rover location history cleared from NVS") != std::string::npos);
+    ASSERT_TRUE(logMgr.isEmpty());
+    cliOut.clear();
+
+    PASS();
+}
+
+void test_rover_simulation_scenarios_e2e() {
+    TEST("End-to-End Simulation: 16 km transit, backtrack, signal loss, and loop course revisit");
+
+    RoverLogManager::resetHostStorage();
+
+    Board board;
+    DisplayUi displayUi;
+    InputManager inputManager;
+    GpsManager gpsManager;
+    Calibration calibration;
+    GpsSimulator gpsSimulator;
+    SerialCli serialCli(gpsManager, calibration, gpsSimulator);
+
+    AppController app(board, displayUi, inputManager, gpsManager, calibration, gpsSimulator, serialCli);
+    app.begin();
+
+    static std::string cliOut;
+    cliOut.clear();
+    serialCli.setOutputHandler([](const char *str, void *ctx) {
+        auto *out = static_cast<std::string*>(ctx);
+        if (out) *out += str;
+    }, &cliOut);
+
+    auto injectKsxt = [&](const GeoPoint &pt, float hdg, BearingQuality q, unsigned long nowMs) {
+        char buf[256];
+        GpsSimulator::generateKsxt(buf, sizeof(buf), "20261108160000.00",
+                                  pt.latitude, pt.longitude, hdg, q);
+        serialCli.executeCommand(buf, nowMs);
+        app.update(nowMs);
+    };
+
+    // ==============================================================
+    // Scenario 1: 16 km Transit Journey (State A -> State B)
+    // ==============================================================
+    GeoPoint originSite(37.421998, -122.084000, true); // CM87wa
+    injectKsxt(originSite, 45.0f, BEARING_FIXED, 1000);
+
+    // Emulate Row 1 tap via CLI command 'rover start'
+    serialCli.executeCommand("rover start", 1000);
+    ASSERT_TRUE(app.isRoverMode());
+    ASSERT_TRUE(cliOut.find("Rover mode started at CM87WK91") != std::string::npos);
+    ASSERT_TRUE(app.getRoverLogManager().getStopCount() == 1);
+    cliOut.clear();
+
+    // Status at origin: State A, SAME GRID, 0.0 km
+    serialCli.executeCommand("rover status", 1100);
+    ASSERT_TRUE(cliOut.find("ACTIVE (Rover Mode)") != std::string::npos);
+    ASSERT_TRUE(cliOut.find("0.0 km") != std::string::npos);
+    ASSERT_TRUE(cliOut.find("SAME GRID") != std::string::npos);
+    ASSERT_TRUE(cliOut.find("STATE A: In-Transit") != std::string::npos);
+    ASSERT_TRUE(cliOut.find("FIXED (High-Precision RTK)") != std::string::npos);
+    cliOut.clear();
+
+    // Drive 12.0 km (still under 16 km -> State A, Traversed Grid)
+    GeoPoint pos12km = GpsSimulator::calculateRoverDisplacement(originSite, 12.0, 45.0);
+    injectKsxt(pos12km, 45.0f, BEARING_FIXED, 2000);
+
+    serialCli.executeCommand("rover status", 2000);
+    ASSERT_TRUE(cliOut.find("12.0 km") != std::string::npos);
+    ASSERT_TRUE(cliOut.find("STATE A: In-Transit") != std::string::npos);
+    cliOut.clear();
+
+    // Break past 16 km threshold to 24.2 km into CM87wb -> State B (QUALIFIED)
+    GeoPoint site2 = GpsSimulator::calculateRoverDisplacement(originSite, 24.2, 45.0);
+    injectKsxt(site2, 45.0f, BEARING_FIXED, 3000);
+
+    serialCli.executeCommand("rover status", 3000);
+    ASSERT_TRUE(cliOut.find("24.2 km") != std::string::npos);
+    ASSERT_TRUE(cliOut.find("TRAVERSED GRID") != std::string::npos);
+    ASSERT_TRUE(cliOut.find("STATE B: QUALIFIED") != std::string::npos);
+    cliOut.clear();
+
+    // Stop transit via CLI 'rover stop' -> commits Site 2 to contest history log
+    serialCli.executeCommand("rover stop", 3100);
+    ASSERT_TRUE(!app.isRoverMode());
+    ASSERT_TRUE(app.getRoverLogManager().getStopCount() == 2);
+    const RoverStop *stop2 = app.getRoverLogManager().getLastStop();
+    ASSERT_TRUE(stop2 != nullptr);
+    ASSERT_NEAR(stop2->displacement_km, 24.2f, 0.2f);
+    ASSERT_TRUE(stop2->qualified_16km);
+    cliOut.clear();
+
+    // ==============================================================
+    // Scenario 2: Mountain Canyon Backtrack Retreat (State B -> State A -> State B)
+    // ==============================================================
+    // Depart Site 2 towards mountain ridge
+    serialCli.executeCommand("rover start", 4000);
+    ASSERT_TRUE(app.isRoverMode());
+    cliOut.clear();
+
+    // Climb ridge to 16.8 km -> State B (QUALIFIED)
+    GeoPoint pos16_8km = GpsSimulator::calculateRoverDisplacement(site2, 16.8, 30.0);
+    injectKsxt(pos16_8km, 30.0f, BEARING_FIXED, 5000);
+    ASSERT_TRUE(app.getCurrentRoverState() == RoverState::QualifiedNewGrid);
+
+    serialCli.executeCommand("rover status", 5000);
+    ASSERT_TRUE(cliOut.find("16.8 km") != std::string::npos);
+    ASSERT_TRUE(cliOut.find("STATE B: QUALIFIED") != std::string::npos);
+    cliOut.clear();
+
+    // Switchback turn down canyon: straight-line distance retreats to 15.1 km (< 16 km)
+    // Assert instantaneous, hysteresis-free drop to State A
+    GeoPoint pos15_1km = GpsSimulator::calculateRoverDisplacement(site2, 15.1, 30.0);
+    injectKsxt(pos15_1km, 30.0f, BEARING_FIXED, 6000);
+    ASSERT_TRUE(app.getCurrentRoverState() == RoverState::InTransitUnder16k);
+
+    serialCli.executeCommand("rover status", 6000);
+    ASSERT_TRUE(cliOut.find("15.1 km") != std::string::npos);
+    ASSERT_TRUE(cliOut.find("STATE A: In-Transit") != std::string::npos);
+    cliOut.clear();
+
+    // Ridge breakout to 21.5 km -> recovers immediately to State B
+    GeoPoint site3 = GpsSimulator::calculateRoverDisplacement(site2, 21.5, 30.0);
+    injectKsxt(site3, 30.0f, BEARING_FIXED, 7000);
+    ASSERT_TRUE(app.getCurrentRoverState() == RoverState::QualifiedNewGrid);
+
+    // Commit Site 3
+    serialCli.executeCommand("rover stop", 7100);
+    ASSERT_TRUE(app.getRoverLogManager().getStopCount() == 3);
+    cliOut.clear();
+
+    // ==============================================================
+    // Scenario 3: GPS Signal Drop and Watchdog Recovery (State B -> State D -> State B)
+    // ==============================================================
+    serialCli.executeCommand("rover start", 8000);
+    ASSERT_TRUE(app.isRoverMode());
+    cliOut.clear();
+
+    GeoPoint pos19km = GpsSimulator::calculateRoverDisplacement(site3, 19.0, 45.0);
+    injectKsxt(pos19km, 45.0f, BEARING_FIXED, 9000);
+    ASSERT_TRUE(app.getCurrentRoverState() == RoverState::QualifiedNewGrid);
+
+    // Signal drop in dense canopy: advance time by 3.6 seconds (> 3000 ms watchdog) without GPS update
+    app.update(12600);
+    ASSERT_TRUE(app.getCurrentRoverState() == RoverState::GpsLostStale);
+
+    serialCli.executeCommand("rover status", 12600);
+    ASSERT_TRUE(cliOut.find("STATE D: NO GPS") != std::string::npos);
+    ASSERT_TRUE(cliOut.find("19.0 km") != std::string::npos); // Holds last valid reading!
+    ASSERT_TRUE(cliOut.find("Stale / Timeout") != std::string::npos);
+    cliOut.clear();
+
+    // GPS fix recovered -> returns to State B
+    GeoPoint site4 = GpsSimulator::calculateRoverDisplacement(site3, 22.0, 45.0);
+    injectKsxt(site4, 45.0f, BEARING_FIXED, 13000);
+    ASSERT_TRUE(app.getCurrentRoverState() == RoverState::QualifiedNewGrid);
+
+    serialCli.executeCommand("rover status", 13000);
+    ASSERT_TRUE(cliOut.find("STATE B: QUALIFIED") != std::string::npos);
+    ASSERT_TRUE(cliOut.find("Fresh") != std::string::npos);
+    cliOut.clear();
+
+    serialCli.executeCommand("rover stop", 13100);
+    ASSERT_TRUE(app.getRoverLogManager().getStopCount() == 4);
+    cliOut.clear();
+
+    // ==============================================================
+    // Scenario 4: Loop Course Revisit (State C Assertion)
+    // ==============================================================
+    // Depart Site 4 and travel back to origin grid CM87wa (already activated at Stop 1)
+    serialCli.executeCommand("rover start", 14000);
+    ASSERT_TRUE(app.isRoverMode());
+    cliOut.clear();
+
+    // Drive back to originSite coordinates (CM87wa) >= 16 km displacement from Site 4
+    injectKsxt(originSite, 45.0f, BEARING_FIXED, 15000);
+    app.update(15000);
+
+    // Assert State C (REVISITED)
+    ASSERT_TRUE(app.getCurrentRoverState() == RoverState::QualifiedRevisitedGrid);
+
+    serialCli.executeCommand("rover status", 15000);
+    ASSERT_TRUE(cliOut.find("STATE C: REVISITED") != std::string::npos);
+    ASSERT_TRUE(cliOut.find("Previously Visited") != std::string::npos);
+    cliOut.clear();
+
+    // Commit revisited stop
+    serialCli.executeCommand("rover stop", 15100);
+    ASSERT_TRUE(app.getRoverLogManager().getStopCount() == 5);
+    cliOut.clear();
+
+    // Verify formatted ASCII contest history table has 5 stops with all details
+    serialCli.executeCommand("rover history", 15200);
+    ASSERT_TRUE(cliOut.find("ROVER LOCATION HISTORY (5 stops / max 100)") != std::string::npos);
+    ASSERT_TRUE(cliOut.find("1 |") != std::string::npos);
+    ASSERT_TRUE(cliOut.find("ORIGIN") != std::string::npos);
+    ASSERT_TRUE(cliOut.find("2 |") != std::string::npos);
+    ASSERT_TRUE(cliOut.find("3 |") != std::string::npos);
+    ASSERT_TRUE(cliOut.find("4 |") != std::string::npos);
+    ASSERT_TRUE(cliOut.find("5 |") != std::string::npos);
+    cliOut.clear();
+
+    // Verify CLI Undo pops Stop 5 and auto-rearms Rover Mode relative to Site 4
+    serialCli.executeCommand("rover undo", 16000);
+    ASSERT_TRUE(cliOut.find("Discarded last stop") != std::string::npos);
+    ASSERT_TRUE(app.getRoverLogManager().getStopCount() == 4);
+    ASSERT_TRUE(app.isRoverMode());
+    ASSERT_NEAR(app.getOriginPoint().latitude, site4.latitude, 1e-5);
+    ASSERT_NEAR(app.getOriginPoint().longitude, site4.longitude, 1e-5);
+    cliOut.clear();
+
+    // Verify CLI Max Stops adjustment
+    serialCli.executeCommand("rover max 150", 16100);
+    ASSERT_TRUE(cliOut.find("Max stops capacity set to 150") != std::string::npos);
+    ASSERT_TRUE(app.getRoverLogManager().getMaxStops() == 150);
+    cliOut.clear();
+
+    // Verify CLI Clear
+    serialCli.executeCommand("rover clear confirm", 16200);
+    ASSERT_TRUE(cliOut.find("Rover location history cleared from NVS") != std::string::npos);
+    ASSERT_TRUE(app.getRoverLogManager().isEmpty());
+    cliOut.clear();
+
+    PASS();
+}
+
 int main() {
     std::cout << "========================================" << std::endl;
     std::cout << "  GNSS Compass Unit Test Suite" << std::endl;
@@ -2098,6 +2499,8 @@ int main() {
     test_rover_input_gestures_and_hit_testing();
     test_rover_app_controller_transitions_and_natural_exit();
     test_rover_history_undo_modal_and_autorearm();
+    test_serial_cli_rover_commands();
+    test_rover_simulation_scenarios_e2e();
 
     std::cout << "========================================" << std::endl;
     std::cout << "  All " << tests_passed << " / " << tests_run << " tests PASSED successfully!" << std::endl;

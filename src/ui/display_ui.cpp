@@ -218,6 +218,11 @@ void DisplayUi::renderRoverCard(RoverState state, double displacementKm) {
     gfx_->setTextColor(WHITE, BLACK);
 }
 
+void DisplayUi::clearRoverCard() {
+    if (!gfx_) return;
+    gfx_->fillRect(ROVER_CARD_X - 2, ROVER_CARD_Y - 2, ROVER_CARD_W + 4, ROVER_CARD_H + 4, BLACK);
+}
+
 void DisplayUi::renderArrlDistance(const char *myGrid, const char *targetGrid) {
 #if ENABLE_ARRL_DIST
     if (!gfx_ || !myGrid || !targetGrid) return;
@@ -300,6 +305,7 @@ void DisplayUi::renderCalibrationPill(float, bool) {}
 void DisplayUi::renderTargetBearing(double) {}
 void DisplayUi::renderReverseBearingAndDistance(double, double) {}
 void DisplayUi::renderRoverCard(RoverState, double) {}
+void DisplayUi::clearRoverCard() {}
 void DisplayUi::renderArrlDistance(const char *, const char *) {}
 void DisplayUi::renderUtcTime(int, int, bool) {}
 void DisplayUi::showFooterText(const char *, uint16_t) {}

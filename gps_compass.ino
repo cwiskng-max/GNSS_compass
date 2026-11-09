@@ -24,7 +24,7 @@ void setup() {
   Serial.begin(115200);
   Serial.print("GNSS Compass ");
   Serial.println(FW_VERSION);
-  Serial.println(F("Commands: 'status' (GPS stream diagnosis), 'test' (visual demo), 'sim' (simulation)"));
+  Serial.println(F("Commands: 'status' (GPS stream), 'rover' (transit tracking), 'cal' (antenna), 'sim' (simulation)"));
 
   app.begin();
 }
