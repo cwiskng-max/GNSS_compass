@@ -123,6 +123,7 @@ public:
     GpsSimulator& getGpsSimulator() { return gpsSimulator_; }
     SerialCli& getSerialCli() { return serialCli_; }
     BleSerialManager* getBleManager() const { return bleManager_; }
+    bool isBleConnected() const { return bleConnected_; }
 
     void handleBleConnectionChanged(bool connected);
 

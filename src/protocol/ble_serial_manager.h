@@ -16,6 +16,7 @@ typedef void (*BleConnectionCallback)(bool connected, void *context);
 #if defined(ARDUINO) && !defined(ARDUINO_TEST_BUILD)
 class BLEServer;
 class BLECharacteristic;
+class BLE2902;
 #endif
 
 /**
@@ -37,6 +38,7 @@ public:
 
     // Connection state & MTU
     bool isConnected() const { return connected_; }
+    bool isSubscribed() const;
     uint16_t getMtu() const { return negotiatedMtu_; }
     const char* getDeviceName() const { return deviceName_; }
 
@@ -67,6 +69,7 @@ public:
 #if !defined(ARDUINO) || defined(ARDUINO_TEST_BUILD)
     // Host / Unit-test simulation helpers
     void setConnected(bool connected);
+    void setSubscribed(bool subscribed) { subscribed_ = subscribed; }
     void simulateRx(const char *data, size_t len);
     const std::string& getTxBuffer() const { return testTxBuffer_; }
     void clearTxBuffer() { testTxBuffer_.clear(); }
@@ -75,9 +78,12 @@ public:
 private:
     bool initialized_;
     bool connected_;
+    bool subscribed_;
+    bool pendingConnCb_;
     bool restartAdvertisingNeeded_;
     uint16_t negotiatedMtu_;
     uint16_t connId_;
+    unsigned long restartAdvertisingAfterMs_;
     char deviceName_[32];
 
     char rxRingBuf_[512];
@@ -93,6 +99,7 @@ private:
     BLEServer *pServer_;
     BLECharacteristic *pTxChar_;
     BLECharacteristic *pRxChar_;
+    BLE2902 *p2902_;
 #endif
 
 #if !defined(ARDUINO) || defined(ARDUINO_TEST_BUILD)

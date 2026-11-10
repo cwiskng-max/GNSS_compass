@@ -3301,6 +3301,7 @@ void test_ble_serial_manager() {
 
     BleSerialManager ble;
     ASSERT_TRUE(!ble.isConnected());
+    ASSERT_TRUE(!ble.isSubscribed());
     ble.begin("Compass-Test");
     ASSERT_STR_EQ(ble.getDeviceName(), "Compass-Test");
 
@@ -3311,6 +3312,7 @@ void test_ble_serial_manager() {
 
     ble.setConnected(true);
     ASSERT_TRUE(ble.isConnected());
+    ASSERT_TRUE(ble.isSubscribed());
     ASSERT_TRUE(connState == true);
 
     ble.print("Hello ");
@@ -3417,14 +3419,17 @@ void test_app_controller_ble_integration() {
 
     // Verify initial disconnected state
     ASSERT_TRUE(!ble.isConnected());
+    ASSERT_TRUE(!app.isBleConnected());
 
     // Connect BLE
     ble.setConnected(true);
     ASSERT_TRUE(ble.isConnected());
+    ASSERT_TRUE(app.isBleConnected());
 
     // Disconnect BLE
     ble.setConnected(false);
     ASSERT_TRUE(!ble.isConnected());
+    ASSERT_TRUE(!app.isBleConnected());
 
     PASS();
 }

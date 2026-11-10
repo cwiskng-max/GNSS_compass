@@ -15,24 +15,17 @@ class BleServerCallbackHandler : public BLEServerCallbacks {
 public:
     explicit BleServerCallbackHandler(BleSerialManager *mgr) : mgr_(mgr) {}
 
-    void onConnect(BLEServer *pServer) override {
-        (void)pServer;
-        if (mgr_) mgr_->handleConnect(0);
-    }
-
     void onConnect(BLEServer *pServer, esp_ble_gatts_cb_param_t *param) override {
-        uint16_t connId = 0;
-        if (pServer && param) {
-            connId = param->connect.conn_id;
-            // Defer connection parameter updates: do not update immediately during onConnect,
-            // as this collides with Android/Windows GATT discovery and causes 133 / GATT disconnects.
-        }
+        (void)pServer;
+        uint16_t connId = param ? param->connect.conn_id : 0;
         if (mgr_) mgr_->handleConnect(connId);
     }
 
     void onDisconnect(BLEServer *pServer) override {
-        (void)pServer;
         if (mgr_) mgr_->handleDisconnect();
+        if (pServer) {
+            pServer->startAdvertising();
+        }
     }
 
 private:
@@ -59,9 +52,12 @@ private:
 BleSerialManager::BleSerialManager()
     : initialized_(false),
       connected_(false),
+      subscribed_(false),
+      pendingConnCb_(false),
       restartAdvertisingNeeded_(false),
       negotiatedMtu_(23),
       connId_(0),
+      restartAdvertisingAfterMs_(0),
       rxHead_(0),
       rxTail_(0),
       dataCb_(nullptr),
@@ -71,7 +67,8 @@ BleSerialManager::BleSerialManager()
 #if defined(ARDUINO) && !defined(ARDUINO_TEST_BUILD)
     , pServer_(nullptr),
       pTxChar_(nullptr),
-      pRxChar_(nullptr)
+      pRxChar_(nullptr),
+      p2902_(nullptr)
 #endif
 {
     std::memset(deviceName_, 0, sizeof(deviceName_));
@@ -108,14 +105,15 @@ void BleSerialManager::begin(const char *customName) {
 
     BLEService *pService = pServer_->createService(BLE_NUS_SERVICE_UUID);
 
-    // TX Characteristic (Notify & Read to Client)
+    // TX Characteristic (Notify per Nordic NUS standard - NOT readable)
     pTxChar_ = pService->createCharacteristic(
         BLE_NUS_TX_CHARACTERISTIC_UUID,
-        BLECharacteristic::PROPERTY_NOTIFY | BLECharacteristic::PROPERTY_READ
+        BLECharacteristic::PROPERTY_NOTIFY
     );
-    pTxChar_->addDescriptor(new BLE2902());
+    p2902_ = new BLE2902();
+    pTxChar_->addDescriptor(p2902_);
 
-    // RX Characteristic (Write from Client)
+    // RX Characteristic (Write / Write Without Response from Client)
     pRxChar_ = pService->createCharacteristic(
         BLE_NUS_RX_CHARACTERISTIC_UUID,
         BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_WRITE_NR
@@ -124,19 +122,30 @@ void BleSerialManager::begin(const char *customName) {
 
     pService->start();
 
+    // Main Advertisement Packet (Flags + Complete NUS 128-bit Service UUID + Preferred Conn Interval)
     BLEAdvertisementData advData;
     advData.setFlags(0x06); // General Discoverable + BR/EDR not supported
     advData.setCompleteServices(BLEUUID(BLE_NUS_SERVICE_UUID));
 
+    // Preferred connection interval hints (15.0 ms - 30.0 ms) per BLE core spec AD type 0x12
+    // 0x000C (12 * 1.25 ms = 15.0 ms) satisfies Windows 10/11 non-HID floor requirements
+    // 0x0018 (24 * 1.25 ms = 30.0 ms) ensures low latency across Android, iOS, and Windows
+    // Total advData payload: 3 (flags) + 18 (128-bit UUID) + 6 (conn interval) = 27 bytes (<= 31 max)
+    const char connIntervalAd[] = { 0x05, 0x12, 0x0C, 0x00, 0x18, 0x00 };
+    advData.addData(std::string(connIntervalAd, sizeof(connIntervalAd)));
+
+    // Scan Response Packet (Complete Local Name)
+    // Keeps name isolated in scan response to avoid exceeding the 31-byte legacy BLE advertisement limit
     BLEAdvertisementData scanResponseData;
     scanResponseData.setName(deviceName_);
 
+    // Fast, reliable advertising configuration
     BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
     pAdvertising->setAdvertisementData(advData);
     pAdvertising->setScanResponseData(scanResponseData);
-    // Fast advertising interval: 20ms min, 40ms max for immediate discovery
-    pAdvertising->setMinInterval(0x20); // 20 ms (32 * 0.625ms)
-    pAdvertising->setMaxInterval(0x40); // 40 ms (64 * 0.625ms)
+    pAdvertising->setMinInterval(0x50); // 50 ms (80 * 0.625 ms)
+    pAdvertising->setMaxInterval(0xA0); // 100 ms (160 * 0.625 ms)
+
     BLEDevice::startAdvertising();
 #endif
 
@@ -145,17 +154,34 @@ void BleSerialManager::begin(const char *customName) {
 
 void BleSerialManager::update(unsigned long nowMs) {
     (void)nowMs;
+#if defined(ARDUINO)
+    if (nowMs == 0) nowMs = millis();
+#endif
+
 #if defined(ARDUINO) && !defined(ARDUINO_TEST_BUILD)
+    // Non-blocking advertising restart fallback when disconnected
     if (restartAdvertisingNeeded_) {
-        restartAdvertisingNeeded_ = false;
-        delay(100);
-        if (pServer_) {
-            pServer_->startAdvertising();
-        } else {
-            BLEDevice::startAdvertising();
+        if (restartAdvertisingAfterMs_ == 0) {
+            restartAdvertisingAfterMs_ = nowMs + 100;
+        } else if (nowMs >= restartAdvertisingAfterMs_) {
+            restartAdvertisingNeeded_ = false;
+            restartAdvertisingAfterMs_ = 0;
+            if (pServer_) {
+                pServer_->startAdvertising();
+            } else {
+                BLEDevice::startAdvertising();
+            }
         }
     }
 #endif
+
+    // Dispatch connection callback on main thread (safe for SPI LCD UI drawing)
+    if (pendingConnCb_) {
+        pendingConnCb_ = false;
+        if (connCb_) {
+            connCb_(connected_, connCbContext_);
+        }
+    }
 
     // Drain incoming RX ring buffer on main thread
     if (dataCb_) {
@@ -171,7 +197,10 @@ void BleSerialManager::write(const uint8_t *data, size_t length) {
     if (!data || length == 0) return;
 
 #if defined(ARDUINO) && !defined(ARDUINO_TEST_BUILD)
+    // Suppress notifications if not connected or if client has not enabled notifications on CCCD yet.
+    // This prevents notification collisions during client GATT service discovery.
     if (!connected_ || !pTxChar_) return;
+    if (p2902_ && !p2902_->getNotifications()) return;
 
     // Dynamically query negotiated peer MTU in case it was negotiated after connection
     if (pServer_) {
@@ -200,6 +229,14 @@ void BleSerialManager::write(const uint8_t *data, size_t length) {
     if (connected_) {
         testTxBuffer_.append(reinterpret_cast<const char*>(data), length);
     }
+#endif
+}
+
+bool BleSerialManager::isSubscribed() const {
+#if defined(ARDUINO) && !defined(ARDUINO_TEST_BUILD)
+    return p2902_ ? p2902_->getNotifications() : false;
+#else
+    return subscribed_;
 #endif
 }
 
@@ -250,23 +287,43 @@ void BleSerialManager::disconnect() {
 
 void BleSerialManager::handleConnect(uint16_t connId) {
     connected_ = true;
+    subscribed_ = false;
     connId_ = connId;
-    negotiatedMtu_ = 23; // Will dynamically expand to peer MTU on first write
+    negotiatedMtu_ = 23;
     rxHead_ = 0;
     rxTail_ = 0;
+    pendingConnCb_ = true;
+    restartAdvertisingNeeded_ = false;
+    restartAdvertisingAfterMs_ = 0;
+
+#if !defined(ARDUINO) || defined(ARDUINO_TEST_BUILD)
+    subscribed_ = true;
     if (connCb_) {
         connCb_(true, connCbContext_);
     }
+    pendingConnCb_ = false;
+#endif
 }
 
 void BleSerialManager::handleDisconnect() {
     connected_ = false;
+    subscribed_ = false;
     connId_ = 0;
     negotiatedMtu_ = 23;
+    pendingConnCb_ = true;
+
+#if defined(ARDUINO) && !defined(ARDUINO_TEST_BUILD)
     restartAdvertisingNeeded_ = true;
+    restartAdvertisingAfterMs_ = 0;
+    if (p2902_) {
+        p2902_->setNotifications(false);
+    }
+#else
     if (connCb_) {
         connCb_(false, connCbContext_);
     }
+    pendingConnCb_ = false;
+#endif
 }
 
 void BleSerialManager::handleRxData(const char *data, size_t len) {
@@ -284,7 +341,7 @@ void BleSerialManager::handleRxData(const char *data, size_t len) {
 void BleSerialManager::setConnected(bool connected) {
     if (connected_ != connected) {
         if (connected) {
-            handleConnect();
+            handleConnect(0);
         } else {
             handleDisconnect();
         }
@@ -296,4 +353,3 @@ void BleSerialManager::simulateRx(const char *data, size_t len) {
     update(0); // Synchronously drain ring buffer for unit testing
 }
 #endif
-
