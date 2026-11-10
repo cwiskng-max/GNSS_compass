@@ -24,10 +24,8 @@ public:
         uint16_t connId = 0;
         if (pServer && param) {
             connId = param->connect.conn_id;
-            // Request low-latency, high-throughput BLE connection parameters universally
-            // accepted across Windows, Android, iOS, and macOS:
-            // minInterval: 12 (15.0ms), maxInterval: 24 (30.0ms), latency: 0, timeout: 400 (4.0s)
-            pServer->updateConnParams(param->connect.remote_bda, 12, 24, 0, 400);
+            // Defer connection parameter updates: do not update immediately during onConnect,
+            // as this collides with Android/Windows GATT discovery and causes 133 / GATT disconnects.
         }
         if (mgr_) mgr_->handleConnect(connId);
     }

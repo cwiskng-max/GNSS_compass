@@ -21,6 +21,7 @@ typedef void (*GpsTimeCallback)(int hours, int minutes, void *context);
 typedef void (*GpsSentenceCallback)(const char *sentence, void *context);
 typedef void (*GpsTxCallback)(const uint8_t *data, size_t len, void *context);
 typedef void (*GpsResponseCallback)(const char *response, void *context);
+typedef void (*GpsProbeCallback)(GpsTxState state, const char *msg, void *context);
 
 /**
  * @brief Manages the GNSS receiver UART hardware link, streaming sentence assembly,
@@ -137,6 +138,10 @@ public:
         onResponse_ = cb;
         responseContext_ = context;
     }
+    void setOnProbeResult(GpsProbeCallback cb, void *context = nullptr) {
+        onProbeResult_ = cb;
+        probeResultContext_ = context;
+    }
 
 #if defined(ARDUINO)
     HardwareSerial& getSerial() { return serialPort_; }
@@ -196,6 +201,8 @@ private:
     void *txContext_ = nullptr;
     GpsResponseCallback onResponse_;
     void *responseContext_;
+    GpsProbeCallback onProbeResult_ = nullptr;
+    void *probeResultContext_ = nullptr;
 
 #if defined(ARDUINO)
     HardwareSerial serialPort_;

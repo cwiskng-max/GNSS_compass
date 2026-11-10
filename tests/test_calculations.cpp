@@ -960,6 +960,19 @@ void test_gps_tx_discovery() {
     ASSERT_TRUE(gm.isSendAvailable());
 
     // 7. Timeout and Retry Sequence to Unavailable
+    struct ProbeCallbackData {
+        GpsTxState state = GpsTxState::Unknown;
+        std::string msg;
+    } probeData;
+
+    gm.setOnProbeResult([](GpsTxState state, const char *msg, void *ctx) {
+        auto *p = static_cast<ProbeCallbackData*>(ctx);
+        if (p) {
+            p->state = state;
+            p->msg = msg ? msg : "";
+        }
+    }, &probeData);
+
     sentData.clear();
     gm.probeTx(5000);
     ASSERT_TRUE(gm.getTxState() == GpsTxState::Probing);
@@ -977,6 +990,8 @@ void test_gps_tx_discovery() {
     ASSERT_TRUE(gm.getProbeRetries() == 1);
     ASSERT_TRUE(gm.getLastProbeTime() == 6000);
     ASSERT_STR_EQ(sentData.c_str(), "version\r\nversion\r\n");
+    ASSERT_TRUE(probeData.state == GpsTxState::Probing);
+    ASSERT_TRUE(probeData.msg.find("retrying (attempt 1/2)") != std::string::npos);
 
     // Before second timeout (500 ms elapsed)
     gm.update(6500);
@@ -989,6 +1004,8 @@ void test_gps_tx_discovery() {
     ASSERT_TRUE(gm.getProbeRetries() == 2);
     ASSERT_TRUE(gm.getLastProbeTime() == 7000);
     ASSERT_STR_EQ(sentData.c_str(), "version\r\nversion\r\nversion\r\n");
+    ASSERT_TRUE(probeData.state == GpsTxState::Probing);
+    ASSERT_TRUE(probeData.msg.find("retrying (attempt 2/2)") != std::string::npos);
 
     // Before expiration (500 ms elapsed)
     gm.update(7500);
@@ -1000,6 +1017,8 @@ void test_gps_tx_discovery() {
     ASSERT_TRUE(gm.getTxState() == GpsTxState::Unavailable);
     ASSERT_TRUE(!gm.isSendAvailable());
     ASSERT_STR_EQ(gm.getTxStateString(), "UNAVAILABLE");
+    ASSERT_TRUE(probeData.state == GpsTxState::Unavailable);
+    ASSERT_TRUE(probeData.msg.find("No response from receiver") != std::string::npos);
     // Ensure no additional probe was sent on transition to Unavailable
     ASSERT_STR_EQ(sentData.c_str(), "version\r\nversion\r\nversion\r\n");
 
@@ -1026,6 +1045,8 @@ void test_gps_tx_discovery() {
     gm.feedSentence("<OK", 10050);
     ASSERT_STR_EQ(lastResponse.c_str(), "<OK");
     ASSERT_TRUE(gm.getTxState() == GpsTxState::Available);
+    ASSERT_TRUE(probeData.state == GpsTxState::Available);
+    ASSERT_TRUE(probeData.msg.find("Receiver acknowledged") != std::string::npos);
 
     gm.feedSentence("#MODE,ROVER,UAV", 10100);
     ASSERT_STR_EQ(lastResponse.c_str(), "#MODE,ROVER,UAV");
@@ -1398,6 +1419,8 @@ void test_serial_cli_gps_commands() {
     // Confirm TX by feeding <OK response
     gm.feedSentence("<OK", 1200);
     ASSERT_TRUE(gm.isSendAvailable());
+    ASSERT_TRUE(cliOutput.find("Receiver acknowledged!") != std::string::npos);
+    cliOutput.clear();
 
     // 6. Enhanced 'status' report when Bidirectional TX is confirmed
     cli.executeCommand("gps status", 1300);

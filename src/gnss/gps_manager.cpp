@@ -1,6 +1,7 @@
 #include "gps_manager.h"
 #include "../protocol/nmea_parser.h"
 #include <cmath>
+#include <cstdio>
 
 GpsManager::GpsManager()
     : hasHeading_(false),
@@ -33,7 +34,9 @@ GpsManager::GpsManager()
       onRawSentence_(nullptr),
       sentenceContext_(nullptr),
       onResponse_(nullptr),
-      responseContext_(nullptr)
+      responseContext_(nullptr),
+      onProbeResult_(nullptr),
+      probeResultContext_(nullptr)
 #if defined(ARDUINO)
       , serialPort_(2)
 #endif
@@ -68,9 +71,21 @@ void GpsManager::checkTxProbe(unsigned long nowMs) {
         if (probeRetries_ < GPS_TX_PROBE_MAX_RETRIES) {
             probeRetries_++;
             lastProbeTime_ = nowMs;
+            if (onProbeResult_) {
+                char msg[96];
+                std::snprintf(msg, sizeof(msg),
+                              "[GPS PROBE] Probe timed out, retrying (attempt %u/%u)...",
+                              probeRetries_, GPS_TX_PROBE_MAX_RETRIES);
+                onProbeResult_(GpsTxState::Probing, msg, probeResultContext_);
+            }
             sendCommand("version");
         } else {
             txState_ = GpsTxState::Unavailable;
+            if (onProbeResult_) {
+                onProbeResult_(GpsTxState::Unavailable,
+                               "[GPS PROBE] No response from receiver. TX line unavailable (Receive-only mode).",
+                               probeResultContext_);
+            }
         }
     }
 }
@@ -272,6 +287,11 @@ void GpsManager::processSentence(char *sentence, unsigned long nowMs) {
 
     if (isProbeAck && txState_ == GpsTxState::Probing) {
         txState_ = GpsTxState::Available;
+        if (onProbeResult_) {
+            onProbeResult_(GpsTxState::Available,
+                           "[GPS PROBE] Receiver acknowledged! Bidirectional TX link active on GPIO 43.",
+                           probeResultContext_);
+        }
     }
 
     if (isResponse) {

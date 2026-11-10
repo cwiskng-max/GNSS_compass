@@ -76,6 +76,13 @@ SerialCli::SerialCli(GpsManager &gpsManager, Calibration &calibration, GpsSimula
             self->broadcastln(msg);
         }
     }, this);
+
+    gpsManager_.setOnProbeResult([](GpsTxState, const char *msg, void *ctx) {
+        auto *self = static_cast<SerialCli*>(ctx);
+        if (self && msg && msg[0] != '\0') {
+            self->broadcastln(msg);
+        }
+    }, this);
 }
 
 void SerialCli::begin() {
@@ -94,6 +101,13 @@ void SerialCli::begin() {
     }, this);
 
     gpsManager_.getConfigPipeline().setOnProgress([](ConfigStep, ConfigPipelineState, const char *msg, void *ctx) {
+        auto *self = static_cast<SerialCli*>(ctx);
+        if (self && msg && msg[0] != '\0') {
+            self->broadcastln(msg);
+        }
+    }, this);
+
+    gpsManager_.setOnProbeResult([](GpsTxState, const char *msg, void *ctx) {
         auto *self = static_cast<SerialCli*>(ctx);
         if (self && msg && msg[0] != '\0') {
             self->broadcastln(msg);
