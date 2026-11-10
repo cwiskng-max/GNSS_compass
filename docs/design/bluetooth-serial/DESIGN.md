@@ -105,15 +105,23 @@ classDiagram
 * **Service Solicitation / UUID:** Includes the NUS 128-bit UUID in advertising data so terminal apps can filter specifically for UART-capable devices.
 * **Advertising Interval:** 100 ms (balanced for sub-second connection discovery with minimal radio power).
 
-### 3.3 MTU Negotiation & High-Throughput Chunking
+### 3.3 MTU Negotiation & Transmit Queue
 
-The standard default BLE MTU is 23 bytes (allowing 20 payload bytes). Command outputs like `status` (600+ bytes) or `rover history` (1,000+ bytes) require efficient transmission:
+The standard default BLE MTU is 23 bytes (allowing 20 payload bytes). Command outputs like `status` (600+ bytes), `rover history` (1,000+ bytes), and planned dumps such as the rover log or a target list (~100 lines, ~8 KB) need efficient, non-blocking transmission:
 
-1. **Automatic MTU Request:** Upon connection establishment, the firmware requests an MTU increase up to **512 bytes** (or 247 bytes, standard for modern iOS/Android/PC stacks).
-2. **Dynamic Packet Chunking:**
-   * An outgoing transmit ring buffer stores response lines.
-   * Chunks are sized up to `min(negotiated_mtu - 3, 240)` bytes.
-   * Chunks are delivered via `notify()` sequentially, with cooperative yielding to prevent BLE queue exhaustion.
+1. **MTU exchange is client-initiated:** The ESP32 is the GATT server (peripheral). It only sets its *local* maximum with `BLEDevice::setMTU(512)`; the **client** decides whether to start an MTU exchange. The agreed value arrives as `ESP_GATTS_MTU_EVT` and is recorded immediately, so `ble` status reports the real MTU as soon as it is negotiated.
+2. **Transmit queue:**
+   * `write()` / `print()` append to a 12 KB ring buffer (allocated from PSRAM) and return immediately. The main loop never calls `delay()` for BLE output.
+   * `update()` drains the queue as notifications of up to `min(MTU - 3, 244)` bytes, calling `esp_ble_gatts_send_indicate()` directly. 244 bytes is a full LE data-length-extension packet (251 bytes) minus the L2CAP and ATT headers.
+   * At most 8 notifications are handed to the stack per `update()` call.
+   * Sending pauses while the stack reports `ESP_GATTS_CONGEST_EVT` (congested) and resumes when it clears. If `esp_ble_gatts_send_indicate()` fails (L2CAP buffers exhausted), the same chunk is retried after 20 ms.
+3. **Full-queue policy:** If a write does not fit, it and every later write are dropped until the queue has fully drained. A single `[BLE] N bytes of output dropped (send queue full)` notice is then sent, so the client sees one contiguous gap rather than scattered missing lines. The running total appears in `ble` status.
+4. **Session boundaries:** Output written while the client has not yet subscribed to notifications (CCCD) is discarded; this also prevents notifications from colliding with the client's service discovery. Any queued output, and any unread RX bytes, are discarded when the connection changes.
+5. **Disconnect:** The `exit` / `disconnect` command queues its reply, then terminates the link once the queue has drained (plus a 150 ms grace period, or a 2 s timeout). The link is closed with `esp_ble_gap_disconnect()` (HCI Disconnect) rather than `esp_ble_gatts_close()`, which only closes the GATT virtual connection.
+
+### 3.4 Advertising Supervision
+
+After a disconnect, advertising is restarted exactly once, right away. Advertising state is tracked from the GAP `ADV_START_COMPLETE` / `ADV_STOP_COMPLETE` events. A watchdog in `update()` restarts advertising if the device has been disconnected and not advertising for 2 s, which covers a start request that the controller rejected or lost.
 
 ---
 
@@ -179,34 +187,43 @@ To prevent this:
 
 ### 4.2 Component Design: `BleSerialManager`
 
-A new class `BleSerialManager` in `src/protocol/ble_serial_manager.h` encapsulates all BLE hardware interactions:
+`BleSerialManager` (`src/protocol/ble_serial_manager.h`) encapsulates all BLE interactions. The implementation is split so that each file reads straight through:
+
+| File | Contents |
+| :--- | :--- |
+| `ble_serial_manager.cpp` | Portable core: RX ring, TX queue, session handling, `update()` |
+| `ble_serial_manager_esp32.cpp` | Bluedroid backend: GATT service, advertising supervision, notifications, disconnect |
+| `ble_serial_manager_host.cpp` | Simulated backend for host unit tests (connect, subscribe, MTU, congestion, send failures) |
+| `ble_diagnostics.cpp` | Optional link diagnostics printed to USB serial (`ble diag on`) |
+| `ble_platform.h` | `BLE_SERIAL_HW` switch selecting the backend |
 
 ```cpp
 class BleSerialManager {
 public:
-    BleSerialManager();
+    void begin(const char *customName = nullptr);
+    void update(unsigned long nowMs = 0);       // main loop
 
-    void begin(const char *deviceName = nullptr);
-    void update();
-
-    // Connection state
     bool isConnected() const;
+    bool isSubscribed() const;                  // client enabled notifications (CCCD)
     uint16_t getMtu() const;
 
-    // Stream write operations
+    // Queued output (main loop only)
     void write(const uint8_t *data, size_t length);
     void print(const char *str);
     void println(const char *str = "");
+    void printFormat(const char *fmt, ...);
+    void disconnect();                          // after queued output drains
 
-    // Inbound command callback hook
-    typedef void (*BleLineReceivedCallback)(const char *line, void *context);
-    void setLineReceivedCallback(BleLineReceivedCallback cb, void *context);
-
-    // Connection event listeners (for UI icon updates)
-    typedef void (*BleConnectionCallback)(bool connected, void *context);
+    // Called from update() with contiguous runs of received bytes
+    void setDataReceivedCallback(BleDataReceivedCallback cb, void *context);
+    // Called from update(); state-based (one call if the link drops and returns between updates)
     void setConnectionCallback(BleConnectionCallback cb, void *context);
 };
 ```
+
+**Threading:** Bluedroid callbacks run on the Bluetooth (BTC) task; everything else runs on the main loop. Shared flags (`connected_`, `subscribed_`, `congested_`, MTU, session counter) are `std::atomic`. The RX ring is single-producer (Bluetooth task) / single-consumer (main loop) with free-running indices; only the main loop moves the read index. On connect, the Bluetooth task records the write index, and the main loop skips any older bytes. The TX queue is touched only by the main loop. Connection callbacks are dispatched from `update()`, so UI drawing never happens on the Bluetooth task.
+
+**Line editing:** `SerialCli` keeps one `LineBuffer` per transport (`src/protocol/line_buffer.h`). USB echoes keystrokes; BLE does not. When the BLE link changes state, the partial BLE line is discarded and replies return to USB.
 
 ---
 

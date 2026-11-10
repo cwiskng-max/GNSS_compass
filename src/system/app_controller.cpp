@@ -322,6 +322,7 @@ void AppController::redrawMainScreen() {
 
 void AppController::handleBleConnectionChanged(bool connected) {
     bleConnected_ = connected;
+    serialCli_.handleBleConnectionChanged(connected);
     if (currentUiMode_ == UiMode::Normal) {
         displayUi_.renderBleStatus(connected);
     }

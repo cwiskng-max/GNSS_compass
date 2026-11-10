@@ -9,6 +9,7 @@
 #include "../ui/rover_card.h"
 #include "../system/rover_log_manager.h"
 #include "ble_serial_manager.h"
+#include "line_buffer.h"
 
 // Forward declaration of listener callback types
 typedef void (*CliCommandOutputFn)(const char *str, void *context);
@@ -62,7 +63,9 @@ public:
 
     // Ingest data from wireless BLE connection
     void handleBleInput(const char *data, size_t len, unsigned long nowMs = 0);
-    void handleBleChar(char c, unsigned long nowMs = 0);
+
+    // BLE link came up or went down: drop any partial BLE input line and send replies to USB
+    void handleBleConnectionChanged(bool connected);
 
     // Directly execute a command line (from serial stream, BLE, scripts, or unit tests)
     void executeCommand(const char *cmdLine, unsigned long nowMs = 0, CliSource source = CLI_SOURCE_USB);
@@ -71,10 +74,17 @@ public:
     void setBleManager(BleSerialManager *mgr);
     BleSerialManager* getBleManager() const { return bleManager_; }
 
+    // Source of the most recent command; print() replies go there. Reset to USB when the
+    // BLE link changes state.
     CliSource getActiveSource() const { return activeSource_; }
     void setActiveSource(CliSource src) { activeSource_ = src; }
 
-    // Broadcast messages (sends to USB and connected BLE simultaneously)
+    // Output routing:
+    //   - print()/println()/printFormat() (private) reply to whoever sent the current command.
+    //     BLE replies are mirrored to the USB console.
+    //   - broadcast*() goes to the USB console and to the BLE client if one is connected.
+    // An output handler set with setOutputHandler() replaces the USB console (Serial/stdout)
+    // in both cases; BLE delivery is unaffected.
     void broadcast(const char *str);
     void broadcastln(const char *str = "");
     void broadcastFormat(const char *fmt, ...);
@@ -136,6 +146,12 @@ private:
     void print(const char *str);
     void println(const char *str = "");
     void printFormat(const char *fmt, ...);
+    void consoleWrite(const char *str);
+    static void printSink(const char *str, void *ctx);
+    static void broadcastSink(const char *str, void *ctx);
+
+    void registerGpsCallbacks();
+    void attachBle();
 
     void handleSimCommand(const char *arg, unsigned long nowMs);
     void handleCalCommand(const char *arg);
@@ -173,9 +189,7 @@ private:
     void *outputContext_;
 
     bool pendingRoverClear_;
-    char inputBuffer_[256];
-    size_t inputIndex_;
-    char bleInputBuffer_[256];
-    size_t bleInputIndex_;
+    LineBuffer usbLine_;
+    LineBuffer bleLine_;
 };
 

@@ -91,8 +91,12 @@
 #define LOC_Y                35
 
 // Bluetooth Status Indicator Icon (Row 1 right flank)
-#define BLE_ICON_X           348
-#define BLE_ICON_Y           44
+#define BLE_ICON_X           348   // x of the rune's vertical spine
+#define BLE_ICON_Y           44    // top of the spine
+#define BLE_ICON_H           14    // spine height
+#define BLE_ICON_ARM         4     // width of the right-hand chevrons (drawn at 45 degrees)
+#define BLE_ICON_WING        3     // width of the left-hand wings
+#define BLE_ICON_PAD         2     // extra margin cleared around the glyph
 
 // Row 2: Target Grid
 #define REMSIZE              8

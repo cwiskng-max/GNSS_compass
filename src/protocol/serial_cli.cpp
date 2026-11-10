@@ -1,6 +1,7 @@
 #include "serial_cli.h"
 #include "../geo/geo_math.h"
 #include "../geo/maidenhead.h"
+#include "text_output.h"
 #include <cstdio>
 #include <cstdarg>
 #include <cstring>
@@ -56,13 +57,13 @@ SerialCli::SerialCli(GpsManager &gpsManager, Calibration &calibration, GpsSimula
       roverActionContext_(nullptr),
       outputFn_(nullptr),
       outputContext_(nullptr),
-      pendingRoverClear_(false),
-      inputIndex_(0),
-      bleInputIndex_(0)
+      pendingRoverClear_(false)
 {
-    inputBuffer_[0] = '\0';
-    bleInputBuffer_[0] = '\0';
+    registerGpsCallbacks();
+    attachBle();
+}
 
+void SerialCli::registerGpsCallbacks() {
     gpsManager_.setOnResponse([](const char *resp, void *ctx) {
         auto *self = static_cast<SerialCli*>(ctx);
         if (self && !self->gpsManager_.getConfigPipeline().isRunning()) {
@@ -86,50 +87,30 @@ SerialCli::SerialCli(GpsManager &gpsManager, Calibration &calibration, GpsSimula
 }
 
 void SerialCli::begin() {
-    inputIndex_ = 0;
-    inputBuffer_[0] = '\0';
-    bleInputIndex_ = 0;
-    bleInputBuffer_[0] = '\0';
+    usbLine_.clear();
+    bleLine_.clear();
     pendingRoverClear_ = false;
     activeSource_ = CLI_SOURCE_USB;
+}
 
-    gpsManager_.setOnResponse([](const char *resp, void *ctx) {
-        auto *self = static_cast<SerialCli*>(ctx);
-        if (self && !self->gpsManager_.getConfigPipeline().isRunning()) {
-            self->broadcastFormat("[GPS RX] %s\r\n", resp);
-        }
+void SerialCli::attachBle() {
+    if (!bleManager_) return;
+    bleManager_->setDataReceivedCallback([](const char *data, size_t len, void *ctx) {
+        static_cast<SerialCli*>(ctx)->handleBleInput(data, len);
     }, this);
-
-    gpsManager_.getConfigPipeline().setOnProgress([](ConfigStep, ConfigPipelineState, const char *msg, void *ctx) {
-        auto *self = static_cast<SerialCli*>(ctx);
-        if (self && msg && msg[0] != '\0') {
-            self->broadcastln(msg);
-        }
-    }, this);
-
-    gpsManager_.setOnProbeResult([](GpsTxState, const char *msg, void *ctx) {
-        auto *self = static_cast<SerialCli*>(ctx);
-        if (self && msg && msg[0] != '\0') {
-            self->broadcastln(msg);
-        }
-    }, this);
-
-    if (bleManager_) {
-        bleManager_->setDataReceivedCallback([](const char *data, size_t len, void *ctx) {
-            auto *cli = static_cast<SerialCli*>(ctx);
-            cli->handleBleInput(data, len);
-        }, this);
-    }
 }
 
 void SerialCli::setBleManager(BleSerialManager *mgr) {
     bleManager_ = mgr;
-    if (bleManager_) {
-        bleManager_->setDataReceivedCallback([](const char *data, size_t len, void *ctx) {
-            auto *cli = static_cast<SerialCli*>(ctx);
-            cli->handleBleInput(data, len);
-        }, this);
-    }
+    attachBle();
+}
+
+void SerialCli::handleBleConnectionChanged(bool connected) {
+    (void)connected;
+    // A partial line from the previous session must not prefix the next client's first command,
+    // and replies to later asynchronous output should no longer target the old BLE session.
+    bleLine_.clear();
+    activeSource_ = CLI_SOURCE_USB;
 }
 
 void SerialCli::setOriginGrid(const char *grid) {
@@ -166,97 +147,62 @@ double SerialCli::getRoverDistance() const {
     return getNavContext().roverDistanceMeters;
 }
 
-void SerialCli::print(const char *str) {
-    if (!str) return;
+void SerialCli::consoleWrite(const char *str) {
     if (outputFn_) {
         outputFn_(str, outputContext_);
-    } else {
-        if (activeSource_ == CLI_SOURCE_BLE && bleManager_) {
-            bleManager_->print(str);
-#if defined(ARDUINO)
-            Serial.print(str); // Mirror to USB CDC for live monitoring
-#else
-            std::cout << str;
-#endif
-        } else {
-#if defined(ARDUINO)
-            Serial.print(str);
-#else
-            std::cout << str;
-#endif
-        }
-    }
-}
-
-void SerialCli::println(const char *str) {
-    if (!str || str[0] == '\0') {
-        print("\r\n");
         return;
-    }
-    char buf[384];
-    size_t len = std::strlen(str);
-    if (len + 3 <= sizeof(buf)) {
-        std::memcpy(buf, str, len);
-        buf[len] = '\r';
-        buf[len + 1] = '\n';
-        buf[len + 2] = '\0';
-        print(buf);
-    } else {
-        print(str);
-        print("\r\n");
-    }
-}
-
-void SerialCli::printFormat(const char *fmt, ...) {
-    char buf[512];
-    va_list args;
-    va_start(args, fmt);
-    vsnprintf(buf, sizeof(buf), fmt, args);
-    va_end(args);
-    print(buf);
-}
-
-void SerialCli::broadcast(const char *str) {
-    if (!str) return;
-    if (outputFn_) {
-        outputFn_(str, outputContext_);
     }
 #if defined(ARDUINO)
     Serial.print(str);
 #else
     std::cout << str;
 #endif
+}
+
+void SerialCli::print(const char *str) {
+    if (!str) return;
+    if (activeSource_ == CLI_SOURCE_BLE && bleManager_) {
+        bleManager_->print(str);
+    }
+    consoleWrite(str); // USB reply, or mirror of a BLE reply for live monitoring
+}
+
+void SerialCli::printSink(const char *str, void *ctx) {
+    static_cast<SerialCli*>(ctx)->print(str);
+}
+
+void SerialCli::println(const char *str) {
+    textout::println(printSink, this, str);
+}
+
+void SerialCli::printFormat(const char *fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+    textout::vprintFormat(printSink, this, fmt, args);
+    va_end(args);
+}
+
+void SerialCli::broadcast(const char *str) {
+    if (!str) return;
+    consoleWrite(str);
     if (bleManager_ && bleManager_->isConnected()) {
         bleManager_->print(str);
     }
 }
 
+void SerialCli::broadcastSink(const char *str, void *ctx) {
+    static_cast<SerialCli*>(ctx)->broadcast(str);
+}
+
 void SerialCli::broadcastln(const char *str) {
-    if (!str || str[0] == '\0') {
-        broadcast("\r\n");
-        return;
-    }
-    char buf[384];
-    size_t len = std::strlen(str);
-    if (len + 3 <= sizeof(buf)) {
-        std::memcpy(buf, str, len);
-        buf[len] = '\r';
-        buf[len + 1] = '\n';
-        buf[len + 2] = '\0';
-        broadcast(buf);
-    } else {
-        broadcast(str);
-        broadcast("\r\n");
-    }
+    textout::println(broadcastSink, this, str);
 }
 
 void SerialCli::broadcastFormat(const char *fmt, ...) {
-    char buf[512];
     va_list args;
     va_start(args, fmt);
-    vsnprintf(buf, sizeof(buf), fmt, args);
+    textout::vprintFormat(broadcastSink, this, fmt, args);
     va_end(args);
-    broadcast(buf);
 }
 
 void SerialCli::handleBleInput(const char *data, size_t len, unsigned long nowMs) {
@@ -265,24 +211,9 @@ void SerialCli::handleBleInput(const char *data, size_t len, unsigned long nowMs
     if (!nowMs) nowMs = millis();
 #endif
     for (size_t i = 0; i < len; ++i) {
-        handleBleChar(data[i], nowMs);
-    }
-}
-
-void SerialCli::handleBleChar(char c, unsigned long nowMs) {
-    if (c == '\r' || c == '\n') {
-        if (bleInputIndex_ > 0) {
-            bleInputBuffer_[bleInputIndex_] = '\0';
-            executeCommand(bleInputBuffer_, nowMs, CLI_SOURCE_BLE);
-            bleInputIndex_ = 0;
-        }
-    } else if (c == '\b' || c == 127) { // Backspace or DEL
-        if (bleInputIndex_ > 0) {
-            bleInputIndex_--;
-        }
-    } else if (bleInputIndex_ < sizeof(bleInputBuffer_) - 1) {
-        if (c >= 32 && c <= 126) {
-            bleInputBuffer_[bleInputIndex_++] = c;
+        if (bleLine_.feed(data[i]) == LineBuffer::LineReady) {
+            executeCommand(bleLine_.c_str(), nowMs, CLI_SOURCE_BLE);
+            bleLine_.clear();
         }
     }
 }
@@ -296,27 +227,24 @@ void SerialCli::update(unsigned long nowMs) {
     if (!nowMs) nowMs = millis();
     while (Serial.available()) {
         char c = (char)Serial.read();
-        if (c == '\r' || c == '\n') {
-            if (inputIndex_ > 0) {
-                if (inputBuffer_[0] != '$') {
+        // Raw sentence injection lines ("$...") are not echoed
+        bool echo = usbLine_.empty() ? (c != '$') : (usbLine_.c_str()[0] != '$');
+        switch (usbLine_.feed(c)) {
+            case LineBuffer::Appended:
+                if (echo) Serial.write(c); // Terminal echo
+                break;
+            case LineBuffer::Erased:
+                Serial.print("\b \b");
+                break;
+            case LineBuffer::LineReady:
+                if (usbLine_.c_str()[0] != '$') {
                     Serial.println(); // Terminal newline echo for interactive commands
                 }
-                inputBuffer_[inputIndex_] = '\0';
-                executeCommand(inputBuffer_, nowMs, CLI_SOURCE_USB);
-                inputIndex_ = 0;
-            }
-        } else if (c == '\b' || c == 127) { // Backspace or DEL
-            if (inputIndex_ > 0) {
-                inputIndex_--;
-                Serial.print("\b \b");
-            }
-        } else if (inputIndex_ < sizeof(inputBuffer_) - 1) {
-            if (c >= 32 && c <= 126) {
-                inputBuffer_[inputIndex_++] = c;
-                if (inputBuffer_[0] != '$') {
-                    Serial.write(c); // Terminal echo
-                }
-            }
+                executeCommand(usbLine_.c_str(), nowMs, CLI_SOURCE_USB);
+                usbLine_.clear();
+                break;
+            case LineBuffer::Ignored:
+                break;
         }
     }
 #else
@@ -424,9 +352,11 @@ void SerialCli::executeCommand(const char *cmdLine, unsigned long nowMs, CliSour
                         bleManager_->isConnected() ? "yes" : "no",
                         bleManager_->isSubscribed() ? "yes" : "no",
                         (unsigned)bleManager_->getMtu());
-#if defined(ARDUINO)
             printFormat("[BLE] Advertising: %s\r\n", bleManager_->isAdvertising() ? "yes" : "no");
-#endif
+            printFormat("[BLE] TX queue: %u / %u bytes | Dropped: %lu bytes | Send retries: %lu\r\n",
+                        (unsigned)bleManager_->getTxQueued(), (unsigned)bleManager_->getTxCapacity(),
+                        (unsigned long)bleManager_->getTxDroppedBytes(),
+                        (unsigned long)bleManager_->getTxRetries());
             printFormat("[BLE] Diagnostics: %s\r\n", bleManager_->isDiagEnabled() ? "on" : "off");
         } else {
             println("Usage: ble [status] | ble diag on|off");

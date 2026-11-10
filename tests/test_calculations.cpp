@@ -1,5 +1,6 @@
 #include <iostream>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <string>
 #include "../src/types.h"
@@ -20,6 +21,8 @@
 #include "../src/system/app_controller.h"
 #include "../src/system/rover_log_manager.h"
 #include "../src/protocol/ble_serial_manager.h"
+#include "../src/protocol/line_buffer.h"
+#include "../src/protocol/text_output.h"
 #include "../src/system/self_test.h"
 
 int tests_run = 0;
@@ -1492,6 +1495,7 @@ void test_serial_cli_gps_commands() {
     // 11. BLE Wireless transport execution
     cli.setOutputHandler(nullptr, nullptr);
     ble.setConnected(true);
+    ble.setSubscribed(true);
     ble.clearTxBuffer();
     ble.simulateRx("gps probe\r\n", 11);
     ASSERT_TRUE(cli.getActiveSource() == CLI_SOURCE_BLE);
@@ -1506,6 +1510,7 @@ void test_serial_cli_gps_commands() {
     ble.simulateRx("ble\r\n", 5);
     ASSERT_TRUE(ble.getTxBuffer().find("Connected: yes") != std::string::npos);
     ASSERT_TRUE(ble.getTxBuffer().find("Diagnostics: on") != std::string::npos);
+    ASSERT_TRUE(ble.getTxBuffer().find("TX queue:") != std::string::npos);
     ble.simulateRx("ble diag off\r\n", 14);
     ASSERT_TRUE(!ble.isDiagEnabled());
 
@@ -3316,24 +3321,53 @@ void test_ble_serial_manager() {
     ASSERT_TRUE(!ble.isSubscribed());
     ble.begin("Compass-Test");
     ASSERT_STR_EQ(ble.getDeviceName(), "Compass-Test");
+    ASSERT_TRUE(ble.isAdvertising());
 
     bool connState = false;
+    int connCalls = 0;
+    struct ConnCapture { bool *state; int *calls; } capture{&connState, &connCalls};
     ble.setConnectionCallback([](bool connected, void *ctx) {
-        *static_cast<bool*>(ctx) = connected;
-    }, &connState);
+        auto *c = static_cast<ConnCapture*>(ctx);
+        *c->state = connected;
+        (*c->calls)++;
+    }, &capture);
 
     ble.setConnected(true);
     ASSERT_TRUE(ble.isConnected());
-    ASSERT_TRUE(ble.isSubscribed());
+    ASSERT_TRUE(!ble.isAdvertising());
     ASSERT_TRUE(connState == true);
+    ASSERT_TRUE(connCalls == 1);
 
+    // Connected but not yet subscribed (client still discovering services): output is dropped
+    ASSERT_TRUE(!ble.isSubscribed());
+    ble.println("too early");
+    ble.update(0);
+    ASSERT_TRUE(ble.getTxBuffer().empty());
+    ASSERT_TRUE(ble.getTxQueued() == 0);
+
+    ble.setSubscribed(true);
+    ASSERT_TRUE(ble.isSubscribed());
+
+    // Output is queued and only sent from update()
     ble.print("Hello ");
     ble.println("BLE");
+    ASSERT_TRUE(ble.getTxBuffer().empty());
+    ASSERT_TRUE(ble.getTxQueued() == 11);
+    ble.update(0);
     ASSERT_STR_EQ(ble.getTxBuffer().c_str(), "Hello BLE\r\n");
+    ASSERT_TRUE(ble.getTxQueued() == 0);
 
     ble.clearTxBuffer();
     ble.printFormat("Value: %d", 42);
+    ble.update(0);
     ASSERT_STR_EQ(ble.getTxBuffer().c_str(), "Value: 42");
+
+    // Long formatted output is not truncated
+    ble.clearTxBuffer();
+    std::string longArg(700, 'x');
+    ble.printFormat("<%s>", longArg.c_str());
+    ble.flushTx();  // 702 bytes at 20 bytes per notification takes several updates
+    ASSERT_TRUE(ble.getTxBuffer() == "<" + longArg + ">");
 
     std::string receivedData;
     ble.setDataReceivedCallback([](const char *data, size_t len, void *ctx) {
@@ -3343,14 +3377,39 @@ void test_ble_serial_manager() {
     ble.simulateRx("status\n", 7);
     ASSERT_STR_EQ(receivedData.c_str(), "status\n");
 
+    // RX bytes left over from a previous session are discarded on reconnect
+    receivedData.clear();
+    ble.setDataReceivedCallback(nullptr, nullptr);
+    ble.handleRxData("stale", 5);          // arrives, but is not drained before the link drops
+    ble.handleDisconnect();
+    ble.handleConnect(1);
+    ble.handleRxData("fresh\n", 6);
+    ble.setDataReceivedCallback([](const char *data, size_t len, void *ctx) {
+        static_cast<std::string*>(ctx)->append(data, len);
+    }, &receivedData);
+    connCalls = 0;
+    ble.update(0);
+    ASSERT_STR_EQ(receivedData.c_str(), "fresh\n");
+    // Disconnect + reconnect between two updates yields one state-based callback
+    ASSERT_TRUE(connCalls == 1);
+    ASSERT_TRUE(connState == true);
+
     ble.setConnected(false);
     ASSERT_TRUE(!ble.isConnected());
+    ASSERT_TRUE(!ble.isSubscribed());
     ASSERT_TRUE(connState == false);
 
-    // Verify disconnect() helper
+    // disconnect() waits for queued output to be sent before dropping the link
     ble.setConnected(true);
-    ASSERT_TRUE(ble.isConnected());
+    ble.setSubscribed(true);
+    ble.clearTxBuffer();
+    ble.println("bye");
     ble.disconnect();
+    ble.print("after disconnect request");  // ignored once a disconnect is pending
+    ble.update(1000);
+    ASSERT_STR_EQ(ble.getTxBuffer().c_str(), "bye\r\n");
+    ASSERT_TRUE(ble.isConnected());          // grace period for the last notification
+    ble.update(1200);
     ASSERT_TRUE(!ble.isConnected());
 
     // RF diagnostics flag defaults off and toggles
@@ -3359,6 +3418,167 @@ void test_ble_serial_manager() {
     ASSERT_TRUE(ble.isDiagEnabled());
     ble.setDiagEnabled(false);
     ASSERT_TRUE(!ble.isDiagEnabled());
+
+    PASS();
+}
+
+void test_ble_tx_queue() {
+    TEST("BleSerialManager TX queue: MTU chunking, backoff, congestion, overflow, disconnect");
+
+    BleSerialManager ble;
+    ble.begin("Queue-Test");
+    ble.setConnected(true);
+    ble.setSubscribed(true);
+
+    // Default MTU 23 -> 20-byte notifications
+    std::string payload;
+    for (int i = 0; i < 100; ++i) payload += static_cast<char>('A' + (i % 26));
+    ble.print(payload.c_str());
+    ble.update(0);
+    ASSERT_TRUE(ble.getTxBuffer() == payload);
+    ASSERT_TRUE(ble.getNotifyCount() == 5);
+    ASSERT_TRUE(ble.getMaxNotifySize() == 20);
+
+    // Negotiated MTU is reported right away and caps notifications at 244 bytes
+    ble.setMtu(512);
+    ASSERT_TRUE(ble.getMtu() == 512);
+    ble.clearTxBuffer();
+    std::string big(1000, 'm');
+    ble.print(big.c_str());
+    ble.update(0);
+    ASSERT_TRUE(ble.getTxBuffer() == big);
+    ASSERT_TRUE(ble.getMaxNotifySize() == 244);
+
+    // A rejected send backs off and retries the same chunk later, without losing data
+    ble.clearTxBuffer();
+    ble.failNextSends(1);
+    ble.print("retry me");
+    ble.update(100);
+    ASSERT_TRUE(ble.getTxBuffer().empty());
+    ASSERT_TRUE(ble.getTxRetries() == 1);
+    ble.update(105);                         // still inside the backoff window
+    ASSERT_TRUE(ble.getTxBuffer().empty());
+    ble.update(130);
+    ASSERT_STR_EQ(ble.getTxBuffer().c_str(), "retry me");
+
+    // Congestion pauses sending until the stack clears it
+    ble.clearTxBuffer();
+    ble.setCongested(true);
+    ble.print("held");
+    ble.update(200);
+    ASSERT_TRUE(ble.getTxBuffer().empty());
+    ble.setCongested(false);
+    ble.update(210);
+    ASSERT_STR_EQ(ble.getTxBuffer().c_str(), "held");
+
+    // A ~100-line dump fits in the queue and drains over several updates
+    ble.clearTxBuffer();
+    std::string dump;
+    char line[96];
+    for (int i = 0; i < 100; ++i) {
+        std::snprintf(line, sizeof(line), "%3d | FN31pr | 2026-11-10 12:00 | 123.4 km | qualified stop", i);
+        ble.println(line);
+        dump += line;
+        dump += "\r\n";
+    }
+    ASSERT_TRUE(dump.size() > 6000);
+    ASSERT_TRUE(ble.getTxDroppedBytes() == 0);
+    ASSERT_TRUE(ble.getTxQueued() == dump.size());
+    for (int i = 0; i < 20 && ble.getTxQueued() > 0; ++i) ble.update(300 + i);
+    ASSERT_TRUE(ble.getTxBuffer() == dump);
+
+    // Overflow: writes are dropped until the queue drains, then one notice is sent
+    ble.clearTxBuffer();
+    std::string block(5000, 'q');
+    ble.print(block.c_str());
+    ble.print(block.c_str());
+    ble.print(block.c_str());   // does not fit (15000 > 12288)
+    ble.print("x");             // dropped too: queue has not drained yet
+    ASSERT_TRUE(ble.getTxDroppedBytes() == 5001);
+    for (int i = 0; i < 30; ++i) ble.update(400 + i);
+    ASSERT_TRUE(ble.getTxBuffer().find(block + block) == 0);
+    ASSERT_TRUE(ble.getTxBuffer().find("5001 bytes of output dropped") != std::string::npos);
+    ASSERT_TRUE(ble.getTxQueued() == 0);
+    ble.clearTxBuffer();
+    ble.print("ok");
+    ble.update(500);
+    ASSERT_STR_EQ(ble.getTxBuffer().c_str(), "ok");
+
+    // Queued output is discarded when the link drops
+    ble.clearTxBuffer();
+    ble.setCongested(true);
+    ble.print("never sent");
+    ble.setConnected(false);
+    ASSERT_TRUE(ble.getTxQueued() == 0);
+    ble.setConnected(true);
+    ble.setSubscribed(true);
+    ble.update(600);
+    ASSERT_TRUE(ble.getTxBuffer().empty());
+
+    PASS();
+}
+
+void test_ble_diagnostics_and_text_helpers() {
+    TEST("BleDiagnostics event log policy, LineBuffer editing, and textout helpers");
+
+    BleDiagnostics diag;
+    std::string log;
+    diag.setLogSink([](const char *line, void *ctx) {
+        static_cast<std::string*>(ctx)->append(line);
+    }, &log);
+
+    // Disconnects are always logged; MTU only with diagnostics enabled
+    const uint8_t bda[6] = {0xaa, 0xbb, 0xcc, 0x01, 0x02, 0x03};
+    diag.push(BleDiagnostics::EVT_DISCONNECT, 0, 0, 0x13, 0, 0, bda);
+    diag.push(BleDiagnostics::EVT_MTU, 0, 0, 247);
+    diag.update(1000, nullptr);
+    ASSERT_TRUE(log.find("DISCONNECT") != std::string::npos);
+    ASSERT_TRUE(log.find("reason=0x13 (remote user terminated (clean))") != std::string::npos);
+    ASSERT_TRUE(log.find("aa:bb:cc:01:02:03") != std::string::npos);
+    ASSERT_TRUE(log.find("MTU") == std::string::npos);
+
+    log.clear();
+    diag.setEnabled(true);
+    diag.push(BleDiagnostics::EVT_MTU, 0, 0, 247);
+    diag.update(2000, nullptr);
+    ASSERT_TRUE(log.find("mtu=247") != std::string::npos);
+
+    // Queue overflow is counted and reported, never blocks
+    log.clear();
+    for (int i = 0; i < 30; ++i) diag.push(BleDiagnostics::EVT_ADV_REQUEST, 0);
+    diag.update(2100, nullptr);
+    ASSERT_TRUE(log.find("diagnostic events dropped") != std::string::npos);
+
+    // LineBuffer: printable filter, backspace, line completion
+    LineBuffer lb;
+    ASSERT_TRUE(lb.feed('\n') == LineBuffer::Ignored);
+    ASSERT_TRUE(lb.feed('a') == LineBuffer::Appended);
+    ASSERT_TRUE(lb.feed('x') == LineBuffer::Appended);
+    ASSERT_TRUE(lb.feed('\b') == LineBuffer::Erased);
+    ASSERT_TRUE(lb.feed('\x01') == LineBuffer::Ignored);
+    ASSERT_TRUE(lb.feed('b') == LineBuffer::Appended);
+    ASSERT_TRUE(lb.feed('\r') == LineBuffer::LineReady);
+    ASSERT_STR_EQ(lb.c_str(), "ab");
+    lb.clear();
+    ASSERT_TRUE(lb.empty());
+    for (int i = 0; i < 300; ++i) lb.feed('z');
+    ASSERT_TRUE(lb.length() == LineBuffer::kCapacity - 1);
+
+    // textout::println delivers text and CRLF in one sink call, even for long lines
+    struct Capture { std::string text; int calls = 0; } cap;
+    auto sink = [](const char *s, void *ctx) {
+        auto *c = static_cast<Capture*>(ctx);
+        c->text += s;
+        c->calls++;
+    };
+    textout::println(sink, &cap, "hello");
+    ASSERT_STR_EQ(cap.text.c_str(), "hello\r\n");
+    ASSERT_TRUE(cap.calls == 1);
+    cap = Capture();
+    std::string longLine(1000, 'L');
+    textout::println(sink, &cap, longLine.c_str());
+    ASSERT_TRUE(cap.text == longLine + "\r\n");
+    ASSERT_TRUE(cap.calls == 1);
 
     PASS();
 }
@@ -3375,6 +3595,7 @@ void test_serial_cli_dual_transport() {
 
     cli.begin();
     ble.setConnected(true);
+    ble.setSubscribed(true);
 
     // 1. Verify BLE execution of 'status'
     ble.clearTxBuffer();
@@ -3398,6 +3619,7 @@ void test_serial_cli_dual_transport() {
     cli.setOutputHandler(nullptr); // restore default output routing
     cli.handleBleInput("ver status\r\n", 12);
     ASSERT_TRUE(cli.getActiveSource() == CLI_SOURCE_BLE);
+    ble.flushTx();
     ASSERT_TRUE(ble.getTxBuffer().find("Rover Transit Status") != std::string::npos);
 
     // 3. Verify broadcast reaches both USB and BLE
@@ -3408,14 +3630,30 @@ void test_serial_cli_dual_transport() {
     }, &broadcastCapture);
     cli.broadcastln("SYSTEM BOOT COMPLETED");
     ASSERT_TRUE(broadcastCapture.find("SYSTEM BOOT COMPLETED\r\n") != std::string::npos);
+    ble.flushTx();
     ASSERT_TRUE(ble.getTxBuffer().find("SYSTEM BOOT COMPLETED\r\n") != std::string::npos);
 
     // 4. Verify 'disconnect' command terminates BLE connection
     cli.setOutputHandler(nullptr);
     ble.clearTxBuffer();
     cli.executeCommand("disconnect", 0, CLI_SOURCE_BLE);
-    ASSERT_TRUE(!ble.isConnected());
+    ble.update(1000);  // sends the reply, then waits briefly before dropping the link
     ASSERT_TRUE(ble.getTxBuffer().find("Disconnecting BLE connection...") != std::string::npos);
+    ble.update(1200);
+    ASSERT_TRUE(!ble.isConnected());
+
+    // 5. Output handler replaces the USB console for replies too, while BLE still gets them
+    ble.setConnected(true);
+    ble.setSubscribed(true);
+    ble.clearTxBuffer();
+    std::string mirror;
+    cli.setOutputHandler([](const char *s, void *ctx) {
+        static_cast<std::string*>(ctx)->append(s);
+    }, &mirror);
+    ble.simulateRx("cal\r\n", 5);
+    ASSERT_TRUE(ble.getTxBuffer().find("Antenna Calibration Status") != std::string::npos);
+    ASSERT_TRUE(mirror.find("Antenna Calibration Status") != std::string::npos);
+    cli.setOutputHandler(nullptr);
 
     PASS();
 }
@@ -3445,10 +3683,22 @@ void test_app_controller_ble_integration() {
     ASSERT_TRUE(ble.isConnected());
     ASSERT_TRUE(app.isBleConnected());
 
-    // Disconnect BLE
+    // A BLE command makes BLE the reply target; a partial line is left pending
+    ble.setSubscribed(true);
+    ble.simulateRx("cal\r\nro", 7);
+    ASSERT_TRUE(cli.getActiveSource() == CLI_SOURCE_BLE);
+
+    // Disconnect BLE: replies go back to USB and the partial line is discarded
     ble.setConnected(false);
     ASSERT_TRUE(!ble.isConnected());
     ASSERT_TRUE(!app.isBleConnected());
+    ASSERT_TRUE(cli.getActiveSource() == CLI_SOURCE_USB);
+
+    ble.setConnected(true);
+    ble.setSubscribed(true);
+    ble.clearTxBuffer();
+    ble.simulateRx("ver status\r\n", 12);  // would be "rover status" if "ro" had survived
+    ASSERT_TRUE(ble.getTxBuffer().find("Unknown command: 'ver status'") != std::string::npos);
 
     PASS();
 }
@@ -3504,6 +3754,8 @@ int main() {
     test_rover_simulation_scenarios_e2e();
     test_legacy_nmea_end_to_end();
     test_ble_serial_manager();
+    test_ble_tx_queue();
+    test_ble_diagnostics_and_text_helpers();
     test_serial_cli_dual_transport();
     test_app_controller_ble_integration();
 

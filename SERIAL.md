@@ -392,7 +392,25 @@ Terminates an active Bluetooth Low Energy session cleanly from the peripheral si
 Disconnecting BLE connection...
 ```
 
-This immediately signals the ESP32 to send a low-level `LL_TERMINATE_IND` packet, terminating any lingering background OS connection handle and restarting BLE advertising so other phones, tablets, or browser sessions can connect without needing to toggle Bluetooth.
+This makes the ESP32 send a link-layer `LL_TERMINATE_IND`, closing any lingering background OS connection handle, and then restart BLE advertising so other phones, tablets, or browser sessions can connect without needing to toggle Bluetooth. The reply is delivered first: the link is closed once queued output has been sent (at most about 2 seconds later).
+
+---
+
+### 3.8 BLE Link Status & Diagnostics (`ble`)
+
+```text
+> ble
+[BLE] Device: GNSS-Compass-71c581
+[BLE] Connected: yes | Subscribed: yes | MTU: 512
+[BLE] Advertising: no
+[BLE] TX queue: 0 / 12288 bytes | Dropped: 0 bytes | Send retries: 0
+[BLE] Diagnostics: off
+```
+
+* **Subscribed:** the client has enabled notifications. Output is only sent to a subscribed client.
+* **TX queue:** BLE output is buffered (12 KB) and sent in the background, so long reports never stall the compass. If the queue ever fills, further output is dropped until it drains, and the client sees `[BLE] N bytes of output dropped (send queue full)`. *Dropped* is the running total.
+* **Send retries:** how often the Bluetooth stack was momentarily out of buffers and a packet had to be retried. It is harmless unless it keeps climbing quickly.
+* `ble diag on|off`: prints RSSI every 3 s, main-loop stall reports, TX power, MTU, connection-parameter and congestion changes on the **USB** serial port. Connects, disconnects (with reason code) and advertising failures are always printed there.
 
 ---
 

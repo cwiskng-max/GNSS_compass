@@ -302,17 +302,27 @@ void DisplayUi::renderBleStatus(bool connected) {
     if (!gfx_) return;
     int x = BLE_ICON_X;
     int y = BLE_ICON_Y;
-    gfx_->fillRect(x - 5, y - 2, 12, 18, BLACK);
+    gfx_->fillRect(x - BLE_ICON_WING - BLE_ICON_PAD, y - BLE_ICON_PAD,
+                   BLE_ICON_WING + BLE_ICON_ARM + 1 + 2 * BLE_ICON_PAD,
+                   BLE_ICON_H + 2 * BLE_ICON_PAD, BLACK);
     if (!connected) return;
 
+    // Bluetooth rune: spine, two right-hand chevrons meeting at mid, two left-hand wings
+    const int top = y;
+    const int upper = y + BLE_ICON_ARM;
+    const int mid = y + BLE_ICON_H / 2;
+    const int lower = y + BLE_ICON_H - BLE_ICON_ARM;
+    const int bottom = y + BLE_ICON_H;
+    const int right = x + BLE_ICON_ARM;
+    const int left = x - BLE_ICON_WING;
     uint16_t color = CYAN;
-    gfx_->drawFastVLine(x, y, 14, color);
-    gfx_->drawLine(x, y, x + 4, y + 4, color);
-    gfx_->drawLine(x + 4, y + 4, x, y + 7, color);
-    gfx_->drawLine(x, y + 7, x + 4, y + 10, color);
-    gfx_->drawLine(x + 4, y + 10, x, y + 14, color);
-    gfx_->drawLine(x, y + 7, x - 3, y + 4, color);
-    gfx_->drawLine(x, y + 7, x - 3, y + 10, color);
+    gfx_->drawFastVLine(x, top, BLE_ICON_H, color);
+    gfx_->drawLine(x, top, right, upper, color);
+    gfx_->drawLine(right, upper, x, mid, color);
+    gfx_->drawLine(x, mid, right, lower, color);
+    gfx_->drawLine(right, lower, x, bottom, color);
+    gfx_->drawLine(x, mid, left, upper, color);
+    gfx_->drawLine(x, mid, left, lower, color);
 }
 
 void DisplayUi::showFooterText(const char *msg, uint16_t color) {

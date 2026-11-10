@@ -54,6 +54,10 @@ The test suite runs automatically on every push and pull request in [`.github/wo
 29. **Automated Mathematical Invariant Coverage:** Validates all geodetic projections, NMEA decoders, FreeRTOS queue bounds, and vector heading operations.
 30. **Grid Editor State (`src/ui/grid_editor.*`):** Tests target grid character rolling (INCG/DECG), cursor selection bounds clamping, and 5-second inactivity edit mode timeout.
 31. **App Controller Coordination (`src/system/app_controller.*`):** Validates whole-application state synchronization, GPS position ingest to Maidenhead grid projection, user interaction events (encoder rotation, calibration modal lifecycle, local station grid sync, and rover alert activation).
+32. **BLE Serial Manager (`src/protocol/ble_serial_manager*`):** Connection callbacks (including one state-based callback for a drop and reconnect between updates), output dropped while connected but not yet subscribed, queued output sent only from `update()`, discarding of stale RX bytes on reconnect, and `disconnect()` waiting for queued output.
+33. **BLE TX Queue:** MTU-based chunking (20 bytes at MTU 23, capped at 244), backoff and retry after a rejected send, pausing on congestion, a 100-line dump, the overflow policy (drop until drained, then one notice), and discarding queued output on disconnect.
+34. **BLE Diagnostics & Text Helpers (`ble_diagnostics.*`, `line_buffer.h`, `text_output.*`):** Always-on versus `diag on` logging, diagnostic queue overflow reporting, line editing, and single-call CRLF delivery for long lines.
+35. **CLI Dual Transport & BLE Integration:** Independent USB/BLE line buffers, reply routing, broadcast, output-handler mirroring, `disconnect`, and reset of reply routing and partial BLE input when the link changes.
 
 ---
 

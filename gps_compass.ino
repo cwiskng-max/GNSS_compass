@@ -29,10 +29,12 @@ void setup() {
   Serial.print("GNSS Compass ");
   Serial.println(FW_VERSION);
   Serial.println(F("Commands: 'status' (GPS stream), 'rover' (transit tracking), 'cal' (antenna), 'sim' (simulation)"));
-  Serial.print(F("BLE Device: "));
-  Serial.println(bleSerialManager.getDeviceName());
 
   app.begin();
+
+  // The BLE name is derived from the MAC address inside app.begin()
+  Serial.print(F("BLE Device: "));
+  Serial.println(bleSerialManager.getDeviceName());
 }
 
 void loop() {

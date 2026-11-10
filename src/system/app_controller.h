@@ -122,9 +122,11 @@ public:
     Calibration& getCalibration() { return calibration_; }
     GpsSimulator& getGpsSimulator() { return gpsSimulator_; }
     SerialCli& getSerialCli() { return serialCli_; }
+    // BLE accessors used by the unit tests to check wiring and UI connection state
     BleSerialManager* getBleManager() const { return bleManager_; }
     bool isBleConnected() const { return bleConnected_; }
 
+    // Invoked (on the main loop) by BleSerialManager's connection callback
     void handleBleConnectionChanged(bool connected);
 
 private:
