@@ -1345,6 +1345,138 @@ void test_serial_cli() {
     PASS();
 }
 
+void test_serial_cli_gps_commands() {
+    TEST("SerialCli GPS commands: probe, config, send, check, and status reporting");
+    GpsManager gm;
+    Calibration cal;
+    GpsSimulator sim;
+    BleSerialManager ble;
+    SerialCli cli(gm, cal, sim, nullptr, &ble);
+    cli.begin();
+
+    std::string cliOutput;
+    cli.setOutputHandler([](const char *str, void *ctx) {
+        static_cast<std::string*>(ctx)->append(str);
+    }, &cliOutput);
+
+    std::string sentUartData;
+    gm.setTxHandler([](const uint8_t *data, size_t len, void *ctx) {
+        static_cast<std::string*>(ctx)->append(reinterpret_cast<const char*>(data), len);
+    }, &sentUartData);
+
+    // 1. Initial 'status' report with Receive-Only / Untested link
+    cli.executeCommand("status", 1000);
+    ASSERT_TRUE(cliOutput.find("GNSS Receiver Stream Diagnosis") != std::string::npos);
+    ASSERT_TRUE(cliOutput.find("Link Status:    CONNECTED (Receive-Only Mode)") != std::string::npos);
+    ASSERT_TRUE(cliOutput.find("TX Capability:  UNKNOWN") != std::string::npos);
+    ASSERT_TRUE(cliOutput.find("Config State:   NO DATA") != std::string::npos);
+    cliOutput.clear();
+
+    // 2. 'gps probe' execution
+    sentUartData.clear();
+    cli.executeCommand("gps probe", 1100);
+    ASSERT_TRUE(cliOutput.find("[GPS PROBE] Transmitting 'version'") != std::string::npos);
+    ASSERT_TRUE(gm.getTxState() == GpsTxState::Probing);
+    ASSERT_STR_EQ(sentUartData.c_str(), "version\r\n");
+    cliOutput.clear();
+
+    // 3. 'gps send' when TX is unavailable / probing (not yet confirmed)
+    cli.executeCommand("gps send version");
+    ASSERT_TRUE(cliOutput.find("[GPS] Cannot send: TX wire not connected.") != std::string::npos);
+    cliOutput.clear();
+
+    // 4. 'gps config' when TX is unavailable
+    cli.executeCommand("gps config");
+    ASSERT_TRUE(cliOutput.find("[GPS] TX wire not detected.") != std::string::npos);
+    cliOutput.clear();
+
+    // 5. 'gps check' when TX is unavailable
+    cli.executeCommand("gps check");
+    ASSERT_TRUE(cliOutput.find("[GPS] Cannot audit: TX wire not connected") != std::string::npos);
+    cliOutput.clear();
+
+    // Confirm TX by feeding <OK response
+    gm.feedSentence("<OK", 1200);
+    ASSERT_TRUE(gm.isSendAvailable());
+
+    // 6. Enhanced 'status' report when Bidirectional TX is confirmed
+    cli.executeCommand("gps status", 1300);
+    ASSERT_TRUE(cliOutput.find("Link Status:    CONNECTED (Bidirectional TX/RX Active)") != std::string::npos);
+    ASSERT_TRUE(cliOutput.find("TX Capability:  AVAILABLE") != std::string::npos);
+    cliOutput.clear();
+
+    // 7. 'gps send <command>' when TX is available
+    sentUartData.clear();
+    cli.executeCommand("gps send uniloglist com1");
+    ASSERT_TRUE(cliOutput.find("[GPS TX] Sent: 'uniloglist com1'") != std::string::npos);
+    ASSERT_STR_EQ(sentUartData.c_str(), "uniloglist com1\r\n");
+    cliOutput.clear();
+
+    // Verify response echoes to CLI via [GPS RX]
+    gm.feedSentence("<OK", 1400);
+    ASSERT_TRUE(cliOutput.find("[GPS RX] <OK") != std::string::npos);
+    cliOutput.clear();
+
+    // Empty send usage check
+    cli.executeCommand("gps send");
+    ASSERT_TRUE(cliOutput.find("[GPS ERROR] Usage: gps send") != std::string::npos);
+    cliOutput.clear();
+
+    // 8. 'gps check' / 'gps audit' query commands
+    sentUartData.clear();
+    cli.executeCommand("gps check");
+    ASSERT_TRUE(cliOutput.find("[GPS AUDIT] Querying receiver parameters") != std::string::npos);
+    ASSERT_TRUE(sentUartData.find("MODE\r\n") != std::string::npos);
+    ASSERT_TRUE(sentUartData.find("UNILOGLIST COM1\r\n") != std::string::npos);
+    ASSERT_TRUE(sentUartData.find("CONFIG SIGNALGROUP\r\n") != std::string::npos);
+    ASSERT_TRUE(sentUartData.find("CONFIG HEADING\r\n") != std::string::npos);
+    cliOutput.clear();
+
+    // 9. 'gps config' execution and progress mirroring
+    sentUartData.clear();
+    cli.executeCommand("gps config", 2000);
+    ASSERT_TRUE(cliOutput.find("[GPS CONFIG] Initiating configuration pipeline") != std::string::npos);
+    ASSERT_TRUE(cliOutput.find("[GPS CONFIG] Starting receiver configuration...") != std::string::npos);
+    ASSERT_TRUE(gm.getConfigPipeline().isRunning());
+    cliOutput.clear();
+
+    // Advance pipeline step-by-step and verify CLI output
+    gm.feedSentence("<OK", 2050); // MODE -> SIGNALGROUP
+    gm.feedSentence("<OK", 2100); // SIGNALGROUP -> UNLOG
+    gm.feedSentence("<OK", 2150); // UNLOG -> KSXT
+    gm.feedSentence("<OK", 2200); // KSXT -> SAVECONFIG
+    gm.feedSentence("<OK", 2250); // SAVECONFIG -> VerifyStream
+    ASSERT_TRUE(cliOutput.find("[GPS CONFIG] Settings saved. Verifying KSXT 5 Hz stream...") != std::string::npos);
+    cliOutput.clear();
+
+    // Complete stream verification
+    char ksxtSentence[256];
+    GpsSimulator::generateKsxt(ksxtSentence, sizeof(ksxtSentence),
+                              "20261109120000.00", 37.7749, -122.4194,
+                              90.0, BEARING_FIXED);
+    gm.feedSentence(ksxtSentence, 2300);
+    ASSERT_TRUE(cliOutput.find("[GPS CONFIG] Complete! Receiver configured at 5 Hz KSXT.") != std::string::npos);
+    cliOutput.clear();
+
+    // 10. 'gps config baseline 101.6 2.5' syntax
+    gm.getConfigPipeline().reset();
+    cli.executeCommand("gps config baseline 101.6 2.5", 3000);
+    ASSERT_TRUE(cliOutput.find("Baseline: 101.6 cm, Tol: 2.5 cm") != std::string::npos);
+    ASSERT_NEAR(gm.getConfigPipeline().getBaselineCm(), 101.6f, 1e-4);
+    ASSERT_NEAR(gm.getConfigPipeline().getToleranceCm(), 2.5f, 1e-4);
+    cliOutput.clear();
+
+    // 11. BLE Wireless transport execution
+    cli.setOutputHandler(nullptr, nullptr);
+    ble.setConnected(true);
+    ble.clearTxBuffer();
+    ble.simulateRx("gps probe\r\n", 11);
+    ASSERT_TRUE(cli.getActiveSource() == CLI_SOURCE_BLE);
+    ASSERT_TRUE(ble.getTxBuffer().find("[GPS PROBE] Transmitting 'version'") != std::string::npos);
+
+    PASS();
+}
+
 void test_input_manager_hit_testing() {
     TEST("InputManager touch hit-testing and grid character translation");
 
@@ -3303,6 +3435,7 @@ int main() {
     test_gps_tx_discovery();
     test_gps_config_pipeline();
     test_serial_cli();
+    test_serial_cli_gps_commands();
     test_input_manager_hit_testing();
     test_input_manager_gestures();
     test_ui_formatters_and_modal_geometry();

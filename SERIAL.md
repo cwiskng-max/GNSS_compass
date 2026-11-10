@@ -94,7 +94,11 @@ Displays a summary of available serial commands.
 > help
 
 === GNSS Compass Serial Commands ===
-  status (or gps)       - Live GNSS receiver stream diagnostic
+  status (or gps)       - Live GNSS receiver stream & link diagnostic
+  gps probe             - Test bidirectional TX connection to UM982
+  gps config [baseline] - Run automated 5 Hz $KSXT receiver setup
+  gps send <command>    - Send raw command to UM982 receiver
+  gps check (or audit)  - Query receiver running parameters
   rover [status|start|stop|history|undo|max|clear] - Rover transit tracking
   test (or demo)        - Run visual display self-test demo
   cal [snap|zero|<val>] - View or configure antenna calibration
@@ -108,42 +112,121 @@ Displays a summary of available serial commands.
 ---
 
 ### 3.2 GNSS Stream Diagnostics (`status`, `gps`, `diag`, `s`, `g`)
-Inspects the live incoming UART stream from the Unicore UM982 GNSS receiver (`Serial2` / GPIO 44). Outputs byte counters, packet reception rates, fix conditions, and a link health verdict.
+Inspects the live incoming UART stream from the Unicore UM982 GNSS receiver (`Serial2` / GPIO 44). Outputs bidirectional link status, TX discovery capability, configuration health, byte counters, packet reception rates, fix conditions, and a link health verdict.
 
-#### Example: Normal / RTK Fixed Lock
+#### Example: Normal / RTK Fixed Lock with Bidirectional Link
 ```text
 > status
 
-=== GNSS Link Diagnostic Report ===
+========================================
+     GNSS Receiver Stream Diagnosis     
+========================================
+Link Status:    CONNECTED (Bidirectional TX/RX Active)
+TX Capability:  AVAILABLE (UM982 command responses confirmed)
+Config State:   OPTIMAL ($KSXT streaming at 5.0 Hz, legacy unlogged)
 Physical Link:  CONNECTED (Hardware Serial Link Active)
 Total Bytes:    48291 (last byte 12 ms ago)
 
 Message Streams:
-  - $GNGLL (Position):   14 pkts (last 0.8s ago)
-  - $KSXT (Dual-Ant):    28 pkts (last 34 ms ago)
-  - $GNHDT/$THS:         0 pkts
+  - $GNGLL (Position):   0 pkts (never)
+  - $KSXT  (Navigation): 280 pkts (last 0.2s ago)
+  - $HDT   (Heading):    0 pkts (never)
 
-Fix Status:
-  - Time:                23:42 UTC
-  - Position:            LOCKED (Grid: CM87wa92)
-  - Dual-Antenna Heading:RTK FIXED (Pure White - High Precision)
+Data Fix Status:
+  - Coordinates:         37.77490, -122.41940 (Grid: CM87wa92)
+  - Dual-Antenna Heading: RTK FIXED (Pure White - High Precision)
 
 Overall Verdict:        [PASS] FULLY OPERATIONAL (RTK Fixed)
-====================================
+========================================
 ```
 
 #### Diagnostic Verdicts & Troubleshooting
 | Verdict | Cause | Suggested Action |
 | :--- | :--- | :--- |
 | **`[PASS] FULLY OPERATIONAL (RTK Fixed)`** | Normal high-precision dual-antenna RTK heading. | None — operational. |
-| **`[WARN] RTK HEADING FLOAT`** | Carrier phase ambiguity unresolved (obstructed sky view or multipath). | Check for local obstructions or RF reflections near antennas. |
-| **`[WARN] HEADING ACQUIRING`** | Position fix acquired, waiting for dual-antenna baseline carrier lock. | Allow 10–30 seconds with clear view of the sky. |
-| **`[FAIL] NO GNSS DATA`** | No bytes received across UART in > 3000 ms. | 1. Verify 4-pin GX12 cable is plugged in.<br>2. Check 5V power to receiver enclosure.<br>3. Check RX/TX wiring. |
-| **`[FAIL] CORRUPTED DATA STREAM`** | Bytes received, but no valid NMEA/Unicore packets decoded. | Check receiver baud rate (must match 115,200 baud). |
+| **`[PASS - WARN] OPERATIONAL (RTK Float)`** | Carrier phase ambiguity unresolved (obstructed sky view or multipath). | Check for local obstructions or RF reflections near antennas. |
+| **`[WAIT] POSITION LOCKED, WAITING FOR HEADING BASELINE`** | Position fix acquired, waiting for dual-antenna baseline carrier lock. | Allow 10–30 seconds with clear view of the sky. |
+| **`[FAIL] NO GPS DATA STREAM DETECTED`** | No bytes received across UART in > 3000 ms. | 1. Verify GX12 cable is plugged in.<br>2. Check 5V / 12V power to receiver enclosure.<br>3. Check RX pin (GPIO 44) wiring to UM982 TX. |
+| **`[FAIL] FRAMING / BAUD RATE MISMATCH`** | Bytes received, but no valid NMEA/Unicore packets decoded. | Check receiver baud rate (must match 115,200 baud 8N1). |
 
 ---
 
-### 3.3 Visual Display Self-Test (`test`, `demo`, `t`)
+### 3.3 GNSS Transmitter Discovery & Configuration Commands (`gps`)
+
+When the ESP32 transmitter line (GPIO 43) is wired to the UM982 receiver's COM1 RX line (via a 4-pin GX12 connector or internal jumper), the compass can probe transmitter presence, configure the receiver in-system, and query runtime parameters without disassembling the receiver enclosure or plugging into a computer:
+
+```mermaid
+flowchart LR
+    ESP_TX["ESP32 GPIO 43 (TX)"] -->|"TX Wire (Line 2)"| UM_RX["UM982 COM1 RX"]
+    UM_TX["UM982 COM1 TX"] -->|"RX Wire (Line 1)"| ESP_RX["ESP32 GPIO 44 (RX)"]
+```
+
+#### 1. Discover TX Wire (`gps probe`)
+Sends an ASCII `version\r\n` probe command to the UM982. If the receiver responds with `<OK` or `#VERSIONA`, the system confirms bidirectional communication:
+
+```text
+> gps probe
+[GPS PROBE] Transmitting 'version' discovery probe on GPIO 43...
+[GPS RX] <OK
+[GPS RX] #VERSIONA,91,GPS,FINE,2320,150123000,0,0,18,0;UM982,R4.10Build11252*9543ab12
+```
+
+If the TX line is disconnected (legacy 3-wire setups), the probe times out safely after 2 retries and marks the link as `Receive-Only Mode`. Transmission-dependent operations are cleanly gated without affecting compass display or heading calculation.
+
+#### 2. Automated In-System Receiver Setup (`gps config`)
+Executes the verified multi-step configuration sequence from [RECEIVER.md](RECEIVER.md):
+1. `MODE ROVER UAV` (Moving baseline / dual-antenna mode)
+2. `CONFIG SIGNALGROUP 3 6` (GPS + BDS + GLONASS + Galileo multi-frequency tracking)
+3. `UNLOG COM1` (Wipes all legacy and factory default sentences in a single command)
+4. `KSXT com1 0.2` (Enables unified navigation message at 5 Hz)
+5. `SAVECONFIG` (Commits RAM parameters to receiver non-volatile NOR Flash)
+6. Stream verification (Confirms live `$KSXT` stream is active)
+
+```text
+> gps config
+[GPS CONFIG] Initiating configuration pipeline (Standard 5 Hz $KSXT)...
+[GPS CONFIG] Starting receiver configuration...
+[GPS CONFIG] Settings saved. Verifying KSXT 5 Hz stream...
+[GPS CONFIG] Complete! Receiver configured at 5 Hz KSXT.
+```
+
+> [!CAUTION]
+> **Flash Wear & Safety Abort Safeguard:** To protect the receiver's NOR Flash from unnecessary write cycles or corrupted parameters, if any step prior to `SAVECONFIG` fails or times out, the sequence **immediately aborts** without sending `SAVECONFIG`.
+
+#### 3. Setup with Fixed Baseline Distance (`gps config baseline <cm> [tol_cm]`)
+If your physical antenna spacing is known (e.g. 101.6 cm / 40 inches center-to-center with a default 2.5 cm tolerance), provide the baseline distance to lock the search constraint:
+
+```text
+> gps config baseline 101.6 2.5
+[GPS CONFIG] Initiating configuration pipeline (Baseline: 101.6 cm, Tol: 2.5 cm)...
+[GPS CONFIG] Starting receiver configuration...
+[GPS CONFIG] Settings saved. Verifying KSXT 5 Hz stream...
+[GPS CONFIG] Complete! Receiver configured at 5 Hz KSXT.
+```
+
+#### 4. Audit Running Receiver Parameters (`gps check` or `gps audit`)
+Non-destructively queries the receiver's running settings (`MODE`, `UNILOGLIST COM1`, `CONFIG SIGNALGROUP`, `CONFIG HEADING`) to inspect configuration compliance without writing to NOR Flash:
+
+```text
+> gps check
+[GPS AUDIT] Querying receiver parameters (MODE, UNILOGLIST COM1, CONFIG SIGNALGROUP, CONFIG HEADING)...
+[GPS RX] #MODEA,91,GPS,FINE...;ROVER,UAV*...
+[GPS RX] < KSXT COM1 0.200000
+```
+
+#### 5. Send Raw Receiver Command (`gps send <cmd>`)
+Power-user command allowing transmission of arbitrary Unicore ASCII commands directly to the receiver:
+
+```text
+> gps send uniloglist com1
+[GPS TX] Sent: 'uniloglist com1'
+[GPS RX] < KSXT COM1 0.200000
+[GPS RX] <OK
+```
+
+---
+
+### 3.4 Visual Display Self-Test (`test`, `demo`, `t`)
 Triggers an automated visual demonstration on the round LCD screen. Runs sequentially through 9 test phases:
 
 1. **Test 1: Same Grid Clamp** (ARRL 1.0 km minimum rule)
@@ -203,7 +286,7 @@ Overall Verdict: ALL 9 TESTS PASSED [PASS]
 
 ---
 
-### 3.4 Antenna Heading Calibration (`cal`)
+### 3.5 Antenna Heading Calibration (`cal`)
 Manages the non-volatile antenna alignment offset in degrees. The offset corrects for mechanical misalignment between the dual-antenna cross-boom and the microwave antenna feedline.
 
 #### Display Current Calibration (`cal`, `cal status`, `cal show`)
@@ -251,7 +334,7 @@ Sets an exact manual offset in degrees. Angles are automatically normalized to $
 
 ---
 
-### 3.5 GPS Data Simulation & Rover Test (`sim` and `$<sentence>`)
+### 3.6 GPS Data Simulation & Rover Test (`sim` and `$<sentence>`)
 
 The simulation interface allows desktop verification of **Rover Mode**, transit displacement tracking (evaluating the **16 km legal rule** and grid boundary crossings), antenna needle motion, and RTK quality states without connecting the physical UM982 receiver or driving outside.
 

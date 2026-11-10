@@ -62,6 +62,20 @@ SerialCli::SerialCli(GpsManager &gpsManager, Calibration &calibration, GpsSimula
 {
     inputBuffer_[0] = '\0';
     bleInputBuffer_[0] = '\0';
+
+    gpsManager_.setOnResponse([](const char *resp, void *ctx) {
+        auto *self = static_cast<SerialCli*>(ctx);
+        if (self && !self->gpsManager_.getConfigPipeline().isRunning()) {
+            self->broadcastFormat("[GPS RX] %s\r\n", resp);
+        }
+    }, this);
+
+    gpsManager_.getConfigPipeline().setOnProgress([](ConfigStep, ConfigPipelineState, const char *msg, void *ctx) {
+        auto *self = static_cast<SerialCli*>(ctx);
+        if (self && msg && msg[0] != '\0') {
+            self->broadcastln(msg);
+        }
+    }, this);
 }
 
 void SerialCli::begin() {
@@ -71,6 +85,20 @@ void SerialCli::begin() {
     bleInputBuffer_[0] = '\0';
     pendingRoverClear_ = false;
     activeSource_ = CLI_SOURCE_USB;
+
+    gpsManager_.setOnResponse([](const char *resp, void *ctx) {
+        auto *self = static_cast<SerialCli*>(ctx);
+        if (self && !self->gpsManager_.getConfigPipeline().isRunning()) {
+            self->broadcastFormat("[GPS RX] %s\r\n", resp);
+        }
+    }, this);
+
+    gpsManager_.getConfigPipeline().setOnProgress([](ConfigStep, ConfigPipelineState, const char *msg, void *ctx) {
+        auto *self = static_cast<SerialCli*>(ctx);
+        if (self && msg && msg[0] != '\0') {
+            self->broadcastln(msg);
+        }
+    }, this);
 
     if (bleManager_) {
         bleManager_->setDataReceivedCallback([](const char *data, size_t len, void *ctx) {
@@ -334,7 +362,18 @@ void SerialCli::executeCommand(const char *cmdLine, unsigned long nowMs, CliSour
         return;
     }
 
-    if (equalsIgnoreCase(cmdLine, "status") || equalsIgnoreCase(cmdLine, "gps") ||
+    if (startsWithIgnoreCase(cmdLine, "gps")) {
+        const char *arg = cmdLine + 3;
+        while (*arg == ' ' || *arg == '\t') arg++;
+        if (*arg == '\0' || equalsIgnoreCase(arg, "status")) {
+            printGpsStatus(nowMs);
+            return;
+        }
+        handleGpsCommand(arg, nowMs);
+        return;
+    }
+
+    if (equalsIgnoreCase(cmdLine, "status") ||
         equalsIgnoreCase(cmdLine, "diag")   || equalsIgnoreCase(cmdLine, "s")   ||
         equalsIgnoreCase(cmdLine, "g")) {
         printGpsStatus(nowMs);
@@ -372,10 +411,101 @@ void SerialCli::executeCommand(const char *cmdLine, unsigned long nowMs, CliSour
     printFormat("Unknown command: '%s'. Type 'help' for available commands.\r\n", cmdLine);
 }
 
+void SerialCli::handleGpsCommand(const char *arg, unsigned long nowMs) {
+    if (equalsIgnoreCase(arg, "probe")) {
+        println("[GPS PROBE] Transmitting 'version' discovery probe on GPIO 43...");
+        gpsManager_.probeTx(nowMs);
+        return;
+    }
+
+    if (startsWithIgnoreCase(arg, "config")) {
+        if (!gpsManager_.isSendAvailable()) {
+            println("[GPS] TX wire not detected. Connect GPIO 43 to UM982 RX to configure.");
+            return;
+        }
+        if (gpsManager_.getConfigPipeline().isRunning()) {
+            println("[GPS CONFIG] Configuration pipeline is already running.");
+            return;
+        }
+
+        const char *sub = arg + 6;
+        while (*sub == ' ' || *sub == '\t') sub++;
+
+        float baselineCm = 0.0f;
+        float tolCm = 2.5f;
+
+        if (startsWithIgnoreCase(sub, "baseline")) {
+            sub += 8;
+            while (*sub == ' ' || *sub == '\t') sub++;
+            char *endPtr = nullptr;
+            baselineCm = std::strtof(sub, &endPtr);
+            if (endPtr && *endPtr) {
+                float t = std::strtof(endPtr, nullptr);
+                if (t > 0.0f) tolCm = t;
+            }
+        } else if ((*sub >= '0' && *sub <= '9') || *sub == '.') {
+            char *endPtr = nullptr;
+            baselineCm = std::strtof(sub, &endPtr);
+            if (endPtr && *endPtr) {
+                float t = std::strtof(endPtr, nullptr);
+                if (t > 0.0f) tolCm = t;
+            }
+        }
+
+        if (baselineCm > 0.0f) {
+            printFormat("[GPS CONFIG] Initiating configuration pipeline (Baseline: %.1f cm, Tol: %.1f cm)...\r\n", baselineCm, tolCm);
+        } else {
+            println("[GPS CONFIG] Initiating configuration pipeline (Standard 5 Hz $KSXT)...");
+        }
+        gpsManager_.startConfiguration(baselineCm, tolCm, true, nowMs);
+        return;
+    }
+
+    if (startsWithIgnoreCase(arg, "send")) {
+        if (!gpsManager_.isSendAvailable()) {
+            println("[GPS] Cannot send: TX wire not connected.");
+            return;
+        }
+        const char *cmd = arg + 4;
+        while (*cmd == ' ' || *cmd == '\t') cmd++;
+        if (*cmd == '\0') {
+            println("[GPS ERROR] Usage: gps send <command> (e.g. 'gps send version', 'gps send uniloglist com1')");
+            return;
+        }
+        gpsManager_.sendCommand(cmd);
+        printFormat("[GPS TX] Sent: '%s'\r\n", cmd);
+        return;
+    }
+
+    if (equalsIgnoreCase(arg, "check") || equalsIgnoreCase(arg, "audit")) {
+        if (!gpsManager_.isSendAvailable()) {
+            println("[GPS] Cannot audit: TX wire not connected (Receive-only mode).");
+            return;
+        }
+        println("[GPS AUDIT] Querying receiver parameters (MODE, UNILOGLIST COM1, CONFIG SIGNALGROUP, CONFIG HEADING)...");
+        gpsManager_.sendCommand("MODE");
+        gpsManager_.sendCommand("UNILOGLIST COM1");
+        gpsManager_.sendCommand("CONFIG SIGNALGROUP");
+        gpsManager_.sendCommand("CONFIG HEADING");
+        return;
+    }
+
+    println("[GPS ERROR] Unknown gps subcommand. Available:");
+    println("  gps status            - Live GNSS receiver stream & link diagnostic");
+    println("  gps probe             - Test bidirectional TX connection to UM982");
+    println("  gps config [baseline] - Run automated 5 Hz $KSXT receiver setup");
+    println("  gps send <command>    - Send raw command to UM982 receiver");
+    println("  gps check (or audit)  - Query receiver running parameters");
+}
+
 void SerialCli::printHelp() {
     println();
     println("=== GNSS Compass Serial Commands ===");
-    println("  status (or gps)       - Live GNSS receiver stream diagnostic");
+    println("  status (or gps)       - Live GNSS receiver stream & link diagnostic");
+    println("  gps probe             - Test bidirectional TX connection to UM982");
+    println("  gps config [baseline] - Run automated 5 Hz $KSXT receiver setup");
+    println("  gps send <command>    - Send raw command to UM982 receiver");
+    println("  gps check (or audit)  - Query receiver running parameters");
     println("  rover [status|start|stop|history|undo|max|clear] - Rover transit tracking");
     println("  test (or demo)        - Run visual display self-test demo");
     println("  cal [snap|zero|<val>] - View or configure antenna calibration");
@@ -402,6 +532,46 @@ void SerialCli::printGpsStatus(unsigned long nowMs) {
         printFormat("Sim Injections: %u pkts (last %lu ms ago)\r\n",
                     simulator_.getPacketCount(),
                     (nowMs - simulator_.getLastInjectionMillis()));
+    }
+
+    // Bidirectional Link & TX Capability Status
+    if (gpsManager_.isSendAvailable()) {
+        println("Link Status:    CONNECTED (Bidirectional TX/RX Active)");
+        println("TX Capability:  AVAILABLE (UM982 command responses confirmed)");
+    } else if (gpsManager_.getTxState() == GpsTxState::Probing) {
+        println("Link Status:    PROBING (Testing TX on GPIO 43)");
+        println("TX Capability:  PROBING (Discovery probe in flight)");
+    } else if (gpsManager_.getTxState() == GpsTxState::Unavailable) {
+        println("Link Status:    CONNECTED (Receive-Only Mode)");
+        println("TX Capability:  UNAVAILABLE (TX wire not detected on GPIO 43)");
+    } else {
+        println("Link Status:    CONNECTED (Receive-Only Mode)");
+        println("TX Capability:  UNKNOWN (Type 'gps probe' to test TX line)");
+    }
+
+    // Receiver Configuration Assessment
+    if (gpsManager_.getKsxtCount() > 0 && (nowMs - gpsManager_.getLastKsxtMillis()) < 3000) {
+        if (gpsManager_.getHdtPacketCount() == 0 && gpsManager_.getGllPacketCount() == 0) {
+            println("Config State:   OPTIMAL ($KSXT streaming at 5.0 Hz, legacy unlogged)");
+        } else {
+            println("Config State:   OPTIMAL ($KSXT active, legacy messages also detected)");
+        }
+    } else if (gpsManager_.getHdtPacketCount() > 0 || gpsManager_.getGllPacketCount() > 0) {
+        println("Config State:   LEGACY COMPATIBLE ($GPHDT/$GNGLL active, upgrade to $KSXT available)");
+    } else if (gpsManager_.getTotalBytesReceived() > 0) {
+        println("Config State:   UNCONFIGURED / FACTORY DEFAULT (No heading sentence detected)");
+    } else {
+        println("Config State:   NO DATA");
+    }
+
+    if (gpsManager_.getConfigPipeline().isRunning()) {
+        printFormat("Config Engine:  RUNNING (Step: %s)\r\n",
+                    GpsConfigPipeline::stepToString(gpsManager_.getConfigPipeline().getCurrentStep()));
+    } else if (gpsManager_.getConfigPipeline().isSuccess()) {
+        println("Config Engine:  SUCCESS (Receiver configured)");
+    } else if (gpsManager_.getConfigPipeline().isFailed()) {
+        printFormat("Config Engine:  FAILED (%s)\r\n",
+                    gpsManager_.getConfigPipeline().getFailureReasonString());
     }
 
     if (v == GPS_LINK_DISCONNECTED) {
