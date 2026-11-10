@@ -286,6 +286,10 @@
 #define GPS_TX_PROBE_TIMEOUT_MS      1000
 #define GPS_TX_PROBE_MAX_RETRIES     2
 
+// GNSS Receiver Configuration Pipeline Timeouts
+#define GPS_CONFIG_STEP_TIMEOUT_MS   1000
+#define GPS_CONFIG_VERIFY_TIMEOUT_MS 1500
+
 // ==============================================================================
 // Character Rolling Helpers (for Target Grid manual editing)
 // ==============================================================================

@@ -19,6 +19,7 @@ g++ -O2 -Wall -Wextra -I"$REPO_DIR" \
     "$REPO_DIR/src/system/app_controller.cpp" \
     "$REPO_DIR/src/gnss/simulator.cpp" \
     "$REPO_DIR/src/gnss/gps_manager.cpp" \
+    "$REPO_DIR/src/gnss/gps_config_pipeline.cpp" \
     "$REPO_DIR/src/ui/grid_editor.cpp" \
     "$REPO_DIR/src/ui/input_manager.cpp" \
     "$REPO_DIR/src/ui/cal_modal.cpp" \

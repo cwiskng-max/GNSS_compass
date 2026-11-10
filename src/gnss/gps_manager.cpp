@@ -22,6 +22,7 @@ GpsManager::GpsManager()
       txState_(GpsTxState::Unknown),
       lastProbeTime_(0),
       probeRetries_(0),
+      configPipeline_(*this),
       simulator_(nullptr),
       onHeadingUpdated_(nullptr),
       headingContext_(nullptr),
@@ -94,11 +95,16 @@ const char* GpsManager::getTxStateString() const {
     }
 }
 
+bool GpsManager::startConfiguration(float baselineCm, float tolCm, bool verifyStream, unsigned long nowMs) {
+    return configPipeline_.start(baselineCm, tolCm, verifyStream, nowMs);
+}
+
 void GpsManager::update(unsigned long nowMs) {
 #if defined(ARDUINO)
     if (!nowMs) nowMs = millis();
     checkStaleness(nowMs);
     checkTxProbe(nowMs);
+    configPipeline_.update(nowMs);
 
     if (serialPort_.available()) {
         if (simulator_ && simulator_->isActive()) {
@@ -119,6 +125,7 @@ void GpsManager::update(unsigned long nowMs) {
     if (nowMs) {
         checkStaleness(nowMs);
         checkTxProbe(nowMs);
+        configPipeline_.update(nowMs);
     }
 #endif
 }
@@ -268,6 +275,9 @@ void GpsManager::processSentence(char *sentence, unsigned long nowMs) {
     }
 
     if (isResponse) {
+        if (configPipeline_.isRunning()) {
+            configPipeline_.handleResponse(p, nowMs);
+        }
         if (onResponse_) {
             onResponse_(p, responseContext_);
         }
@@ -313,6 +323,10 @@ void GpsManager::processSentence(char *sentence, unsigned long nowMs) {
 
     // Extract Time and Position from $KSXT (5 Hz)
     if (strncmp(sentence, "$KSXT", 5) == 0) {
+        if (configPipeline_.isWaitingForStream()) {
+            configPipeline_.handleKsxtReceived();
+        }
+
         uint32_t ksxtEpoch = 0;
         if (parseKsxtEpochTime(sentence, ksxtEpoch)) {
             setEpochTime(ksxtEpoch);

@@ -7,6 +7,7 @@
 #include "../config.h"
 #include "../geo/bearing_filter.h"
 #include "simulator.h"
+#include "gps_config_pipeline.h"
 
 #if defined(ARDUINO)
 #include <Arduino.h>
@@ -64,6 +65,11 @@ public:
 
     unsigned int getProbeRetries() const { return probeRetries_; }
     unsigned long getLastProbeTime() const { return lastProbeTime_; }
+
+    // Configuration pipeline (Feature 2)
+    GpsConfigPipeline& getConfigPipeline() { return configPipeline_; }
+    const GpsConfigPipeline& getConfigPipeline() const { return configPipeline_; }
+    bool startConfiguration(float baselineCm = 0.0f, float tolCm = 2.5f, bool verifyStream = true, unsigned long nowMs = 0);
 
     // Simulator linkage
     void setSimulator(GpsSimulator *sim) { simulator_ = sim; }
@@ -170,6 +176,9 @@ private:
     GpsTxState txState_;
     unsigned long lastProbeTime_;
     unsigned int probeRetries_;
+
+    // Configuration pipeline
+    GpsConfigPipeline configPipeline_;
 
     // Linked simulator
     GpsSimulator *simulator_;

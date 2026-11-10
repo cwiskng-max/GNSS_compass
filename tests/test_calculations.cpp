@@ -649,6 +649,8 @@ void test_config_constants() {
     ASSERT_TRUE(COLOR_ROVER_NOGPS_AMBER == 0xDC00);
     ASSERT_TRUE(GPS_TX_PROBE_TIMEOUT_MS == 1000);
     ASSERT_TRUE(GPS_TX_PROBE_MAX_RETRIES == 2);
+    ASSERT_TRUE(GPS_CONFIG_STEP_TIMEOUT_MS == 1000);
+    ASSERT_TRUE(GPS_CONFIG_VERIFY_TIMEOUT_MS == 1500);
 
     // Test grid character rolling macros
     char c = 'A';
@@ -1034,6 +1036,230 @@ void test_gps_tx_discovery() {
     gm.update(1000UL); // 1016 ms elapsed across 0xFFFFFFFF rollover -> retry 1
     ASSERT_TRUE(gm.getProbeRetries() == 1);
     ASSERT_TRUE(gm.getTxState() == GpsTxState::Probing);
+
+    PASS();
+}
+
+void test_gps_config_pipeline() {
+    TEST("GpsConfigPipeline sequential commands, safeguards, and stream verification");
+    GpsManager gm;
+
+    // Helper lambda to make TX available
+    auto makeTxAvailable = [&gm]() {
+        gm.probeTx(100);
+        gm.feedSentence("<OK", 150);
+        ASSERT_TRUE(gm.isSendAvailable());
+    };
+
+    // 1. TX unavailable rejection guard
+    ASSERT_TRUE(gm.getTxState() == GpsTxState::Unknown);
+    ASSERT_TRUE(!gm.startConfiguration(0.0f, 2.5f, true, 1000));
+    ASSERT_TRUE(gm.getConfigPipeline().isFailed());
+    ASSERT_TRUE(gm.getConfigPipeline().getFailureReason() == ConfigFailureReason::TxNotAvailable);
+    ASSERT_STR_EQ(gm.getConfigPipeline().getFailureReasonString(), "TX_NOT_AVAILABLE");
+
+    // Make TX available
+    makeTxAvailable();
+
+    std::string sentData;
+    gm.setTxHandler([](const uint8_t *data, size_t len, void *ctx) {
+        auto *s = static_cast<std::string*>(ctx);
+        if (s) s->append(reinterpret_cast<const char*>(data), len);
+    }, &sentData);
+
+    // 2. Full successful configuration sequence without baseline constraint
+    sentData.clear();
+    ASSERT_TRUE(gm.startConfiguration(0.0f, 2.5f, true, 1000));
+    auto &pipe = gm.getConfigPipeline();
+    ASSERT_TRUE(pipe.isRunning());
+    ASSERT_TRUE(pipe.getCurrentStep() == ConfigStep::ModeRoverUav);
+    ASSERT_STR_EQ(sentData.c_str(), "MODE ROVER UAV\r\n");
+
+    // Acknowledge step 1 -> Step 2 CONFIG SIGNALGROUP 3 6
+    sentData.clear();
+    gm.feedSentence("<OK", 1050);
+    ASSERT_TRUE(pipe.isRunning());
+    ASSERT_TRUE(pipe.getCurrentStep() == ConfigStep::ConfigSignalGroup);
+    ASSERT_STR_EQ(sentData.c_str(), "CONFIG SIGNALGROUP 3 6\r\n");
+
+    // Acknowledge step 2 -> Step 3 UNLOG COM1
+    sentData.clear();
+    gm.feedSentence("<OK", 1100);
+    ASSERT_TRUE(pipe.isRunning());
+    ASSERT_TRUE(pipe.getCurrentStep() == ConfigStep::UnlogCom1);
+    ASSERT_STR_EQ(sentData.c_str(), "UNLOG COM1\r\n");
+
+    // Acknowledge step 3 -> Step 4 KSXT com1 0.2
+    sentData.clear();
+    gm.feedSentence("<OK", 1150);
+    ASSERT_TRUE(pipe.isRunning());
+    ASSERT_TRUE(pipe.getCurrentStep() == ConfigStep::KsxtOutput);
+    ASSERT_STR_EQ(sentData.c_str(), "KSXT com1 0.2\r\n");
+
+    // Acknowledge step 4 -> Step 5 SAVECONFIG (baseline steps skipped)
+    sentData.clear();
+    gm.feedSentence("<OK", 1200);
+    ASSERT_TRUE(pipe.isRunning());
+    ASSERT_TRUE(pipe.getCurrentStep() == ConfigStep::SaveConfig);
+    ASSERT_STR_EQ(sentData.c_str(), "SAVECONFIG\r\n");
+
+    // Acknowledge step 5 -> Step 6 VerifyStream
+    sentData.clear();
+    gm.feedSentence("<OK", 1250);
+    ASSERT_TRUE(pipe.isRunning());
+    ASSERT_TRUE(pipe.getCurrentStep() == ConfigStep::VerifyStream);
+    ASSERT_TRUE(pipe.isWaitingForStream());
+    ASSERT_TRUE(sentData.empty()); // No command sent while waiting for stream
+
+    // Feed a valid $KSXT sentence to complete stream verification
+    char ksxtBuf[256];
+    GpsSimulator::generateKsxt(ksxtBuf, sizeof(ksxtBuf),
+                              "20261109120000.00", 37.7749, -122.4194,
+                              90.0, BEARING_FIXED);
+    gm.feedSentence(ksxtBuf, 1300);
+    ASSERT_TRUE(pipe.isSuccess());
+    ASSERT_TRUE(pipe.getCurrentStep() == ConfigStep::Done);
+    ASSERT_STR_EQ(pipe.getStateString(), "SUCCESS");
+
+    // 3. Full configuration sequence WITH baseline length constraint (e.g. 101.6 cm, tol 2.5 cm)
+    pipe.reset();
+    ASSERT_TRUE(pipe.isIdle());
+    sentData.clear();
+    ASSERT_TRUE(gm.startConfiguration(101.6f, 2.5f, false, 2000)); // verifyStream = false
+    ASSERT_TRUE(pipe.getCurrentStep() == ConfigStep::ModeRoverUav);
+    ASSERT_STR_EQ(sentData.c_str(), "MODE ROVER UAV\r\n");
+
+    sentData.clear();
+    gm.feedSentence("<OK", 2050); // MODE -> SIGNALGROUP
+    ASSERT_TRUE(pipe.getCurrentStep() == ConfigStep::ConfigSignalGroup);
+    ASSERT_STR_EQ(sentData.c_str(), "CONFIG SIGNALGROUP 3 6\r\n");
+
+    sentData.clear();
+    gm.feedSentence("<OK", 2100); // SIGNALGROUP -> UNLOG COM1
+    ASSERT_TRUE(pipe.getCurrentStep() == ConfigStep::UnlogCom1);
+    ASSERT_STR_EQ(sentData.c_str(), "UNLOG COM1\r\n");
+
+    sentData.clear();
+    gm.feedSentence("<OK", 2150); // UNLOG -> KSXT
+    ASSERT_TRUE(pipe.getCurrentStep() == ConfigStep::KsxtOutput);
+    ASSERT_STR_EQ(sentData.c_str(), "KSXT com1 0.2\r\n");
+
+    sentData.clear();
+    gm.feedSentence("<OK", 2200); // KSXT -> CONFIG HEADING FIXLENGTH
+    ASSERT_TRUE(pipe.getCurrentStep() == ConfigStep::HeadingFixLength);
+    ASSERT_STR_EQ(sentData.c_str(), "CONFIG HEADING FIXLENGTH\r\n");
+
+    sentData.clear();
+    gm.feedSentence("<OK", 2250); // FIXLENGTH -> CONFIG HEADING LENGTH 101.6 2.5
+    ASSERT_TRUE(pipe.getCurrentStep() == ConfigStep::HeadingLength);
+    ASSERT_STR_EQ(sentData.c_str(), "CONFIG HEADING LENGTH 101.6 2.5\r\n");
+
+    sentData.clear();
+    gm.feedSentence("<OK", 2300); // LENGTH -> SAVECONFIG
+    ASSERT_TRUE(pipe.getCurrentStep() == ConfigStep::SaveConfig);
+    ASSERT_STR_EQ(sentData.c_str(), "SAVECONFIG\r\n");
+
+    // Acknowledge SAVECONFIG -> with verifyStream = false, finishes immediately!
+    sentData.clear();
+    gm.feedSentence("<OK", 2350);
+    ASSERT_TRUE(pipe.isSuccess());
+    ASSERT_TRUE(pipe.getCurrentStep() == ConfigStep::Done);
+
+    // 4. Flash Write Safeguard: Abort on Command Rejection (SAVECONFIG must NEVER be sent)
+    pipe.reset();
+    sentData.clear();
+    ASSERT_TRUE(gm.startConfiguration(0.0f, 2.5f, false, 3000));
+    ASSERT_TRUE(pipe.getCurrentStep() == ConfigStep::ModeRoverUav);
+    gm.feedSentence("<OK", 3050); // Advance to SIGNALGROUP
+    ASSERT_TRUE(pipe.getCurrentStep() == ConfigStep::ConfigSignalGroup);
+
+    // Receiver rejects command with <ERROR
+    gm.feedSentence("<ERROR: Command syntax invalid", 3100);
+    ASSERT_TRUE(pipe.isFailed());
+    ASSERT_TRUE(pipe.getFailureReason() == ConfigFailureReason::CommandRejected);
+    ASSERT_TRUE(pipe.getFailedStep() == ConfigStep::ConfigSignalGroup);
+    ASSERT_STR_EQ(pipe.getFailureReasonString(), "COMMAND_REJECTED");
+
+    // Critical assertion: SAVECONFIG must NOT appear in sentData!
+    ASSERT_TRUE(sentData.find("SAVECONFIG") == std::string::npos);
+
+    // 5. Flash Write Safeguard: Abort on Step Timeout (SAVECONFIG must NEVER be sent)
+    pipe.reset();
+    sentData.clear();
+    ASSERT_TRUE(gm.startConfiguration(0.0f, 2.5f, false, 4000));
+    ASSERT_TRUE(pipe.getCurrentStep() == ConfigStep::ModeRoverUav);
+    gm.feedSentence("<OK", 4050); // Advance to SIGNALGROUP
+    gm.feedSentence("<OK", 4100); // Advance to UNLOG COM1
+    ASSERT_TRUE(pipe.getCurrentStep() == ConfigStep::UnlogCom1);
+
+    // Time elapses: 500 ms (before timeout) -> still running
+    gm.update(4600);
+    ASSERT_TRUE(pipe.isRunning());
+    ASSERT_TRUE(pipe.getCurrentStep() == ConfigStep::UnlogCom1);
+
+    // Time elapses: 1000 ms elapsed -> Timeout!
+    gm.update(5100);
+    ASSERT_TRUE(pipe.isFailed());
+    ASSERT_TRUE(pipe.getFailureReason() == ConfigFailureReason::StepTimeout);
+    ASSERT_TRUE(pipe.getFailedStep() == ConfigStep::UnlogCom1);
+    ASSERT_STR_EQ(pipe.getFailureReasonString(), "STEP_TIMEOUT");
+
+    // Critical assertion: SAVECONFIG must NOT appear in sentData!
+    ASSERT_TRUE(sentData.find("SAVECONFIG") == std::string::npos);
+
+    // 6. Stream Verification Timeout
+    pipe.reset();
+    sentData.clear();
+    ASSERT_TRUE(gm.startConfiguration(0.0f, 2.5f, true, 6000));
+    gm.feedSentence("<OK", 6050); // MODE
+    gm.feedSentence("<OK", 6100); // SIGNALGROUP
+    gm.feedSentence("<OK", 6150); // UNLOG
+    gm.feedSentence("<OK", 6200); // KSXT
+    gm.feedSentence("<OK", 6250); // SAVECONFIG
+    ASSERT_TRUE(pipe.getCurrentStep() == ConfigStep::VerifyStream);
+
+    // Advance time: 1000 ms (< 1500 ms verify timeout) -> still waiting
+    gm.update(7250);
+    ASSERT_TRUE(pipe.isWaitingForStream());
+
+    // Advance time: 1500 ms elapsed -> Stream verification timeout!
+    gm.update(7751);
+    ASSERT_TRUE(pipe.isFailed());
+    ASSERT_TRUE(pipe.getFailureReason() == ConfigFailureReason::StreamVerifyTimeout);
+    ASSERT_STR_EQ(pipe.getFailureReasonString(), "STREAM_VERIFY_TIMEOUT");
+
+    // 7. Pipeline Progress Callback and String Helpers
+    struct ProgressTracker {
+        std::string msg;
+        ConfigStep step = ConfigStep::None;
+    } tracker;
+
+    pipe.reset();
+    pipe.setOnProgress([](ConfigStep step, ConfigPipelineState, const char *msg, void *ctx) {
+        auto *t = static_cast<ProgressTracker*>(ctx);
+        if (t) {
+            if (msg) t->msg = msg;
+            t->step = step;
+        }
+    }, &tracker);
+
+    ASSERT_TRUE(gm.startConfiguration(0.0f, 2.5f, false, 8000));
+    ASSERT_TRUE(tracker.step == ConfigStep::ModeRoverUav);
+    ASSERT_TRUE(!tracker.msg.empty());
+
+    // String helpers coverage
+    ASSERT_STR_EQ(GpsConfigPipeline::stepToString(ConfigStep::ModeRoverUav), "MODE ROVER UAV");
+    ASSERT_STR_EQ(GpsConfigPipeline::stepToString(ConfigStep::ConfigSignalGroup), "CONFIG SIGNALGROUP 3 6");
+    ASSERT_STR_EQ(GpsConfigPipeline::stepToString(ConfigStep::UnlogCom1), "UNLOG COM1");
+    ASSERT_STR_EQ(GpsConfigPipeline::stepToString(ConfigStep::KsxtOutput), "KSXT com1 0.2");
+    ASSERT_STR_EQ(GpsConfigPipeline::stepToString(ConfigStep::HeadingFixLength), "CONFIG HEADING FIXLENGTH");
+    ASSERT_STR_EQ(GpsConfigPipeline::stepToString(ConfigStep::HeadingLength), "CONFIG HEADING LENGTH");
+    ASSERT_STR_EQ(GpsConfigPipeline::stepToString(ConfigStep::SaveConfig), "SAVECONFIG");
+    ASSERT_STR_EQ(GpsConfigPipeline::stepToString(ConfigStep::VerifyStream), "VERIFY STREAM");
+    ASSERT_STR_EQ(GpsConfigPipeline::stepToString(ConfigStep::Done), "DONE");
+    ASSERT_STR_EQ(GpsConfigPipeline::stepToString(ConfigStep::None), "NONE");
+
+    pipe.setOnProgress(nullptr, nullptr);
 
     PASS();
 }
@@ -3075,6 +3301,7 @@ int main() {
     test_gps_simulator();
     test_gps_manager();
     test_gps_tx_discovery();
+    test_gps_config_pipeline();
     test_serial_cli();
     test_input_manager_hit_testing();
     test_input_manager_gestures();
