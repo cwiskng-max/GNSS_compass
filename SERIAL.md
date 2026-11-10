@@ -104,6 +104,7 @@ Displays a summary of available serial commands.
   cal [snap|zero|<val>] - View or configure antenna calibration
   sim [on|off|hdg|pos|grid|rover|status] - GPS simulation commands
   exit (or disconnect)  - Terminate wireless BLE connection cleanly
+  ble [diag on|off]     - BLE link status / toggle BLE RF diagnostics
   $<NMEA/KSXT sentence> - Inject raw GNSS sentence directly
   help (or ?)           - Show this help menu
 ====================================

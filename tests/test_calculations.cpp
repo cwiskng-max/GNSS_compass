@@ -1497,6 +1497,18 @@ void test_serial_cli_gps_commands() {
     ASSERT_TRUE(cli.getActiveSource() == CLI_SOURCE_BLE);
     ASSERT_TRUE(ble.getTxBuffer().find("[GPS PROBE] Transmitting 'version'") != std::string::npos);
 
+    // 12. 'ble' status and diagnostics toggle over BLE transport
+    ble.clearTxBuffer();
+    ble.simulateRx("ble diag on\r\n", 13);
+    ASSERT_TRUE(ble.isDiagEnabled());
+    ASSERT_TRUE(ble.getTxBuffer().find("Diagnostics ON") != std::string::npos);
+    ble.clearTxBuffer();
+    ble.simulateRx("ble\r\n", 5);
+    ASSERT_TRUE(ble.getTxBuffer().find("Connected: yes") != std::string::npos);
+    ASSERT_TRUE(ble.getTxBuffer().find("Diagnostics: on") != std::string::npos);
+    ble.simulateRx("ble diag off\r\n", 14);
+    ASSERT_TRUE(!ble.isDiagEnabled());
+
     PASS();
 }
 
@@ -3340,6 +3352,13 @@ void test_ble_serial_manager() {
     ASSERT_TRUE(ble.isConnected());
     ble.disconnect();
     ASSERT_TRUE(!ble.isConnected());
+
+    // RF diagnostics flag defaults off and toggles
+    ASSERT_TRUE(!ble.isDiagEnabled());
+    ble.setDiagEnabled(true);
+    ASSERT_TRUE(ble.isDiagEnabled());
+    ble.setDiagEnabled(false);
+    ASSERT_TRUE(!ble.isDiagEnabled());
 
     PASS();
 }

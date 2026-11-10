@@ -10,6 +10,55 @@
 #include <BLEUtils.h>
 #include <BLE2902.h>
 #include <esp_mac.h>
+#include <esp_gap_ble_api.h>
+#include <esp_gatts_api.h>
+
+namespace {
+// Single instance used by the plain-function-pointer Bluedroid custom handlers
+BleSerialManager *s_bleInstance = nullptr;
+
+// Restart advertising if disconnected and the controller has not confirmed advertising
+constexpr unsigned long kAdvWatchdogMs = 2000;
+
+enum DiagType : uint8_t {
+    DIAG_CONNECT = 1,
+    DIAG_DISCONNECT,
+    DIAG_MTU,
+    DIAG_CONN_PARAMS,
+    DIAG_ADV_START,
+    DIAG_ADV_STOP,
+    DIAG_ADV_REQUEST,
+    DIAG_RSSI,
+};
+
+// Periodic RSSI read interval while connected
+constexpr unsigned long kRssiIntervalMs = 3000;
+// Report main-loop gaps longer than this
+constexpr unsigned long kLoopStallReportMs = 500;
+
+const char *disconnectReasonName(uint16_t reason) {
+    switch (reason) {
+        case 0x08: return "supervision timeout (link lost / RF)";
+        case 0x13: return "remote user terminated (clean)";
+        case 0x16: return "local host terminated";
+        case 0x22: return "LL response timeout";
+        case 0x3B: return "unacceptable conn params";
+        case 0x3D: return "MIC failure";
+        case 0x3E: return "connection failed to be established";
+        case 0x100: return "L2CAP failure";
+        default: return "other";
+    }
+}
+
+void gapTrampoline(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *param) {
+    if (s_bleInstance) s_bleInstance->onGapEvent(static_cast<int>(event), param);
+}
+
+void gattsTrampoline(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param) {
+    (void)gatts_if;
+    if (s_bleInstance) s_bleInstance->onGattsEvent(static_cast<int>(event), param);
+}
+} // namespace
 
 class BleServerCallbackHandler : public BLEServerCallbacks {
 public:
@@ -18,13 +67,19 @@ public:
     void onConnect(BLEServer *pServer, esp_ble_gatts_cb_param_t *param) override {
         (void)pServer;
         uint16_t connId = param ? param->connect.conn_id : 0;
-        if (mgr_) mgr_->handleConnect(connId);
+        if (mgr_) {
+            if (param) mgr_->setRemoteAddress(param->connect.remote_bda);
+            mgr_->handleConnect(connId);
+        }
     }
 
     void onDisconnect(BLEServer *pServer) override {
-        if (mgr_) mgr_->handleDisconnect();
-        if (pServer) {
-            pServer->startAdvertising();
+        (void)pServer;
+        if (mgr_) {
+            mgr_->handleDisconnect();
+            // Restart advertising exactly once, right away. The update() watchdog covers
+            // the case where this start is rejected by the controller.
+            mgr_->requestAdvertisingStart();
         }
     }
 
@@ -54,10 +109,9 @@ BleSerialManager::BleSerialManager()
       connected_(false),
       subscribed_(false),
       pendingConnCb_(false),
-      restartAdvertisingNeeded_(false),
+      diagEnabled_(false),
       negotiatedMtu_(23),
       connId_(0),
-      restartAdvertisingAfterMs_(0),
       rxHead_(0),
       rxTail_(0),
       dataCb_(nullptr),
@@ -68,11 +122,24 @@ BleSerialManager::BleSerialManager()
     , pServer_(nullptr),
       pTxChar_(nullptr),
       pRxChar_(nullptr),
-      p2902_(nullptr)
+      p2902_(nullptr),
+      haveRemoteBda_(false),
+      advertising_(false),
+      lastAdvStartRequestMs_(0),
+      lastUpdateMs_(0),
+      nextRssiMs_(0),
+      maxLoopGapMs_(0),
+      txPowerReported_(false),
+      diagHead_(0),
+      diagTail_(0),
+      diagDropped_(0)
 #endif
 {
     std::memset(deviceName_, 0, sizeof(deviceName_));
     std::strncpy(deviceName_, "GNSS-Compass", sizeof(deviceName_) - 1);
+#if defined(ARDUINO) && !defined(ARDUINO_TEST_BUILD)
+    std::memset(remoteBda_, 0, sizeof(remoteBda_));
+#endif
 }
 
 BleSerialManager::~BleSerialManager() = default;
@@ -97,8 +164,12 @@ void BleSerialManager::begin(const char *customName) {
     }
 
 #if defined(ARDUINO) && !defined(ARDUINO_TEST_BUILD)
+    s_bleInstance = this;
     BLEDevice::init(deviceName_);
     BLEDevice::setMTU(512);
+    // Diagnostic / supervision hooks (invoked after the library's own handling)
+    BLEDevice::setCustomGapHandler(gapTrampoline);
+    BLEDevice::setCustomGattsHandler(gattsTrampoline);
 
     pServer_ = BLEDevice::createServer();
     pServer_->setCallbacks(new BleServerCallbackHandler(this));
@@ -146,7 +217,7 @@ void BleSerialManager::begin(const char *customName) {
     pAdvertising->setMinInterval(0x50); // 50 ms (80 * 0.625 ms)
     pAdvertising->setMaxInterval(0xA0); // 100 ms (160 * 0.625 ms)
 
-    BLEDevice::startAdvertising();
+    requestAdvertisingStart();
 #endif
 
     initialized_ = true;
@@ -159,19 +230,44 @@ void BleSerialManager::update(unsigned long nowMs) {
 #endif
 
 #if defined(ARDUINO) && !defined(ARDUINO_TEST_BUILD)
-    // Non-blocking advertising restart fallback when disconnected
-    if (restartAdvertisingNeeded_) {
-        if (restartAdvertisingAfterMs_ == 0) {
-            restartAdvertisingAfterMs_ = nowMs + 100;
-        } else if (nowMs >= restartAdvertisingAfterMs_) {
-            restartAdvertisingNeeded_ = false;
-            restartAdvertisingAfterMs_ = 0;
-            if (pServer_) {
-                pServer_->startAdvertising();
-            } else {
-                BLEDevice::startAdvertising();
+    if (diagEnabled_) {
+        // Main-loop stall detection (a stalled loop delays UI, CLI and these diagnostics)
+        if (lastUpdateMs_ != 0) {
+            unsigned long gap = nowMs - lastUpdateMs_;
+            if (gap > maxLoopGapMs_) maxLoopGapMs_ = gap;
+            if (gap >= kLoopStallReportMs) {
+                Serial.printf("[BLE %lu] main loop stalled for %lu ms\r\n", nowMs, gap);
             }
         }
+        lastUpdateMs_ = nowMs;
+
+        if (!txPowerReported_ && initialized_) {
+            txPowerReported_ = true;
+            // ESP32-S3/C3 table: level index 0 = -24 dBm, 3 dB steps
+            int adv = (int)esp_ble_tx_power_get(ESP_BLE_PWR_TYPE_ADV);
+            int def = (int)esp_ble_tx_power_get(ESP_BLE_PWR_TYPE_DEFAULT);
+            Serial.printf("[BLE] TX power level: adv=%d (~%d dBm) default=%d (~%d dBm)\r\n",
+                          adv, -24 + 3 * adv, def, -24 + 3 * def);
+        }
+
+        // Periodic RSSI read of the connected peer
+        if (connected_ && haveRemoteBda_ && (long)(nowMs - nextRssiMs_) >= 0) {
+            nextRssiMs_ = nowMs + kRssiIntervalMs;
+            uint8_t bda[6];
+            std::memcpy(bda, remoteBda_, sizeof(bda));
+            esp_ble_gap_read_rssi(bda);
+        }
+    }
+
+    drainDiag();
+
+    // Advertising watchdog: if we are disconnected and the controller has not confirmed
+    // that advertising is running, (re)start it. Normal path is the immediate restart in
+    // onDisconnect(); this only fires if that start was lost or rejected.
+    if (initialized_ && !connected_ && !advertising_ &&
+        (nowMs - lastAdvStartRequestMs_) >= kAdvWatchdogMs) {
+        Serial.println("[BLE] watchdog: not advertising while disconnected -> restarting advertising");
+        requestAdvertisingStart();
     }
 #endif
 
@@ -273,9 +369,35 @@ void BleSerialManager::printFormat(const char *fmt, ...) {
     print(buf);
 }
 
+void BleSerialManager::setDiagEnabled(bool enabled) {
+    diagEnabled_ = enabled;
+#if defined(ARDUINO) && !defined(ARDUINO_TEST_BUILD)
+    // Restart stall tracking so the gap since the last diag session isn't reported as a stall,
+    // re-report TX power, and take an RSSI reading right away if connected.
+    lastUpdateMs_ = 0;
+    maxLoopGapMs_ = 0;
+    txPowerReported_ = false;
+    nextRssiMs_ = millis();
+#endif
+}
+
 void BleSerialManager::disconnect() {
 #if defined(ARDUINO) && !defined(ARDUINO_TEST_BUILD)
-    if (connected_ && pServer_) {
+    if (!connected_) return;
+    // Terminate the link-layer connection directly (HCI Disconnect, reason 0x13).
+    // BLEServer::disconnect() only calls esp_ble_gatts_close(), which closes the GATT
+    // virtual connection and leaves the ACL link to be torn down later by an idle timer.
+    if (haveRemoteBda_) {
+        uint8_t bda[6];
+        std::memcpy(bda, remoteBda_, sizeof(bda));
+        esp_err_t rc = esp_ble_gap_disconnect(bda);
+        if (diagEnabled_ || rc != ESP_OK) {
+            Serial.printf("[BLE] disconnect requested (gap_disconnect rc=%d)\r\n", (int)rc);
+        }
+        if (rc == ESP_OK) return;
+    }
+    if (pServer_) {
+        Serial.println("[BLE] disconnect requested (gatts_close fallback)");
         pServer_->disconnect(connId_);
     }
 #else
@@ -293,10 +415,11 @@ void BleSerialManager::handleConnect(uint16_t connId) {
     rxHead_ = 0;
     rxTail_ = 0;
     pendingConnCb_ = true;
-    restartAdvertisingNeeded_ = false;
-    restartAdvertisingAfterMs_ = 0;
 
-#if !defined(ARDUINO) || defined(ARDUINO_TEST_BUILD)
+#if defined(ARDUINO) && !defined(ARDUINO_TEST_BUILD)
+    // Controller stops legacy advertising automatically when a connection is created
+    advertising_ = false;
+#else
     subscribed_ = true;
     if (connCb_) {
         connCb_(true, connCbContext_);
@@ -306,6 +429,12 @@ void BleSerialManager::handleConnect(uint16_t connId) {
 }
 
 void BleSerialManager::handleDisconnect() {
+#if defined(ARDUINO) && !defined(ARDUINO_TEST_BUILD)
+    // Stamp before clearing connected_/advertising_ so the update() watchdog (main task)
+    // cannot see "disconnected + not advertising + stale timestamp" in the window before
+    // onDisconnect() issues its own advertising restart.
+    lastAdvStartRequestMs_ = millis();
+#endif
     connected_ = false;
     subscribed_ = false;
     connId_ = 0;
@@ -313,8 +442,8 @@ void BleSerialManager::handleDisconnect() {
     pendingConnCb_ = true;
 
 #if defined(ARDUINO) && !defined(ARDUINO_TEST_BUILD)
-    restartAdvertisingNeeded_ = true;
-    restartAdvertisingAfterMs_ = 0;
+    haveRemoteBda_ = false;
+    advertising_ = false;
     if (p2902_) {
         p2902_->setNotifications(false);
     }
@@ -325,6 +454,168 @@ void BleSerialManager::handleDisconnect() {
     pendingConnCb_ = false;
 #endif
 }
+
+#if defined(ARDUINO) && !defined(ARDUINO_TEST_BUILD)
+void BleSerialManager::setRemoteAddress(const uint8_t *bda) {
+    if (!bda) return;
+    std::memcpy(remoteBda_, bda, sizeof(remoteBda_));
+    haveRemoteBda_ = true;
+}
+
+void BleSerialManager::requestAdvertisingStart() {
+    lastAdvStartRequestMs_ = millis();
+    pushDiag(DIAG_ADV_REQUEST, 0);
+    // Custom raw adv/scan-response data is already configured, so this only issues
+    // esp_ble_gap_start_advertising(). Calling it while already advertising simply
+    // re-applies the advertising parameters.
+    BLEDevice::startAdvertising();
+}
+
+void BleSerialManager::onGapEvent(int event, const void *p) {
+    const esp_ble_gap_cb_param_t *param = static_cast<const esp_ble_gap_cb_param_t *>(p);
+    if (!param) return;
+    switch (static_cast<esp_gap_ble_cb_event_t>(event)) {
+        case ESP_GAP_BLE_ADV_START_COMPLETE_EVT:
+            if (param->adv_start_cmpl.status == ESP_BT_STATUS_SUCCESS) {
+                // Ignore a late completion that lands after a connection was already made
+                if (!connected_) advertising_ = true;
+            }
+            pushDiag(DIAG_ADV_START, (uint8_t)param->adv_start_cmpl.status);
+            break;
+        case ESP_GAP_BLE_ADV_STOP_COMPLETE_EVT:
+            if (param->adv_stop_cmpl.status == ESP_BT_STATUS_SUCCESS) {
+                advertising_ = false;
+            }
+            pushDiag(DIAG_ADV_STOP, (uint8_t)param->adv_stop_cmpl.status);
+            break;
+        case ESP_GAP_BLE_READ_RSSI_COMPLETE_EVT:
+            pushDiag(DIAG_RSSI, (uint8_t)param->read_rssi_cmpl.status,
+                     (uint16_t)(int16_t)param->read_rssi_cmpl.rssi);
+            break;
+        case ESP_GAP_BLE_UPDATE_CONN_PARAMS_EVT:
+            pushDiag(DIAG_CONN_PARAMS, (uint8_t)param->update_conn_params.status,
+                     param->update_conn_params.conn_int,
+                     param->update_conn_params.latency,
+                     param->update_conn_params.timeout, 0,
+                     param->update_conn_params.bda);
+            break;
+        default:
+            break;
+    }
+}
+
+void BleSerialManager::onGattsEvent(int event, const void *p) {
+    const esp_ble_gatts_cb_param_t *param = static_cast<const esp_ble_gatts_cb_param_t *>(p);
+    if (!param) return;
+    switch (static_cast<esp_gatts_cb_event_t>(event)) {
+        case ESP_GATTS_CONNECT_EVT:
+            pushDiag(DIAG_CONNECT, 0, param->connect.conn_id,
+                     param->connect.conn_params.interval,
+                     param->connect.conn_params.latency,
+                     param->connect.conn_params.timeout,
+                     param->connect.remote_bda);
+            break;
+        case ESP_GATTS_DISCONNECT_EVT:
+            pushDiag(DIAG_DISCONNECT, 0, param->disconnect.conn_id,
+                     (uint16_t)param->disconnect.reason, 0, 0,
+                     param->disconnect.remote_bda);
+            break;
+        case ESP_GATTS_MTU_EVT:
+            pushDiag(DIAG_MTU, 0, param->mtu.conn_id, param->mtu.mtu);
+            break;
+        default:
+            break;
+    }
+}
+
+void BleSerialManager::pushDiag(uint8_t type, uint8_t status, uint16_t v1, uint16_t v2,
+                                uint16_t v3, uint16_t v4, const uint8_t *bda) {
+    size_t head = diagHead_;
+    size_t next = (head + 1) % kDiagQueueLen;
+    if (next == diagTail_) {
+        diagDropped_ = diagDropped_ + 1;
+        return;
+    }
+    DiagEvent &e = diagQueue_[head];
+    e.ms = millis();
+    e.type = type;
+    e.status = status;
+    e.v1 = v1;
+    e.v2 = v2;
+    e.v3 = v3;
+    e.v4 = v4;
+    if (bda) {
+        std::memcpy(e.bda, bda, sizeof(e.bda));
+    } else {
+        std::memset(e.bda, 0, sizeof(e.bda));
+    }
+    diagHead_ = next;
+}
+
+void BleSerialManager::drainDiag() {
+    while (diagTail_ != diagHead_) {
+        const DiagEvent &e = diagQueue_[diagTail_];
+        const uint8_t *b = e.bda;
+        switch (e.type) {
+            case DIAG_CONNECT:
+                // interval in 1.25 ms units, timeout in 10 ms units
+                Serial.printf("[BLE %lu] CONNECT conn_id=%u peer=%02x:%02x:%02x:%02x:%02x:%02x "
+                              "interval=%.2fms latency=%u timeout=%ums\r\n",
+                              (unsigned long)e.ms, e.v1, b[0], b[1], b[2], b[3], b[4], b[5],
+                              e.v2 * 1.25f, e.v3, (unsigned)e.v4 * 10u);
+                break;
+            case DIAG_DISCONNECT:
+                Serial.printf("[BLE %lu] DISCONNECT conn_id=%u peer=%02x:%02x:%02x:%02x:%02x:%02x "
+                              "reason=0x%02x (%s)\r\n",
+                              (unsigned long)e.ms, e.v1, b[0], b[1], b[2], b[3], b[4], b[5],
+                              e.v2, disconnectReasonName(e.v2));
+                break;
+            case DIAG_MTU:
+                if (diagEnabled_) {
+                    Serial.printf("[BLE %lu] MTU conn_id=%u mtu=%u\r\n", (unsigned long)e.ms, e.v1, e.v2);
+                }
+                break;
+            case DIAG_CONN_PARAMS:
+                if (diagEnabled_) {
+                    Serial.printf("[BLE %lu] CONN_PARAMS status=%u interval=%.2fms latency=%u timeout=%ums\r\n",
+                                  (unsigned long)e.ms, e.status, e.v1 * 1.25f, e.v2, (unsigned)e.v3 * 10u);
+                }
+                break;
+            case DIAG_ADV_REQUEST:
+                if (diagEnabled_) {
+                    Serial.printf("[BLE %lu] advertising start requested\r\n", (unsigned long)e.ms);
+                }
+                break;
+            case DIAG_ADV_START:
+                // Failures are always reported; routine successes only with diagnostics on
+                if (diagEnabled_ || e.status != 0) {
+                    Serial.printf("[BLE %lu] ADV_START status=%u%s\r\n", (unsigned long)e.ms, e.status,
+                                  e.status == 0 ? " (advertising)" : " (FAILED)");
+                }
+                break;
+            case DIAG_RSSI:
+                if (diagEnabled_) {
+                    Serial.printf("[BLE %lu] RSSI %d dBm (status=%u, max loop gap %lu ms)\r\n",
+                                  (unsigned long)e.ms, (int)(int16_t)e.v1, e.status, maxLoopGapMs_);
+                }
+                maxLoopGapMs_ = 0;
+                break;
+            case DIAG_ADV_STOP:
+                if (diagEnabled_) {
+                    Serial.printf("[BLE %lu] ADV_STOP status=%u\r\n", (unsigned long)e.ms, e.status);
+                }
+                break;
+            default:
+                break;
+        }
+        diagTail_ = (diagTail_ + 1) % kDiagQueueLen;
+    }
+    if (diagDropped_) {
+        Serial.printf("[BLE] %u diagnostic events dropped\r\n", (unsigned)diagDropped_);
+        diagDropped_ = 0;
+    }
+}
+#endif
 
 void BleSerialManager::handleRxData(const char *data, size_t len) {
     if (!data || len == 0) return;

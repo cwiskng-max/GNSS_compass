@@ -404,6 +404,36 @@ void SerialCli::executeCommand(const char *cmdLine, unsigned long nowMs, CliSour
         return;
     }
 
+    // BLE link status and diagnostic logging control
+    if (equalsIgnoreCase(cmdLine, "ble") || startsWithIgnoreCase(cmdLine, "ble ")) {
+        const char *arg = cmdLine + 3;
+        while (*arg == ' ' || *arg == '\t') arg++;
+        if (!bleManager_) {
+            println("[BLE] Bluetooth not available");
+            return;
+        }
+        if (equalsIgnoreCase(arg, "diag on")) {
+            bleManager_->setDiagEnabled(true);
+            println("[BLE] Diagnostics ON (RSSI every 3 s while connected, main-loop stall reports; USB serial)");
+        } else if (equalsIgnoreCase(arg, "diag off")) {
+            bleManager_->setDiagEnabled(false);
+            println("[BLE] Diagnostics OFF");
+        } else if (arg[0] == '\0' || equalsIgnoreCase(arg, "status")) {
+            printFormat("[BLE] Device: %s\r\n", bleManager_->getDeviceName());
+            printFormat("[BLE] Connected: %s | Subscribed: %s | MTU: %u\r\n",
+                        bleManager_->isConnected() ? "yes" : "no",
+                        bleManager_->isSubscribed() ? "yes" : "no",
+                        (unsigned)bleManager_->getMtu());
+#if defined(ARDUINO)
+            printFormat("[BLE] Advertising: %s\r\n", bleManager_->isAdvertising() ? "yes" : "no");
+#endif
+            printFormat("[BLE] Diagnostics: %s\r\n", bleManager_->isDiagEnabled() ? "on" : "off");
+        } else {
+            println("Usage: ble [status] | ble diag on|off");
+        }
+        return;
+    }
+
     if (startsWithIgnoreCase(cmdLine, "cal")) {
         const char *arg = cmdLine + 3;
         while (*arg == ' ' || *arg == '\t') arg++;
@@ -525,6 +555,7 @@ void SerialCli::printHelp() {
     println("  cal [snap|zero|<val>] - View or configure antenna calibration");
     println("  sim [on|off|hdg|pos|grid|rover|status] - GPS simulation commands");
     println("  exit (or disconnect)  - Terminate wireless BLE connection cleanly");
+    println("  ble [diag on|off]     - BLE link status / toggle BLE RF diagnostics");
     println("  $<NMEA/KSXT sentence> - Inject raw GNSS sentence directly");
     println("  help (or ?)           - Show this help menu");
     println("====================================");
