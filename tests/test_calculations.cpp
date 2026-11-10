@@ -2800,6 +2800,12 @@ void test_ble_serial_manager() {
     ASSERT_TRUE(!ble.isConnected());
     ASSERT_TRUE(connState == false);
 
+    // Verify disconnect() helper
+    ble.setConnected(true);
+    ASSERT_TRUE(ble.isConnected());
+    ble.disconnect();
+    ASSERT_TRUE(!ble.isConnected());
+
     PASS();
 }
 
@@ -2849,6 +2855,13 @@ void test_serial_cli_dual_transport() {
     cli.broadcastln("SYSTEM BOOT COMPLETED");
     ASSERT_TRUE(broadcastCapture.find("SYSTEM BOOT COMPLETED\r\n") != std::string::npos);
     ASSERT_TRUE(ble.getTxBuffer().find("SYSTEM BOOT COMPLETED\r\n") != std::string::npos);
+
+    // 4. Verify 'disconnect' command terminates BLE connection
+    cli.setOutputHandler(nullptr);
+    ble.clearTxBuffer();
+    cli.executeCommand("disconnect", 0, CLI_SOURCE_BLE);
+    ASSERT_TRUE(!ble.isConnected());
+    ASSERT_TRUE(ble.getTxBuffer().find("Disconnecting BLE connection...") != std::string::npos);
 
     PASS();
 }

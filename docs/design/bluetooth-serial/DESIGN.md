@@ -263,8 +263,9 @@ To provide the operator with immediate feedback without cluttering the 480×480 
 
 Because modern Chromium browsers support the **Web Bluetooth API**, operators on macOS, Windows, Linux, and ChromeOS can access the serial CLI without installing any drivers or terminal programs:
 
-* Connect via an open-source single-file HTML/JS Web Bluetooth Terminal (hosted on GitHub Pages or run locally).
-* Click **"Connect"** -> Browser presents device picker -> Click `GNSS-Compass-XXXX` -> Interactive terminal connects in the tab.
+* Connect using the open-source Web Bluetooth terminal [HTML-BLEserial](https://github.com/ednieuw/HTML-BLEserial) by ednieuw.
+* Simply open `BLE_UART_Terminal.html` (or `BLE_UART_Terminal-darktheme.html`) directly in Google Chrome or Microsoft Edge.
+* Click **"Connect"** -> Browser presents device picker -> Click `GNSS-Compass-xxxxxx` -> Interactive terminal connects in the tab.
 
 ---
 

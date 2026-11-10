@@ -50,6 +50,10 @@ Because the Elecrow 2.1" display is often mounted on a mast, tripod, or vehicle 
    * **M3 (`cal snap`):** `cal snap\n` (1-touch antenna heading alignment snapshot)
    * **M4 (`history`):** `rover history\n` (Display visited contest grid roster)
    * **M5 (`undo`):** `rover undo\n` (Discard accidental stop and re-arm)
+   * **M6 (`exit`):** `disconnect\n` (Cleanly release BLE radio link)
+
+> [!TIP]
+> In *Serial Bluetooth Terminal*, go to **Settings -> Bluetooth LE** and verify that **"Close GATT on disconnect"** is enabled, or simply type `disconnect` in the terminal before switching devices to release the Bluetooth link immediately.
 
 #### iPhone / iPad Connection
 1. Install **[BLE Terminal HM-10](https://apps.apple.com/us/app/ble-terminal-hm-10/id1398703795)** or **[Adafruit Bluefruit Connect](https://apps.apple.com/us/app/adafruit-bluefruit-connect/id830125974)** from the App Store.
@@ -57,9 +61,14 @@ Because the Elecrow 2.1" display is often mounted on a mast, tripod, or vehicle 
 3. Select **UART** mode. Bidirectional terminal access is active.
 
 #### Laptop / Desktop (Web Bluetooth — Zero Software Installation)
-1. Open Google Chrome, Microsoft Edge, or Chromium on macOS, Linux, Windows, or ChromeOS.
-2. Open any Web Bluetooth terminal (or a local HTML/JS Web Bluetooth page).
-3. Click **Connect**, select `GNSS-Compass-xxxxxx`, and communicate directly from your browser tab.
+You can connect directly from **Google Chrome**, **Microsoft Edge**, or **Chromium** on macOS, Linux, Windows, or ChromeOS without installing any desktop software or drivers using the Web Bluetooth API:
+
+1. Open the open-source **[HTML-BLEserial](https://github.com/ednieuw/HTML-BLEserial)** Web Bluetooth terminal by ednieuw:
+   * Clone or download the repository from [GitHub](https://github.com/ednieuw/HTML-BLEserial).
+   * Double-click `BLE_UART_Terminal.html` (or `BLE_UART_Terminal-darktheme.html`) to open it directly in Chrome or Edge (can be run locally from disk or hosted on GitHub Pages).
+2. Click the **CONNECT** button in the webpage.
+3. Select `GNSS-Compass-xxxxxx` from the browser device prompt and click **Pair**.
+4. You now have full bidirectional CLI access (`status`, `rover`, `cal`, `test`, `help`) directly within your browser tab.
 
 ---
 
@@ -86,9 +95,11 @@ Displays a summary of available serial commands.
 
 === GNSS Compass Serial Commands ===
   status (or gps)       - Live GNSS receiver stream diagnostic
+  rover [status|start|stop|history|undo|max|clear] - Rover transit tracking
   test (or demo)        - Run visual display self-test demo
   cal [snap|zero|<val>] - View or configure antenna calibration
   sim [on|off|hdg|pos|grid|rover|status] - GPS simulation commands
+  exit (or disconnect)  - Terminate wireless BLE connection cleanly
   $<NMEA/KSXT sentence> - Inject raw GNSS sentence directly
   help (or ?)           - Show this help menu
 ====================================
@@ -286,6 +297,18 @@ $KSXT,20261106202506.00,-122.12500000,37.02083333,2100.00,145.20,0.00,0.00,0.022
 ```
 
 Injecting raw sentences automatically enables simulation mode (`simModeActive = true`).
+
+---
+
+### 3.7 Clean Wireless Disconnect (`disconnect`, `exit`, `quit`)
+Terminates an active Bluetooth Low Energy session cleanly from the peripheral side:
+
+```text
+> disconnect
+Disconnecting BLE connection...
+```
+
+This immediately signals the ESP32 to send a low-level `LL_TERMINATE_IND` packet, terminating any lingering background OS connection handle and restarting BLE advertising so other phones, tablets, or browser sessions can connect without needing to toggle Bluetooth.
 
 ---
 

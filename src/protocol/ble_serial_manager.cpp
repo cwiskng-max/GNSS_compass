@@ -24,9 +24,10 @@ public:
         uint16_t connId = 0;
         if (pServer && param) {
             connId = param->connect.conn_id;
-            // Request low-latency, high-throughput BLE connection parameters:
-            // minInterval: 6 (7.5ms), maxInterval: 16 (20.0ms), latency: 0, timeout: 400 (4.0s)
-            pServer->updateConnParams(param->connect.remote_bda, 6, 16, 0, 400);
+            // Request low-latency, high-throughput BLE connection parameters universally
+            // accepted across Windows, Android, iOS, and macOS:
+            // minInterval: 12 (15.0ms), maxInterval: 24 (30.0ms), latency: 0, timeout: 400 (4.0s)
+            pServer->updateConnParams(param->connect.remote_bda, 12, 24, 0, 400);
         }
         if (mgr_) mgr_->handleConnect(connId);
     }
@@ -235,6 +236,18 @@ void BleSerialManager::printFormat(const char *fmt, ...) {
     vsnprintf(buf, sizeof(buf), fmt, args);
     va_end(args);
     print(buf);
+}
+
+void BleSerialManager::disconnect() {
+#if defined(ARDUINO) && !defined(ARDUINO_TEST_BUILD)
+    if (connected_ && pServer_) {
+        pServer_->disconnect(connId_);
+    }
+#else
+    if (connected_) {
+        handleDisconnect();
+    }
+#endif
 }
 
 void BleSerialManager::handleConnect(uint16_t connId) {

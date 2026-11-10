@@ -358,6 +358,17 @@ void SerialCli::executeCommand(const char *cmdLine, unsigned long nowMs, CliSour
         return;
     }
 
+    if (equalsIgnoreCase(cmdLine, "disconnect") || equalsIgnoreCase(cmdLine, "exit") ||
+        equalsIgnoreCase(cmdLine, "quit")) {
+        if (activeSource_ == CLI_SOURCE_BLE && bleManager_) {
+            println("Disconnecting BLE connection...");
+            bleManager_->disconnect();
+        } else {
+            println("[CLI] 'disconnect' applies to active wireless Bluetooth sessions.");
+        }
+        return;
+    }
+
     printFormat("Unknown command: '%s'. Type 'help' for available commands.\r\n", cmdLine);
 }
 
@@ -369,6 +380,7 @@ void SerialCli::printHelp() {
     println("  test (or demo)        - Run visual display self-test demo");
     println("  cal [snap|zero|<val>] - View or configure antenna calibration");
     println("  sim [on|off|hdg|pos|grid|rover|status] - GPS simulation commands");
+    println("  exit (or disconnect)  - Terminate wireless BLE connection cleanly");
     println("  $<NMEA/KSXT sentence> - Inject raw GNSS sentence directly");
     println("  help (or ?)           - Show this help menu");
     println("====================================");

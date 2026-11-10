@@ -45,6 +45,7 @@ public:
     void print(const char *str);
     void println(const char *str = "");
     void printFormat(const char *fmt, ...);
+    void disconnect();
 
     // Inbound data callback hook (called when phone/laptop writes to RX characteristic)
     void setDataReceivedCallback(BleDataReceivedCallback cb, void *context = nullptr) {
