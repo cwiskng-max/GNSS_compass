@@ -1508,7 +1508,7 @@ void test_serial_cli_gps_commands() {
     ASSERT_TRUE(cliOutput.find("[GPS ERROR] Usage: gps send") != std::string::npos);
     cliOutput.clear();
 
-    // 8. 'gps check' / 'gps audit' query commands
+    // 8. 'gps check' / 'gps audit' query commands & structured report parsing
     sentUartData.clear();
     cli.executeCommand("gps check");
     ASSERT_TRUE(cliOutput.find("[GPS AUDIT] Querying receiver parameters") != std::string::npos);
@@ -1516,6 +1516,31 @@ void test_serial_cli_gps_commands() {
     ASSERT_TRUE(sentUartData.find("MODE\r\n") != std::string::npos);
     ASSERT_TRUE(sentUartData.find("UNILOGLIST COM1\r\n") != std::string::npos);
     ASSERT_TRUE(sentUartData.find("LOG COM1 HEADINGSTATUSA ONCE\r\n") != std::string::npos);
+    cliOutput.clear();
+
+    // Feed Unicore UM982 response lines including $command echoes
+    gm.feedSentence("$command,version,response: OK*76");
+    gm.feedSentence("#VERSION,98,GPS,UNKNOWN,1,14.733,30,0,0,18;UM982,R4.10Build13495,HRPT00-S10C-P,2310415000012-LR23C1261413487,ff2ab7d1d50ed90e,2024/04/02*d5252814");
+    gm.feedSentence("$command,mode,response: OK*27");
+    gm.feedSentence("#MODE,98,GPS,UNKNOWN,1,14.733,30,0,0,18;MODE ROVER UAV,*384fe96e");
+    gm.feedSentence("$command,uniloglist com1,response: OK*3c");
+    gm.feedSentence("#UNILOGLIST,98,GPS,UNKNOWN,1,14.733,30,0,0,18;");
+    gm.feedSentence("< 1");
+    gm.feedSentence("< KSXT COM1 0.2 ");
+    gm.feedSentence("$command,log com1 headingstatusa once,response: OK*47");
+    gm.feedSentence("#HEADINGSTATUSA,98,GPS,UNKNOWN,1,14.733,30,0,0,18;101.6000,2.5000,0.0000,0.0000,0.0000,0.0000*0cf05c74");
+
+    // $command echoes must be suppressed during audit
+    ASSERT_TRUE(cliOutput.find("$command") == std::string::npos);
+    // Structured audit report card must be rendered
+    ASSERT_TRUE(cliOutput.find("GNSS Receiver Audit Report") != std::string::npos);
+    ASSERT_TRUE(cliOutput.find("Hardware Model: UM982 (PN: HRPT00-S10C-P)") != std::string::npos);
+    ASSERT_TRUE(cliOutput.find("Serial Number:  2310415000012-LR23C1261413487") != std::string::npos);
+    ASSERT_TRUE(cliOutput.find("Firmware:       R4.10Build13495 (2024/04/02)") != std::string::npos);
+    ASSERT_TRUE(cliOutput.find("Operating Mode: ROVER UAV") != std::string::npos);
+    ASSERT_TRUE(cliOutput.find("COM1 Output:    KSXT COM1 0.2s (5 Hz)") != std::string::npos);
+    ASSERT_TRUE(cliOutput.find("Baseline Range: 101.6 cm (± 2.5 cm)  [CONSTRAINED]") != std::string::npos);
+    ASSERT_TRUE(cliOutput.find("Overall Config: [OK] Optimal for Dual-Antenna Compass") != std::string::npos);
     cliOutput.clear();
 
     // 9. 'gps config' execution and progress mirroring

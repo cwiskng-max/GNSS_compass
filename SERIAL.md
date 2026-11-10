@@ -206,17 +206,26 @@ If your physical antenna spacing is known (e.g. 101.6 cm / 40 inches center-to-c
 ```
 
 #### 4. Audit Running Receiver Parameters (`gps check` or `gps audit`)
-Non-destructively queries the receiver's running settings (`VERSION`, `MODE`, `UNILOGLIST COM1`, and `HEADINGSTATUSA` for baseline constraint) to inspect firmware build, operating mode, active message logs, and configured baseline length/tolerance without writing to NOR Flash. If TX status has not yet been established at the time of query, `gps check` automatically initiates an in-flight probe on GPIO 43 and executes the query sequence as soon as the receiver acknowledges:
+Non-destructively queries the receiver's running settings (`VERSION`, `MODE`, `UNILOGLIST COM1`, and `HEADINGSTATUSA` for baseline constraint) to inspect firmware build, operating mode, active message logs, and configured baseline length/tolerance without writing to NOR Flash. If TX status has not yet been established at the time of query, `gps check` automatically initiates an in-flight probe on GPIO 43 and executes the query sequence as soon as the receiver acknowledges.
+
+Intermediate `$command` echoes are suppressed during the audit, and incoming payloads are formatted into a clean status card:
 
 ```text
 > gps check
 [GPS AUDIT] Querying receiver parameters (VERSION, MODE, UNILOGLIST COM1, HEADINGSTATUSA)...
-[GPS RX] #VERSION,98,GPS,UNKNOWN,1,...;UM982,R4.10Build13495...
-[GPS RX] #MODE,98,GPS,UNKNOWN,1,...;MODE ROVER UAV,*...
-[GPS RX] #UNILOGLIST,98,GPS,UNKNOWN,1,...;
-[GPS RX] <	1
-[GPS RX] <	KSXT COM1 0.2
-[GPS RX] #HEADINGSTATUSA,98,GPS,UNKNOWN,1,...;101.6000,2.5000,0.0,0.0,...
+
+========================================
+     GNSS Receiver Audit Report         
+========================================
+Hardware Model: UM982 (PN: HRPT00-S10C-P)
+Serial Number:  2310415000012-LR23C1261413487
+Firmware:       R4.10Build13495 (2024/04/02)
+Operating Mode: ROVER UAV
+COM1 Output:    KSXT COM1 0.2s (5 Hz)
+Baseline Range: 101.6 cm (± 2.5 cm)  [CONSTRAINED]
+Overall Config: [OK] Optimal for Dual-Antenna Compass
+========================================
+> 
 ```
 
 #### 5. Send Raw Receiver Command (`gps send <cmd>`)

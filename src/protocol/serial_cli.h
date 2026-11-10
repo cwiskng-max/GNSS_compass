@@ -143,6 +143,57 @@ public:
     void printRoverHelp();
     void printPrompt();
 
+    // Receiver audit query & parsing
+    struct GpsAuditState {
+        bool inProgress = false;
+        unsigned long startTimeMs = 0;
+        unsigned long lastRespTimeMs = 0;
+        CliSource source = CLI_SOURCE_USB;
+        bool receivedVersion = false;
+        bool receivedMode = false;
+        bool receivedUniloglist = false;
+        bool receivedHeadingStatus = false;
+        int expectedLogs = -1;
+        int collectedLogs = 0;
+        char model[32] = {0};
+        char fwVersion[48] = {0};
+        char hwPn[32] = {0};
+        char serialNum[48] = {0};
+        char buildDate[16] = {0};
+        char mode[32] = {0};
+        char com1Logs[128] = {0};
+        float baselineLengthCm = 0.0f;
+        float baselineTolCm = 0.0f;
+        bool hasBaseline = false;
+
+        void reset(unsigned long nowMs, CliSource src) {
+            inProgress = true;
+            startTimeMs = nowMs;
+            lastRespTimeMs = nowMs;
+            source = src;
+            receivedVersion = false;
+            receivedMode = false;
+            receivedUniloglist = false;
+            receivedHeadingStatus = false;
+            expectedLogs = -1;
+            collectedLogs = 0;
+            model[0] = '\0';
+            fwVersion[0] = '\0';
+            hwPn[0] = '\0';
+            serialNum[0] = '\0';
+            buildDate[0] = '\0';
+            mode[0] = '\0';
+            com1Logs[0] = '\0';
+            baselineLengthCm = 0.0f;
+            baselineTolCm = 0.0f;
+            hasBaseline = false;
+        }
+
+        bool isComplete() const {
+            return receivedVersion && receivedMode && receivedUniloglist && receivedHeadingStatus;
+        }
+    };
+
 private:
     void print(const char *str);
     void println(const char *str = "");
@@ -153,6 +204,10 @@ private:
 
     void registerGpsCallbacks();
     void attachBle();
+
+    void startGpsAudit(unsigned long nowMs);
+    bool handleAuditResponse(const char *resp);
+    void renderAuditReport();
 
     void handleSimCommand(const char *arg, unsigned long nowMs);
     void handleCalCommand(const char *arg);
@@ -192,6 +247,7 @@ private:
     bool pendingRoverClear_;
     bool pendingAudit_;
     CliSource pendingAuditSource_;
+    GpsAuditState auditState_;
     LineBuffer usbLine_;
     LineBuffer bleLine_;
 };

@@ -69,6 +69,9 @@ void SerialCli::registerGpsCallbacks() {
     gpsManager_.setOnResponse([](const char *resp, void *ctx) {
         auto *self = static_cast<SerialCli*>(ctx);
         if (self && !self->gpsManager_.getConfigPipeline().isRunning()) {
+            if (self->auditState_.inProgress && self->handleAuditResponse(resp)) {
+                return;
+            }
             self->broadcastFormat("[GPS RX] %s\r\n", resp);
         }
     }, this);
@@ -91,13 +94,10 @@ void SerialCli::registerGpsCallbacks() {
             CliSource prevSource = self->getActiveSource();
             self->setActiveSource(self->pendingAuditSource_);
             if (state == GpsTxState::Available) {
-                self->println("[GPS AUDIT] Querying receiver parameters (VERSION, MODE, UNILOGLIST COM1, HEADINGSTATUSA)...");
-                self->gpsManager_.sendCommand("VERSION");
-                self->gpsManager_.sendCommand("MODE");
-                self->gpsManager_.sendCommand("UNILOGLIST COM1");
-                self->gpsManager_.sendCommand("LOG COM1 HEADINGSTATUSA ONCE");
+                self->startGpsAudit(0);
             } else if (state == GpsTxState::Unavailable) {
                 self->println("[GPS] Cannot audit: TX wire not connected (Receive-only mode).");
+                self->printPrompt();
             }
             self->setActiveSource(prevSource);
         }
@@ -110,6 +110,7 @@ void SerialCli::begin() {
     pendingRoverClear_ = false;
     pendingAudit_ = false;
     pendingAuditSource_ = CLI_SOURCE_USB;
+    auditState_.inProgress = false;
     activeSource_ = CLI_SOURCE_USB;
 }
 
@@ -243,12 +244,27 @@ void SerialCli::handleBleInput(const char *data, size_t len, unsigned long nowMs
 }
 
 void SerialCli::update(unsigned long nowMs) {
+#if defined(ARDUINO)
+    if (!nowMs) nowMs = millis();
+#endif
+
     if (bleManager_) {
         bleManager_->update(nowMs);
     }
 
+    if (auditState_.inProgress) {
+        bool quietAfterResponses = (auditState_.receivedVersion &&
+                                     auditState_.receivedMode &&
+                                     auditState_.lastRespTimeMs > 0 &&
+                                     (nowMs - auditState_.lastRespTimeMs >= 500));
+        bool hardTimeout = (nowMs - auditState_.startTimeMs >= 3500);
+
+        if (quietAfterResponses || hardTimeout) {
+            renderAuditReport();
+        }
+    }
+
 #if defined(ARDUINO)
-    if (!nowMs) nowMs = millis();
     while (Serial.available()) {
         char c = (char)Serial.read();
         // Raw sentence injection lines ("$...") are not echoed
@@ -277,6 +293,9 @@ void SerialCli::update(unsigned long nowMs) {
 }
 
 void SerialCli::executeCommand(const char *cmdLine, unsigned long nowMs, CliSource source) {
+#if defined(ARDUINO)
+    if (!nowMs) nowMs = millis();
+#endif
     activeSource_ = source;
     if (!cmdLine) return;
 
@@ -403,7 +422,9 @@ void SerialCli::executeCommand(const char *cmdLine, unsigned long nowMs, CliSour
         printFormat("Unknown command: '%s'. Type 'help' for available commands.\r\n", cleanCmd);
     }
 
-    printPrompt();
+    if (!pendingAudit_ && !auditState_.inProgress) {
+        printPrompt();
+    }
 }
 
 void SerialCli::handleGpsCommand(const char *arg, unsigned long nowMs) {
@@ -473,6 +494,10 @@ void SerialCli::handleGpsCommand(const char *arg, unsigned long nowMs) {
     }
 
     if (equalsIgnoreCase(arg, "check") || equalsIgnoreCase(arg, "audit")) {
+        if (auditState_.inProgress) {
+            println("[GPS AUDIT] Audit already in progress. Please wait...");
+            return;
+        }
         if (!gpsManager_.isSendAvailable()) {
             if (gpsManager_.getTxState() == GpsTxState::Unknown) {
                 println("[GPS AUDIT] Testing TX connection on GPIO 43 before query...");
@@ -484,11 +509,7 @@ void SerialCli::handleGpsCommand(const char *arg, unsigned long nowMs) {
             println("[GPS] Cannot audit: TX wire not connected (Receive-only mode).");
             return;
         }
-        println("[GPS AUDIT] Querying receiver parameters (VERSION, MODE, UNILOGLIST COM1, HEADINGSTATUSA)...");
-        gpsManager_.sendCommand("VERSION");
-        gpsManager_.sendCommand("MODE");
-        gpsManager_.sendCommand("UNILOGLIST COM1");
-        gpsManager_.sendCommand("LOG COM1 HEADINGSTATUSA ONCE");
+        startGpsAudit(nowMs);
         return;
     }
 
@@ -498,6 +519,259 @@ void SerialCli::handleGpsCommand(const char *arg, unsigned long nowMs) {
     println("  gps config [baseline] - Run automated 5 Hz $KSXT receiver setup");
     println("  gps send <command>    - Send raw command to UM982 receiver");
     println("  gps check (or audit)  - Query receiver running parameters");
+}
+
+static void extractField(const char *src, int targetIdx, char *dst, size_t dstSize) {
+    if (!src || !dst || dstSize == 0) return;
+    dst[0] = '\0';
+    int idx = 0;
+    const char *p = src;
+    while (*p && idx < targetIdx) {
+        if (*p == ',') idx++;
+        p++;
+    }
+    if (idx != targetIdx) return;
+    size_t i = 0;
+    while (*p && *p != ',' && *p != '*' && *p != '\r' && *p != '\n' && (i + 1) < dstSize) {
+        dst[i++] = *p++;
+    }
+    dst[i] = '\0';
+}
+
+void SerialCli::startGpsAudit(unsigned long nowMs) {
+#if defined(ARDUINO)
+    if (!nowMs) nowMs = millis();
+#endif
+    auditState_.reset(nowMs, activeSource_);
+    println("[GPS AUDIT] Querying receiver parameters (VERSION, MODE, UNILOGLIST COM1, HEADINGSTATUSA)...");
+    gpsManager_.sendCommand("VERSION");
+    gpsManager_.sendCommand("MODE");
+    gpsManager_.sendCommand("UNILOGLIST COM1");
+    gpsManager_.sendCommand("LOG COM1 HEADINGSTATUSA ONCE");
+}
+
+bool SerialCli::handleAuditResponse(const char *resp) {
+    if (!auditState_.inProgress || !resp) return false;
+
+    unsigned long nowMs = 0;
+#if defined(ARDUINO)
+    nowMs = millis();
+#endif
+    if (nowMs > 0) {
+        auditState_.lastRespTimeMs = nowMs;
+    }
+
+    // Suppress command execution echoes (e.g. "$command,version,response: OK*76")
+    if (startsWithIgnoreCase(resp, "$command,") || startsWithIgnoreCase(resp, "$command ")) {
+        return true;
+    }
+
+    // Report error responses
+    if (strstr(resp, "ERROR") != nullptr || strstr(resp, "error") != nullptr) {
+        printFormat("[GPS AUDIT ERROR] %s\r\n", resp);
+        return true;
+    }
+
+    // Parse #VERSION
+    if (startsWithIgnoreCase(resp, "#VERSION")) {
+        const char *semi = strchr(resp, ';');
+        if (semi) {
+            const char *payload = semi + 1;
+            extractField(payload, 0, auditState_.model, sizeof(auditState_.model));
+            extractField(payload, 1, auditState_.fwVersion, sizeof(auditState_.fwVersion));
+            extractField(payload, 2, auditState_.hwPn, sizeof(auditState_.hwPn));
+            extractField(payload, 3, auditState_.serialNum, sizeof(auditState_.serialNum));
+            extractField(payload, 5, auditState_.buildDate, sizeof(auditState_.buildDate));
+        }
+        auditState_.receivedVersion = true;
+        if (auditState_.isComplete()) {
+            renderAuditReport();
+        }
+        return true;
+    }
+
+    // Parse #MODE
+    if (startsWithIgnoreCase(resp, "#MODE")) {
+        const char *semi = strchr(resp, ';');
+        if (semi) {
+            const char *payload = semi + 1;
+            while (*payload == ' ' || *payload == '\t') payload++;
+            if (startsWithIgnoreCase(payload, "MODE ")) {
+                payload += 5;
+            }
+            extractField(payload, 0, auditState_.mode, sizeof(auditState_.mode));
+        }
+        auditState_.receivedMode = true;
+        if (auditState_.isComplete()) {
+            renderAuditReport();
+        }
+        return true;
+    }
+
+    // Parse #UNILOGLIST
+    if (startsWithIgnoreCase(resp, "#UNILOGLIST")) {
+        // Acknowledge header; wait for entries
+        return true;
+    }
+
+    // Parse UNILOGLIST log entries starting with '<'
+    if (resp[0] == '<') {
+        const char *p = resp + 1;
+        while (*p == ' ' || *p == '\t') p++;
+        // Check if digits-only line (e.g. "< 1" or "< \t 1 \r\n")
+        bool isDigitsOnly = true;
+        bool hasDigits = false;
+        const char *temp = p;
+        while (*temp && *temp != '\r' && *temp != '\n') {
+            if (*temp >= '0' && *temp <= '9') {
+                hasDigits = true;
+            } else if (*temp != ' ' && *temp != '\t') {
+                isDigitsOnly = false;
+                break;
+            }
+            temp++;
+        }
+        if (isDigitsOnly && hasDigits) {
+            auditState_.expectedLogs = atoi(p);
+            if (auditState_.expectedLogs == 0) {
+                auditState_.receivedUniloglist = true;
+                if (auditState_.isComplete()) {
+                    renderAuditReport();
+                }
+            }
+            return true;
+        }
+
+        if (!isDigitsOnly && *p != '\0') {
+            char logEntry[64] = {0};
+            if (strstr(p, "KSXT") != nullptr && strstr(p, "0.2") != nullptr) {
+                snprintf(logEntry, sizeof(logEntry), "KSXT COM1 0.2s (5 Hz)");
+            } else if (strstr(p, "KSXT") != nullptr && strstr(p, "0.1") != nullptr) {
+                snprintf(logEntry, sizeof(logEntry), "KSXT COM1 0.1s (10 Hz)");
+            } else if (strstr(p, "KSXT") != nullptr && strstr(p, "1") != nullptr) {
+                snprintf(logEntry, sizeof(logEntry), "KSXT COM1 1s (1 Hz)");
+            } else {
+                size_t len = 0;
+                while (p[len] && p[len] != '\r' && p[len] != '\n' && (len + 1) < sizeof(logEntry)) {
+                    logEntry[len] = p[len];
+                    len++;
+                }
+                while (len > 0 && (logEntry[len - 1] == ' ' || logEntry[len - 1] == '\t')) {
+                    logEntry[--len] = '\0';
+                }
+            }
+
+            if (logEntry[0] != '\0') {
+                if (auditState_.com1Logs[0] != '\0') {
+                    strncat(auditState_.com1Logs, ", ", sizeof(auditState_.com1Logs) - strlen(auditState_.com1Logs) - 1);
+                }
+                strncat(auditState_.com1Logs, logEntry, sizeof(auditState_.com1Logs) - strlen(auditState_.com1Logs) - 1);
+            }
+            auditState_.collectedLogs++;
+            if (auditState_.expectedLogs <= 0 || auditState_.collectedLogs >= auditState_.expectedLogs) {
+                auditState_.receivedUniloglist = true;
+            }
+            if (auditState_.isComplete()) {
+                renderAuditReport();
+            }
+        }
+        return true;
+    }
+
+    // Parse #HEADINGSTATUSA
+    if (startsWithIgnoreCase(resp, "#HEADINGSTATUSA") || startsWithIgnoreCase(resp, "#HEADINGSTATUS")) {
+        const char *semi = strchr(resp, ';');
+        if (semi) {
+            const char *payload = semi + 1;
+            char *endPtr = nullptr;
+            float lengthCm = std::strtof(payload, &endPtr);
+            float tolCm = 0.0f;
+            if (endPtr && *endPtr == ',') {
+                tolCm = std::strtof(endPtr + 1, nullptr);
+            }
+            auditState_.baselineLengthCm = lengthCm;
+            auditState_.baselineTolCm = tolCm;
+            auditState_.hasBaseline = (lengthCm > 0.001f);
+        }
+        auditState_.receivedHeadingStatus = true;
+        if (auditState_.isComplete()) {
+            renderAuditReport();
+        }
+        return true;
+    }
+
+    return false;
+}
+
+void SerialCli::renderAuditReport() {
+    if (!auditState_.inProgress) return;
+    auditState_.inProgress = false;
+
+    CliSource prevSource = activeSource_;
+    activeSource_ = auditState_.source;
+
+    println();
+    println("========================================");
+    println("     GNSS Receiver Audit Report         ");
+    println("========================================");
+    if (auditState_.model[0] != '\0') {
+        if (auditState_.hwPn[0] != '\0') {
+            printFormat("Hardware Model: %s (PN: %s)\r\n", auditState_.model, auditState_.hwPn);
+        } else {
+            printFormat("Hardware Model: %s\r\n", auditState_.model);
+        }
+    } else {
+        println("Hardware Model: Unknown");
+    }
+
+    if (auditState_.serialNum[0] != '\0') {
+        printFormat("Serial Number:  %s\r\n", auditState_.serialNum);
+    }
+
+    if (auditState_.fwVersion[0] != '\0') {
+        if (auditState_.buildDate[0] != '\0') {
+            printFormat("Firmware:       %s (%s)\r\n", auditState_.fwVersion, auditState_.buildDate);
+        } else {
+            printFormat("Firmware:       %s\r\n", auditState_.fwVersion);
+        }
+    } else {
+        println("Firmware:       Unknown");
+    }
+
+    if (auditState_.mode[0] != '\0') {
+        printFormat("Operating Mode: %s\r\n", auditState_.mode);
+    } else {
+        println("Operating Mode: Unknown");
+    }
+
+    if (auditState_.com1Logs[0] != '\0') {
+        printFormat("COM1 Output:    %s\r\n", auditState_.com1Logs);
+    } else {
+        println("COM1 Output:    None / Unknown");
+    }
+
+    if (auditState_.hasBaseline) {
+        printFormat("Baseline Range: %.1f cm (± %.1f cm)  [CONSTRAINED]\r\n",
+                    auditState_.baselineLengthCm, auditState_.baselineTolCm);
+    } else {
+        println("Baseline Range: Unconstrained (Auto)");
+    }
+
+    bool modeOk = (strstr(auditState_.mode, "ROVER") != nullptr);
+    bool logOk = (strstr(auditState_.com1Logs, "KSXT") != nullptr);
+    if (modeOk && logOk) {
+        println("Overall Config: [OK] Optimal for Dual-Antenna Compass");
+    } else if (auditState_.receivedVersion) {
+        println("Overall Config: [WARN] Receiver active; KSXT or ROVER not detected");
+    } else {
+        println("Overall Config: [FAIL] Incomplete response from receiver");
+    }
+
+    println("========================================");
+    println();
+    printPrompt();
+
+    activeSource_ = prevSource;
 }
 
 void SerialCli::printHelp() {
