@@ -282,6 +282,10 @@
 #define ROVER_ALERT_THRESHOLD_KM  16.0
 #define ROVER_WARNING_DURATION_MS 3000
 
+// GNSS Receiver TX Discovery Configuration
+#define GPS_TX_PROBE_TIMEOUT_MS      1000
+#define GPS_TX_PROBE_MAX_RETRIES     2
+
 // ==============================================================================
 // Character Rolling Helpers (for Target Grid manual editing)
 // ==============================================================================

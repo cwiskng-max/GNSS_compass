@@ -19,6 +19,9 @@ GpsManager::GpsManager()
       hdtPacketCount_(0),
       lastHdtMillis_(0),
       lineIndex_(0),
+      txState_(GpsTxState::Unknown),
+      lastProbeTime_(0),
+      probeRetries_(0),
       simulator_(nullptr),
       onHeadingUpdated_(nullptr),
       headingContext_(nullptr),
@@ -27,7 +30,9 @@ GpsManager::GpsManager()
       onTimeUpdated_(nullptr),
       timeContext_(nullptr),
       onRawSentence_(nullptr),
-      sentenceContext_(nullptr)
+      sentenceContext_(nullptr),
+      onResponse_(nullptr),
+      responseContext_(nullptr)
 #if defined(ARDUINO)
       , serialPort_(2)
 #endif
@@ -54,10 +59,46 @@ void GpsManager::checkStaleness(unsigned long nowMs) {
     }
 }
 
+void GpsManager::checkTxProbe(unsigned long nowMs) {
+    if (txState_ != GpsTxState::Probing) {
+        return;
+    }
+    if ((nowMs - lastProbeTime_) >= GPS_TX_PROBE_TIMEOUT_MS) {
+        if (probeRetries_ < GPS_TX_PROBE_MAX_RETRIES) {
+            probeRetries_++;
+            lastProbeTime_ = nowMs;
+            sendCommand("version");
+        } else {
+            txState_ = GpsTxState::Unavailable;
+        }
+    }
+}
+
+void GpsManager::probeTx(unsigned long nowMs) {
+#if defined(ARDUINO)
+    if (!nowMs) nowMs = millis();
+#endif
+    txState_ = GpsTxState::Probing;
+    probeRetries_ = 0;
+    lastProbeTime_ = nowMs;
+    sendCommand("version");
+}
+
+const char* GpsManager::getTxStateString() const {
+    switch (txState_) {
+        case GpsTxState::Unknown: return "UNKNOWN";
+        case GpsTxState::Probing: return "PROBING";
+        case GpsTxState::Available: return "AVAILABLE";
+        case GpsTxState::Unavailable: return "UNAVAILABLE";
+        default: return "UNKNOWN";
+    }
+}
+
 void GpsManager::update(unsigned long nowMs) {
 #if defined(ARDUINO)
     if (!nowMs) nowMs = millis();
     checkStaleness(nowMs);
+    checkTxProbe(nowMs);
 
     if (serialPort_.available()) {
         if (simulator_ && simulator_->isActive()) {
@@ -75,7 +116,10 @@ void GpsManager::update(unsigned long nowMs) {
         }
     }
 #else
-    if (nowMs) checkStaleness(nowMs);
+    if (nowMs) {
+        checkStaleness(nowMs);
+        checkTxProbe(nowMs);
+    }
 #endif
 }
 
@@ -193,6 +237,43 @@ GpsLinkVerdict GpsManager::evaluateStreamHealth(unsigned long nowMs) const {
 }
 
 void GpsManager::processSentence(char *sentence, unsigned long nowMs) {
+    if (!sentence) return;
+
+    // Check for command responses and receiver ASCII logs
+    const char *p = sentence;
+    while (*p == ' ' || *p == '\t') {
+        p++;
+    }
+
+    bool isResponse = false;
+    bool isProbeAck = false;
+
+    if (*p == '<') {
+        isResponse = true;
+        if (strncasecmp(p, "<OK", 3) == 0 || strncasecmp(p, "< OK", 4) == 0) {
+            isProbeAck = true;
+        }
+    } else if (*p == '#') {
+        isResponse = true;
+        if (strncasecmp(p, "#VERSION", 8) == 0) {
+            isProbeAck = true;
+        }
+    } else if (strncasecmp(p, "$command", 8) == 0) {
+        isResponse = true;
+        isProbeAck = true;
+    }
+
+    if (isProbeAck && txState_ == GpsTxState::Probing) {
+        txState_ = GpsTxState::Available;
+    }
+
+    if (isResponse) {
+        if (onResponse_) {
+            onResponse_(p, responseContext_);
+        }
+        return;
+    }
+
     float newHeading = 0.0f;
     BearingQuality newQuality = BEARING_LOST;
 

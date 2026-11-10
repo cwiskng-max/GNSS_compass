@@ -19,6 +19,7 @@ typedef void (*GpsLocationCallback)(const GeoPoint &pos, void *context);
 typedef void (*GpsTimeCallback)(int hours, int minutes, void *context);
 typedef void (*GpsSentenceCallback)(const char *sentence, void *context);
 typedef void (*GpsTxCallback)(const uint8_t *data, size_t len, void *context);
+typedef void (*GpsResponseCallback)(const char *response, void *context);
 
 /**
  * @brief Manages the GNSS receiver UART hardware link, streaming sentence assembly,
@@ -53,6 +54,16 @@ public:
         txCallback_ = cb;
         txContext_ = context;
     }
+
+    // TX presence discovery (Feature 1)
+    bool isSendAvailable() const { return txState_ == GpsTxState::Available; }
+    GpsTxState getTxState() const { return txState_; }
+    const char* getTxStateString() const;
+    void probeTx(unsigned long nowMs = 0);
+    void checkTxProbe(unsigned long nowMs);
+
+    unsigned int getProbeRetries() const { return probeRetries_; }
+    unsigned long getLastProbeTime() const { return lastProbeTime_; }
 
     // Simulator linkage
     void setSimulator(GpsSimulator *sim) { simulator_ = sim; }
@@ -116,6 +127,10 @@ public:
         onRawSentence_ = cb;
         sentenceContext_ = context;
     }
+    void setOnResponse(GpsResponseCallback cb, void *context = nullptr) {
+        onResponse_ = cb;
+        responseContext_ = context;
+    }
 
 #if defined(ARDUINO)
     HardwareSerial& getSerial() { return serialPort_; }
@@ -151,6 +166,11 @@ private:
     char feedBuffer_[BUFFER_SIZE];
     size_t lineIndex_;
 
+    // TX presence discovery state
+    GpsTxState txState_;
+    unsigned long lastProbeTime_;
+    unsigned int probeRetries_;
+
     // Linked simulator
     GpsSimulator *simulator_;
 
@@ -165,6 +185,8 @@ private:
     void *sentenceContext_;
     GpsTxCallback txCallback_ = nullptr;
     void *txContext_ = nullptr;
+    GpsResponseCallback onResponse_;
+    void *responseContext_;
 
 #if defined(ARDUINO)
     HardwareSerial serialPort_;

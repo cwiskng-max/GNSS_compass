@@ -40,3 +40,11 @@ enum GpsLinkVerdict : uint8_t {
     HeadingFixed = GPS_LINK_OK_FIXED
 };
 
+// GNSS Receiver TX Wire Presence & Discovery State
+enum class GpsTxState : uint8_t {
+    Unknown,      // Initial state prior to probe
+    Probing,      // Probe command in flight, waiting for response
+    Available,    // TX confirmed: UM982 responded to command
+    Unavailable   // TX missing: Timed out without response (Receive-only mode)
+};
+

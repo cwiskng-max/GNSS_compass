@@ -647,6 +647,8 @@ void test_config_constants() {
     ASSERT_TRUE(COLOR_ROVER_QUALIFIED_GREEN == 0x03E0);
     ASSERT_TRUE(COLOR_ROVER_REVISIT_BLUE == 0x011C);
     ASSERT_TRUE(COLOR_ROVER_NOGPS_AMBER == 0xDC00);
+    ASSERT_TRUE(GPS_TX_PROBE_TIMEOUT_MS == 1000);
+    ASSERT_TRUE(GPS_TX_PROBE_MAX_RETRIES == 2);
 
     // Test grid character rolling macros
     char c = 'A';
@@ -882,6 +884,156 @@ void test_gps_manager() {
     gm.feedSentence("$GNGLL");
     gm.feedSentence("$GPGLL");
     gm.feedSentence("$GNGLL,");
+
+    PASS();
+}
+
+void test_gps_tx_discovery() {
+    TEST("GNSS TX discovery probe state machine, retries, and response parsing");
+    GpsManager gm;
+
+    // 1. Initial State
+    ASSERT_TRUE(gm.getTxState() == GpsTxState::Unknown);
+    ASSERT_TRUE(!gm.isSendAvailable());
+    ASSERT_TRUE(gm.getProbeRetries() == 0);
+    ASSERT_TRUE(gm.getLastProbeTime() == 0);
+    ASSERT_STR_EQ(gm.getTxStateString(), "UNKNOWN");
+
+    std::string sentData;
+    gm.setTxHandler([](const uint8_t *data, size_t len, void *ctx) {
+        auto *s = static_cast<std::string*>(ctx);
+        if (s) s->append(reinterpret_cast<const char*>(data), len);
+    }, &sentData);
+
+    // 2. Start Probe
+    gm.probeTx(1000);
+    ASSERT_TRUE(gm.getTxState() == GpsTxState::Probing);
+    ASSERT_TRUE(!gm.isSendAvailable());
+    ASSERT_TRUE(gm.getLastProbeTime() == 1000);
+    ASSERT_TRUE(gm.getProbeRetries() == 0);
+    ASSERT_STR_EQ(gm.getTxStateString(), "PROBING");
+    ASSERT_STR_EQ(sentData.c_str(), "version\r\n");
+
+    // Normal NMEA or non-response streams must not trigger probe acknowledgment
+    gm.feedSentence("$GNGLL,3821.2472,N,11927.4926,W,193000.00,A*3C", 1020);
+    ASSERT_TRUE(gm.getTxState() == GpsTxState::Probing);
+    ASSERT_TRUE(!gm.isSendAvailable());
+
+    // 3. Receive <OK acknowledgment -> Available
+    gm.feedSentence("<OK", 1050);
+    ASSERT_TRUE(gm.getTxState() == GpsTxState::Available);
+    ASSERT_TRUE(gm.isSendAvailable());
+    ASSERT_STR_EQ(gm.getTxStateString(), "AVAILABLE");
+
+    // 4. Manual re-probe from Available
+    sentData.clear();
+    gm.probeTx(2000);
+    ASSERT_TRUE(gm.getTxState() == GpsTxState::Probing);
+    ASSERT_TRUE(!gm.isSendAvailable());
+    ASSERT_TRUE(gm.getLastProbeTime() == 2000);
+    ASSERT_STR_EQ(sentData.c_str(), "version\r\n");
+
+    // Acknowledge with #VERSIONA log
+    gm.feedSentence("#VERSIONA,91,GPS,FINE,2320,150123000,0,0,18,0;UM982,R4.10Build11252*9543ab12", 2100);
+    ASSERT_TRUE(gm.getTxState() == GpsTxState::Available);
+    ASSERT_TRUE(gm.isSendAvailable());
+
+    // 5. Manual re-probe and $command response
+    sentData.clear();
+    gm.probeTx(3000);
+    ASSERT_TRUE(gm.getTxState() == GpsTxState::Probing);
+    gm.feedSentence("$command,version,response: OK*24", 3100);
+    ASSERT_TRUE(gm.getTxState() == GpsTxState::Available);
+    ASSERT_TRUE(gm.isSendAvailable());
+
+    // 6. Byte-by-byte ingestion of acknowledgment (< OK with whitespace)
+    sentData.clear();
+    gm.probeTx(4000);
+    ASSERT_TRUE(gm.getTxState() == GpsTxState::Probing);
+    const char *replyWithSpace = "< OK\r\n";
+    for (size_t i = 0; replyWithSpace[i]; ++i) {
+        gm.feedByte((uint8_t)replyWithSpace[i], 4050);
+    }
+    ASSERT_TRUE(gm.getTxState() == GpsTxState::Available);
+    ASSERT_TRUE(gm.isSendAvailable());
+
+    // 7. Timeout and Retry Sequence to Unavailable
+    sentData.clear();
+    gm.probeTx(5000);
+    ASSERT_TRUE(gm.getTxState() == GpsTxState::Probing);
+    ASSERT_TRUE(gm.getProbeRetries() == 0);
+    ASSERT_STR_EQ(sentData.c_str(), "version\r\n");
+
+    // Update before timeout (500 ms elapsed)
+    gm.update(5500);
+    ASSERT_TRUE(gm.getTxState() == GpsTxState::Probing);
+    ASSERT_TRUE(gm.getProbeRetries() == 0);
+
+    // Timeout: Retry 1 at t = 6000 (1000 ms elapsed)
+    gm.update(6000);
+    ASSERT_TRUE(gm.getTxState() == GpsTxState::Probing);
+    ASSERT_TRUE(gm.getProbeRetries() == 1);
+    ASSERT_TRUE(gm.getLastProbeTime() == 6000);
+    ASSERT_STR_EQ(sentData.c_str(), "version\r\nversion\r\n");
+
+    // Before second timeout (500 ms elapsed)
+    gm.update(6500);
+    ASSERT_TRUE(gm.getTxState() == GpsTxState::Probing);
+    ASSERT_TRUE(gm.getProbeRetries() == 1);
+
+    // Timeout: Retry 2 at t = 7000 (1000 ms elapsed)
+    gm.update(7000);
+    ASSERT_TRUE(gm.getTxState() == GpsTxState::Probing);
+    ASSERT_TRUE(gm.getProbeRetries() == 2);
+    ASSERT_TRUE(gm.getLastProbeTime() == 7000);
+    ASSERT_STR_EQ(sentData.c_str(), "version\r\nversion\r\nversion\r\n");
+
+    // Before expiration (500 ms elapsed)
+    gm.update(7500);
+    ASSERT_TRUE(gm.getTxState() == GpsTxState::Probing);
+    ASSERT_TRUE(gm.getProbeRetries() == 2);
+
+    // Timeout: Max retries (2) exceeded at t = 8000 -> Unavailable
+    gm.update(8000);
+    ASSERT_TRUE(gm.getTxState() == GpsTxState::Unavailable);
+    ASSERT_TRUE(!gm.isSendAvailable());
+    ASSERT_STR_EQ(gm.getTxStateString(), "UNAVAILABLE");
+    // Ensure no additional probe was sent on transition to Unavailable
+    ASSERT_STR_EQ(sentData.c_str(), "version\r\nversion\r\nversion\r\n");
+
+    // Subsequent updates when Unavailable should not transmit
+    gm.update(9000);
+    ASSERT_TRUE(gm.getTxState() == GpsTxState::Unavailable);
+    ASSERT_STR_EQ(sentData.c_str(), "version\r\nversion\r\nversion\r\n");
+
+    // 8. Manual re-probe from Unavailable
+    sentData.clear();
+    gm.probeTx(10000);
+    ASSERT_TRUE(gm.getTxState() == GpsTxState::Probing);
+    ASSERT_TRUE(gm.getProbeRetries() == 0);
+    ASSERT_TRUE(gm.getLastProbeTime() == 10000);
+    ASSERT_STR_EQ(sentData.c_str(), "version\r\n");
+
+    // 9. Response callback registration
+    std::string lastResponse;
+    gm.setOnResponse([](const char *resp, void *ctx) {
+        auto *s = static_cast<std::string*>(ctx);
+        if (s) *s = resp;
+    }, &lastResponse);
+
+    gm.feedSentence("<OK", 10050);
+    ASSERT_STR_EQ(lastResponse.c_str(), "<OK");
+    ASSERT_TRUE(gm.getTxState() == GpsTxState::Available);
+
+    gm.feedSentence("#MODE,ROVER,UAV", 10100);
+    ASSERT_STR_EQ(lastResponse.c_str(), "#MODE,ROVER,UAV");
+
+    // 10. Millis rollover handling
+    gm.probeTx(0xFFFFFFF0UL);
+    ASSERT_TRUE(gm.getTxState() == GpsTxState::Probing);
+    gm.update(1000UL); // 1016 ms elapsed across 0xFFFFFFFF rollover -> retry 1
+    ASSERT_TRUE(gm.getProbeRetries() == 1);
+    ASSERT_TRUE(gm.getTxState() == GpsTxState::Probing);
 
     PASS();
 }
@@ -2922,6 +3074,7 @@ int main() {
     test_calibration_class();
     test_gps_simulator();
     test_gps_manager();
+    test_gps_tx_discovery();
     test_serial_cli();
     test_input_manager_hit_testing();
     test_input_manager_gestures();
