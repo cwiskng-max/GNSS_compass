@@ -99,7 +99,7 @@ SAVECONFIG
 * `SAVECONFIG`: Commits the updated configuration to non-volatile memory.
 
 ### Automated In-System Configuration via ESP32 (`gps config`)
-If your hardware harness includes the bidirectional transmitter line (**ESP32 GPIO 43 $\to$ UM982 COM1 RX** via a 4-pin GX12 connector or internal jumper), you do not need to take down the mast, disassemble the enclosure, or plug in a computer with UPrecise to configure or update the receiver!
+If your hardware harness includes the bidirectional transmitter line (**ESP32 GPIO 43 $\to$ UM982 COM1 RX** via a 4-pin GX12 connector or internal jumper — see the [GX12 pinout](BOM.md#3-gx12-interconnect-pinout-display--receiver)), you do not need to take down the mast, disassemble the enclosure, or plug in a computer with UPrecise to configure or update the receiver!
 
 Simply open a serial terminal over physical USB CDC (`tio /dev/ttyACM0`) or wireless Bluetooth BLE UART (e.g. *Serial Bluetooth Terminal* on your phone/tablet) and issue:
 
