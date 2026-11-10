@@ -130,6 +130,18 @@ ModalButtonId InputManager::getModalButtonFromTouch(int16_t x, int16_t y) {
     return ModalButtonId::None;
 }
 
+ModalButtonId InputManager::getRoverModalButtonFromTouch(int16_t x, int16_t y) {
+    if (x >= ROVER_TOUCH_DISCARD_X_MIN && x <= ROVER_TOUCH_DISCARD_X_MAX &&
+        y >= ROVER_TOUCH_DISCARD_Y_MIN && y <= ROVER_TOUCH_DISCARD_Y_MAX) {
+        return ModalButtonId::Discard;
+    }
+    if (x >= ROVER_TOUCH_CANCEL_X_MIN && x <= ROVER_TOUCH_CANCEL_X_MAX &&
+        y >= ROVER_TOUCH_CANCEL_Y_MIN && y <= ROVER_TOUCH_CANCEL_Y_MAX) {
+        return ModalButtonId::Cancel;
+    }
+    return ModalButtonId::None;
+}
+
 void InputManager::handleTouchPoint(bool touched, int16_t x, int16_t y, unsigned long nowMs) {
     if (touched) {
         if (x != 0 || y != 0) {
@@ -141,11 +153,22 @@ void InputManager::handleTouchPoint(bool touched, int16_t x, int16_t y, unsigned
                     touchStartY_ = y;
                     longPressTriggered_ = false;
                     holdingSaveBtn_ = false;
+                    holdingDiscardBtn_ = false;
 
                     if (uiMode_ == UiMode::Calibrating) {
                         ModalButtonId btn = getModalButtonFromTouch(x, y);
                         if (btn == ModalButtonId::Save) {
                             holdingSaveBtn_ = true;
+                        } else if (btn != ModalButtonId::None) {
+                            UserEvent ev;
+                            ev.type = UserEventType::ModalButtonDown;
+                            ev.buttonId = btn;
+                            queueEvent(ev);
+                        }
+                    } else if (uiMode_ == UiMode::RoverHistory) {
+                        ModalButtonId btn = getRoverModalButtonFromTouch(x, y);
+                        if (btn == ModalButtonId::Discard) {
+                            holdingDiscardBtn_ = true;
                         } else if (btn != ModalButtonId::None) {
                             UserEvent ev;
                             ev.type = UserEventType::ModalButtonDown;
@@ -165,9 +188,25 @@ void InputManager::handleTouchPoint(bool touched, int16_t x, int16_t y, unsigned
                         ev.progress = 0.0f;
                         queueEvent(ev);
                     }
-                    if (uiMode_ == UiMode::Calibrating) {
+                    if (holdingDiscardBtn_) {
+                        holdingDiscardBtn_ = false;
+                        UserEvent ev;
+                        ev.type = UserEventType::HoldDiscardButtonProgress;
+                        ev.progress = 0.0f;
+                        queueEvent(ev);
+                    }
+                    if (uiMode_ == UiMode::Calibrating || uiMode_ == UiMode::RoverHistory) {
                         UserEvent ev;
                         ev.type = UserEventType::ModalButtonUp;
+                        queueEvent(ev);
+                    }
+                }
+
+                if (uiMode_ == UiMode::Normal && isLocalGridTouched(touchStartX_, touchStartY_)) {
+                    if (!longPressTriggered_ && holdDuration >= LONG_PRESS_MS) {
+                        longPressTriggered_ = true;
+                        UserEvent ev;
+                        ev.type = UserEventType::LongPressLocalGridTriggered;
                         queueEvent(ev);
                     }
                 }
@@ -188,6 +227,23 @@ void InputManager::handleTouchPoint(bool touched, int16_t x, int16_t y, unsigned
                         queueEvent(commitEv);
                     }
                 }
+
+                if (holdingDiscardBtn_ && !longPressTriggered_) {
+                    float prog = static_cast<float>(holdDuration) / static_cast<float>(LONG_PRESS_MS);
+                    if (prog > 1.0f) prog = 1.0f;
+                    UserEvent ev;
+                    ev.type = UserEventType::HoldDiscardButtonProgress;
+                    ev.progress = prog;
+                    queueEvent(ev);
+
+                    if (holdDuration >= LONG_PRESS_MS) {
+                        longPressTriggered_ = true;
+                        holdingDiscardBtn_ = false;
+                        UserEvent commitEv;
+                        commitEv.type = UserEventType::DiscardLastStopTriggered;
+                        queueEvent(commitEv);
+                    }
+                }
             }
         }
     } else {
@@ -203,7 +259,13 @@ void InputManager::handleTouchPoint(bool touched, int16_t x, int16_t y, unsigned
                 ev.type = UserEventType::HoldSaveButtonProgress;
                 ev.progress = 0.0f;
                 queueEvent(ev);
-            } else if (uiMode_ == UiMode::Calibrating && pressDuration >= LONG_PRESS_MS) {
+            } else if (holdingDiscardBtn_) {
+                holdingDiscardBtn_ = false;
+                UserEvent ev;
+                ev.type = UserEventType::HoldDiscardButtonProgress;
+                ev.progress = 0.0f;
+                queueEvent(ev);
+            } else if ((uiMode_ == UiMode::Calibrating || uiMode_ == UiMode::RoverHistory) && pressDuration >= LONG_PRESS_MS) {
                 UserEvent ev;
                 ev.type = UserEventType::ModalButtonUp;
                 queueEvent(ev);
@@ -224,6 +286,17 @@ void InputManager::handleTouchPoint(bool touched, int16_t x, int16_t y, unsigned
                         ev.type = UserEventType::ResetOffsetTriggered;
                         queueEvent(ev);
                     } else if (btn == ModalButtonId::Cancel) {
+                        UserEvent ev;
+                        ev.type = UserEventType::CancelModalTriggered;
+                        queueEvent(ev);
+                    } else {
+                        UserEvent ev;
+                        ev.type = UserEventType::ModalButtonUp;
+                        queueEvent(ev);
+                    }
+                } else if (uiMode_ == UiMode::RoverHistory) {
+                    ModalButtonId btn = getRoverModalButtonFromTouch(px, py);
+                    if (btn == ModalButtonId::Cancel) {
                         UserEvent ev;
                         ev.type = UserEventType::CancelModalTriggered;
                         queueEvent(ev);

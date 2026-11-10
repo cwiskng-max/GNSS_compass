@@ -6,6 +6,8 @@
 #include "../config.h"
 #include "../types.h"
 #include "cal_modal.h"
+#include "rover_card.h"
+#include "rover_history_modal.h"
 
 #if defined(ARDUINO)
 #include <Arduino_GFX_Library.h>
@@ -22,7 +24,10 @@ struct MainScreenState {
     double targetBearing = 0.0;
     double revBearing = 0.0;
     double distanceMeters = 0.0;
-    bool isRoverAlertActive = false;
+    bool isRoverMode = false;
+    RoverState roverState = RoverState::InTransitUnder16k;
+    double roverDisplacementKm = 0.0;
+    bool isRoverRevisit = false;
     double currentHeading = 0.0;
     BearingQuality bearingQuality = BearingQuality::None;
     bool hasHeading = false;
@@ -47,7 +52,10 @@ public:
     void renderCurrentBearing(double heading, BearingQuality quality, bool hasHeading);
     void renderCalibrationPill(float offset, bool isCalibrated);
     void renderTargetBearing(double targetBearing);
-    void renderReverseBearingAndDistance(double revBearing, double distanceMeters, bool isRoverAlertActive);
+    void renderReverseBearingAndDistance(double revBearing, double distanceMeters);
+    void renderRoverCard(RoverState state, double displacementKm, bool isRevisit = false);
+    void renderRoverCardMessage(const char *msg, uint16_t textColor = COLOR_ROVER_TRANSIT_RED);
+    void clearRoverCard();
     void renderArrlDistance(const char *myGrid, const char *targetGrid);
     void renderUtcTime(int hours, int minutes, bool hasTime);
     void showFooterText(const char *msg, uint16_t color = 0x7BEF);
@@ -56,6 +64,7 @@ public:
     void redrawMainScreen(const MainScreenState &state);
 
     CalModal &getCalModal() { return calModal_; }
+    RoverHistoryModal &getRoverHistoryModal() { return roverHistoryModal_; }
 
 #if defined(ARDUINO)
     Arduino_GFX *getGfx() const { return gfx_; }
@@ -71,6 +80,10 @@ public:
 
 private:
     CalModal calModal_;
+    RoverHistoryModal roverHistoryModal_;
+    char lastRoverCardBuf_[24] = {0};
+    RoverState lastRoverCardState_ = static_cast<RoverState>(-1);
+    uint16_t lastRoverCardDistColor_ = 0xFFFF;
 
 #if defined(ARDUINO)
     Arduino_ESP32RGBPanel *bus_ = nullptr;

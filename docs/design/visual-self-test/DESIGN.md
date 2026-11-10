@@ -77,12 +77,24 @@ void runVisualSelfTest() {
 | Stage | Name | Description | UI Display Elements |
 | :--- | :--- | :--- | :--- |
 | **Stage 1** | **Same Grid (ARRL 1.0 km)** | Injects identical local and remote grids (`CM87wa`). Verifies the ARRL contest minimum distance floor. | Footer: `TEST 1: SAME GRID` (Cyan)<br>Distance: `1.0 k` |
-| **Stage 2** | **Rover Transit Alert** | Injects adjacent rover grid with `rovdist = true` ($< 16\text{ km}$). | Footer: `TEST 2: ROVER < 16K` (Yellow)<br>Reverse Bearing: Red on White |
-| **Stage 3** | **Mid Distance (< 1,000 km)** | Injects grid `DN13ab` (~$600\text{ km}$). Tests 3-digit distance formatting. | Footer: `TEST 3: DIST < 1000K` (Cyan) |
-| **Stage 4** | **Long Distance (> 1,000 km)** | Injects grid `EL29ja` (~$2,500\text{ km}$). Tests 4-digit distance formatting. | Footer: `TEST 4: DIST > 1000K` (Cyan) |
-| **Stage 5** | **Bearing Color States** | Cycles the main antenna heading through all visual quality states: Fixed (White), Float (Yellow), and Lost (Red). | Bearing Colors: Pure White $\rightarrow$ Yellow $\rightarrow$ Red |
-| **Stage 6** | **Live GNSS Stream Verdict** | Evaluates the live hardware GNSS stream and displays a high-visibility centered status card. | Status Card: Green (Fixed), Yellow (Acquiring), or Red (Fault) |
-| **Stage 7** | **Pass / Fail Banner** | Validates mathematical invariants in memory. Displays a full-width result card before restoring live state. | `SELF-TEST PASSED` (Green) or `SELF-TEST FAILED` (Red) |
+| **Stage 2** | **Mid Distance (< 1,000 km)** | Injects grid `DN13ab` (~$600\text{ km}$). Tests 3-digit distance formatting. | Footer: `TEST 2: DIST < 1000K` (Cyan) |
+| **Stage 3** | **Long Distance (> 1,000 km)** | Injects grid `EL29ja` (~$2,500\text{ km}$). Tests 4-digit distance formatting. | Footer: `TEST 3: DIST > 1000K` (Cyan) |
+| **Stage 4** | **Extreme Distance & Ghost Recovery** | Injects grid `ZA00AA` (> 10,000 km) then drops back to `CM87wa` (1.0 km) to verify ghost digit erasure. | Footer: `TEST 4: GHOST RECOVERY` (Cyan) |
+| **Stage 5** | **Heading Quality Color States** | Cycles the main antenna heading through all visual quality states: Fixed (White), Float (Yellow), and Lost (Red). | Footer: `TEST 5: BEARING WHITE` / `YELLOW` / `RED` |
+| **Stage 6** | **Live GNSS Stream Diagnostic** | Pumps Serial2 in background and evaluates the live hardware GNSS stream health. | Footer: `TEST 6: GPS STREAM` (Cyan)<br>Status Card: Fixed (Green), Float/Acquiring (Yellow), or No Data (Red) |
+| **Stage 7** | **Antenna Calibration Status & Modal** | Tests uncalibrated/calibrated pill display (+4.2 deg) and demonstrates calibration modal snap button. | Footer: `TEST 7: CAL PILL OFF` / `CAL PILL +4.2` / `CAL MODAL` |
+| **Stage 8** | **Rover 4-State Qualification Card** | Cycles Row 5 white card through all 4 Rover states: Transit (<16 km, Red), Qualified ($\ge$16 km, Green), Revisit ($\ge$16 km, Blue), and GPS Lost (Amber status, preserving distance color). | Footer: `TEST 8: ROVER TRANSIT` / `QUALIFIED` / `REVISIT` / `GPS LOST`<br>Row 5: 16-char status card |
+| **Stage 9** | **Rover History & 1-Touch Undo Modal** | Opens contest history modal with mock stops and demonstrates long-press discard progress bar. | Footer: `TEST 9: ROVER MODAL` (Yellow)<br>Modal: History dialog & Discard progress |
+
+---
+
+### Non-Blocking GPS Pipeline During Self-Test
+
+To ensure the hardware GNSS receiver stream diagnostic (Stage 6) accurately reflects live receiver status, the self-test sequence avoids blocking `delay()` calls. Instead, a cooperative polling loop (`selfTestDelay()`) periodically services `gpsManager.update(millis())`. 
+
+While `AppController::isSelfTesting()` is active, incoming GPS callbacks update internal stream metrics (`totalBytesReceived_`, `lastByteMillis_`, and NMEA packet counters) while suppressing UI redraws, preventing the 3.0-second silence timeout from triggering a false disconnection warning.
+
+---
 
 ---
 

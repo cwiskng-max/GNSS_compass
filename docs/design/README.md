@@ -12,7 +12,7 @@ Each major subsystem or feature design is organized into its own subfolder to ke
 | :--- | :--- | :--- | :--- |
 | **Antenna Heading Calibration** | [`antenna-calibration/`](antenna-calibration/DESIGN.md) | **Implemented** | Non-volatile antenna alignment offset via NVS (`Preferences`), touch UI pill, snap modal, rotary knob fine-tuning, and serial CLI. |
 | **Visual Self-Test & GNSS Diagnostics** | [`visual-self-test/`](visual-self-test/DESIGN.md) | **Implemented** | On-device visual display self-test demo sequence, link health state machine (`GpsLinkVerdict`), and serial stream diagnostics. |
-| **Rover Station Transit Check** | [`rover-transit/`](rover-transit/DESIGN.md) | **Implemented** | ARRL 10 GHz rover $<16\text{ km}$ proximity alert (highlighted Red-on-White), 1-tap origin grid copy, and auto-reset lifecycle. |
+| **Rover Mode & Transit Tracking** | [`rover-transit/`](rover-transit/DESIGN.md) | **Proposed** | Dual operational modes (Bearing vs. Rover), dynamic 16 km displacement tracking, grid boundary traversal detection, multi-stop location history with undo, and modular geodesic engine. |
 | **GPS Simulation & Test Framework** | [`gps-simulation/`](gps-simulation/DESIGN.md) | **Implemented** | Host-driven GPS data simulation, pre-canned rover transit journeys, interactive drive simulator, raw sentence injection, and serial CLI. |
 | **Dual-Antenna GNSS Heading Pipeline** | [`gnss-heading-pipeline/`](gnss-heading-pipeline/DESIGN.md) | **Implemented** | Unicore UM982 `$KSXT` / NMEA parsing, circular mean vector smoothing ($\sin/\cos$), 1.5s staleness watchdog, and 4-tier color states. |
 | **Maidenhead Geodetics & ARRL Rules** | [`maidenhead-geodetics/`](maidenhead-geodetics/DESIGN.md) | **Implemented** | Double-precision Maidenhead subsquare center calculation, great-circle azimuths, ARRL 1.0 km contest clamp, and host C++ unit testing. |
@@ -35,4 +35,3 @@ docs/design/
     ├── images/                        # (Optional) Screen captures, hardware photos, mockups
     └── ...
 ```
-

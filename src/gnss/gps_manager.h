@@ -74,7 +74,9 @@ public:
     bool hasTime() const { return hasTime_; }
     int getHours() const { return hours_; }
     int getMinutes() const { return minutes_; }
+    uint32_t getEpochTime() const { return epochTime_; }
     void setTime(int hours, int minutes);
+    void setEpochTime(uint32_t epoch) { epochTime_ = epoch; }
 
     void setHeading(float headingDeg, BearingQuality quality, unsigned long nowMs = 0);
 
@@ -131,6 +133,7 @@ private:
     bool hasTime_;
     int hours_;
     int minutes_;
+    uint32_t epochTime_;
 
     // Stream metrics
     unsigned long totalBytesReceived_;

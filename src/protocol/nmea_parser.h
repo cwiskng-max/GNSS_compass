@@ -25,6 +25,10 @@ inline bool parseKsxtTime(const char *sentence, int &hoursOut, int &minutesOut) 
     return parseKSXTTime(sentence, &hoursOut, &minutesOut);
 }
 
+uint32_t utcCalendarToEpoch(int year, int month, int day, int hour, int min, int sec);
+bool parseKsxtDateTime(const char *sentence, int &yearOut, int &monthOut, int &dayOut, int &hoursOut, int &minutesOut, int &secondsOut);
+bool parseKsxtEpochTime(const char *sentence, uint32_t &epochOut);
+
 bool parseKSXTLocation(const char *sentence, double *lat_out, double *lon_out);
 inline bool parseKSXTLocation(const char *sentence, float *lat_out, float *lon_out) {
     double dLat = 0.0, dLon = 0.0;

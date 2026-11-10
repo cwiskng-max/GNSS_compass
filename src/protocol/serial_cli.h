@@ -6,30 +6,41 @@
 #include "../gnss/gps_manager.h"
 #include "../system/calibration.h"
 #include "../gnss/simulator.h"
+#include "../ui/rover_card.h"
+#include "../system/rover_log_manager.h"
 
 // Forward declaration of listener callback types
 typedef void (*CliCommandOutputFn)(const char *str, void *context);
 typedef void (*CliRunTestCallback)(void *context);
 typedef void (*CliStateChangedCallback)(void *context);
 typedef void (*CliRoverSimCallback)(const char *originGrid, double distKm, void *context);
+typedef void (*CliRoverActionCallback)(void *context, unsigned long nowMs);
 
 /**
- * @brief Navigation domain context query for live CLI reports and calibration snap.
+ * @brief Navigation domain context query for live CLI reports, calibration snap,
+ *        and Rover transit status.
  */
 struct CliNavContext {
     double targetBearing = 0.0;
-    bool isRoverAlertActive = false;
+    bool isRoverMode = false;
     double roverDistanceMeters = 0.0;
+    double originLat = 0.0;
+    double originLon = 0.0;
+    char originGrid[9] = {0};
+    char currentGrid[9] = {0};
+    RoverState roverState = RoverState::InTransitUnder16k;
+    double lastValidDisplacementKm = 0.0;
+    bool isGpsFresh = false;
 };
 typedef CliNavContext (*CliNavContextProviderFn)(void *context);
 
 /**
  * @brief Host USB Serial CLI Parser for GNSS diagnosis, antenna calibration,
- *        simulation injection, and visual self-test triggering.
+ *        Rover Mode contest tracking, simulation injection, and visual self-test triggering.
  */
 class SerialCli {
 public:
-    SerialCli(GpsManager &gpsManager, Calibration &calibration, GpsSimulator &simulator);
+    SerialCli(GpsManager &gpsManager, Calibration &calibration, GpsSimulator &simulator, RoverLogManager *roverLogManager = nullptr);
 
     // Initializes CLI state
     void begin();
@@ -54,17 +65,44 @@ public:
     void setTargetBearing(double bearingDeg) { fallbackNavContext_.targetBearing = bearingDeg; }
     double getTargetBearing() const;
 
-    void setRoverAlertActive(bool active) { fallbackNavContext_.isRoverAlertActive = active; }
-    bool isRoverAlertActive() const;
+    void setRoverMode(bool active) { fallbackNavContext_.isRoverMode = active; }
+    bool isRoverMode() const;
 
     void setRoverDistance(double distMeters) { fallbackNavContext_.roverDistanceMeters = distMeters; }
     double getRoverDistance() const;
+
+    void setOriginPoint(double lat, double lon) {
+        fallbackNavContext_.originLat = lat;
+        fallbackNavContext_.originLon = lon;
+    }
+    void setOriginGrid(const char *grid);
+    void setCurrentGrid(const char *grid);
+    void setRoverState(RoverState state) { fallbackNavContext_.roverState = state; }
+    void setLastValidDisplacementKm(double km) { fallbackNavContext_.lastValidDisplacementKm = km; }
+    void setGpsFresh(bool fresh) { fallbackNavContext_.isGpsFresh = fresh; }
+
+    // Rover Log & Actions
+    void setRoverLogManager(RoverLogManager *mgr) { roverLogManager_ = mgr; }
+    RoverLogManager* getRoverLogManager() const { return roverLogManager_; }
+
+    void setRoverCallbacks(CliRoverActionCallback onStart,
+                           CliRoverActionCallback onStop,
+                           CliRoverActionCallback onUndo,
+                           void *context = nullptr) {
+        roverStartCb_ = onStart;
+        roverStopCb_ = onStop;
+        roverUndoCb_ = onUndo;
+        roverActionContext_ = context;
+    }
 
     // Formatted diagnostic reports
     void printHelp();
     void printGpsStatus(unsigned long nowMs = 0);
     void printCalibrationStatus();
     void printSimulationStatus(unsigned long nowMs = 0);
+    void printRoverStatus(unsigned long nowMs = 0);
+    void printRoverHistory();
+    void printRoverHelp();
 
 private:
     void print(const char *str);
@@ -73,10 +111,18 @@ private:
 
     void handleSimCommand(const char *arg, unsigned long nowMs);
     void handleCalCommand(const char *arg);
+    void handleRoverCommand(const char *arg, unsigned long nowMs);
+    void handleRoverStart(unsigned long nowMs);
+    void handleRoverStop(unsigned long nowMs);
+    void handleRoverUndo(unsigned long nowMs);
+    void handleRoverMax(const char *arg);
+    void handleRoverClear(const char *arg);
+    void doRoverClear();
 
     GpsManager &gpsManager_;
     Calibration &calibration_;
     GpsSimulator &simulator_;
+    RoverLogManager *roverLogManager_;
 
     CliNavContextProviderFn navContextFn_;
     void *navContext_;
@@ -88,9 +134,14 @@ private:
     void *stateChangedContext_;
     CliRoverSimCallback roverSimCb_;
     void *roverSimContext_;
+    CliRoverActionCallback roverStartCb_;
+    CliRoverActionCallback roverStopCb_;
+    CliRoverActionCallback roverUndoCb_;
+    void *roverActionContext_;
     CliCommandOutputFn outputFn_;
     void *outputContext_;
 
+    bool pendingRoverClear_;
     char inputBuffer_[256];
     size_t inputIndex_;
 };

@@ -12,7 +12,8 @@ AppController::AppController(Board &board,
                              GpsManager &gpsManager,
                              Calibration &calibration,
                              GpsSimulator &gpsSimulator,
-                             SerialCli &serialCli)
+                             SerialCli &serialCli,
+                             RoverLogManager *roverLogManager)
     : board_(board),
       displayUi_(displayUi),
       inputManager_(inputManager),
@@ -20,6 +21,7 @@ AppController::AppController(Board &board,
       calibration_(calibration),
       gpsSimulator_(gpsSimulator),
       serialCli_(serialCli),
+      roverLogManagerRef_(roverLogManager ? roverLogManager : &roverLogManagerOwned_),
       hasLocation_(false),
       hasTime_(false),
       hours_(0),
@@ -27,16 +29,24 @@ AppController::AppController(Board &board,
       hasHeading_(false),
       currentBearingQuality_(BEARING_NONE),
       lastHeadingUpdate_(0),
-      isRoverAlertActive_(false),
+      operationalMode_(OperationalMode::Bearing),
+      lastRenderedMode_(OperationalMode::Bearing),
+      lastValidDisplacementKm_(0.0),
+      lastLocationUpdate_(0),
+      lastRoverState_(RoverState::InTransitUnder16k),
+      currentNowMs_(0),
+      roverWarningUntilMs_(0),
       distance_(0.0),
       bearing_(0.0),
       revbearing_(0.0),
       currentUiMode_(UiMode::Normal),
+      isSelfTesting_(false),
       calModalOpenedMillis_(0),
       pendingModalButtonRelease_(ModalButtonId::None),
       pendingModalButtonReleaseStartMillis_(0)
 {
     std::strcpy(myGrid_, "JJ00AA00");
+    std::strcpy(originGrid_, "JJ00AA00");
 }
 
 void AppController::setTargetGrid(const char *grid) {
@@ -54,16 +64,144 @@ void AppController::setMyGrid(const char *grid) {
 void AppController::setCurrentPosition(const GeoPoint &pos) {
     hasLocation_ = true;
     currentPosition_ = pos;
-    geoPointToGrid(currentPosition_, myGrid_);
-    if (currentUiMode_ != UiMode::Calibrating) {
-        displayUi_.renderMyGrid(myGrid_);
+    lastLocationUpdate_ = (currentNowMs_ > 0 ? currentNowMs_ : 1);
+    char newGrid[9];
+    geoPointToGrid(currentPosition_, newGrid);
+    if (std::strcmp(myGrid_, newGrid) != 0) {
+        std::strcpy(myGrid_, newGrid);
+        if (currentUiMode_ == UiMode::Normal) {
+            displayUi_.renderMyGrid(myGrid_);
+        }
     }
     updateNavigation();
+}
+
+void AppController::setOperationalMode(OperationalMode mode) {
+    if (operationalMode_ == OperationalMode::Rover && mode != OperationalMode::Rover) {
+        displayUi_.clearRoverCard();
+    }
+    operationalMode_ = mode;
+    updateNavigation();
+}
+
+void AppController::startRoverMode(unsigned long nowMs) {
+#if defined(ARDUINO)
+    if (nowMs == 0) nowMs = millis();
+#endif
+    if (nowMs > 0) currentNowMs_ = nowMs;
+
+    // Guard: Prevent accidental restart if already in Rover Mode!
+    if (operationalMode_ == OperationalMode::Rover) {
+        roverWarningUntilMs_ = (nowMs > 0 ? nowMs : currentNowMs_) + ROVER_WARNING_DURATION_MS;
+        displayUi_.renderRoverCardMessage("ROVER ACTIVE", COLOR_ROVER_TRANSIT_RED);
+        return;
+    }
+
+    // Guard: Do not allow arming Rover Mode without a valid GPS location fix!
+    if (!hasLocation_) {
+        displayUi_.showStatusCard("WAIT GPS FIX", BLACK, RED);
+        return;
+    }
+
+    // Initial Contest Departure Log (Stop #1): If contest history is empty,
+    // record starting site as Stop #1 (0.0 km, ORIGIN).
+    if (roverLogManagerRef_->isEmpty()) {
+        uint32_t epoch = gpsManager_.getEpochTime();
+        uint32_t ts = (epoch > 0) ? epoch : (hasTime_ ? (hours_ * 3600 + minutes_ * 60) : static_cast<uint32_t>(nowMs / 1000));
+        RoverStop stop1(ts, currentPosition_.latitude, currentPosition_.longitude, myGrid_, 0.0f, false);
+        roverLogManagerRef_->appendStop(stop1);
+    }
+
+    originPoint_ = currentPosition_;
+    snprintf(originGrid_, sizeof(originGrid_), "%s", myGrid_);
+    targetPosition_ = originPoint_;
+
+    gridEditor_.setGrid(myGrid_);
+    gridEditor_.setEditing(false); // Disarm edit mode on rover snapshot to protect origin & bezel
+
+    operationalMode_ = OperationalMode::Rover;
+    lastValidDisplacementKm_ = 0.0;
+    lastRoverState_ = RoverState::InTransitUnder16k;
+
+    displayUi_.renderTargetGrid(gridEditor_.getGrid(), gridEditor_.getCursorColumn(), gridEditor_.isEditing());
+    updateNavigation();
+}
+
+void AppController::onTargetEdited(unsigned long nowMs) {
+#if defined(ARDUINO)
+    if (nowMs == 0) nowMs = millis();
+#endif
+    if (nowMs > 0) currentNowMs_ = nowMs;
+
+    if (operationalMode_ == OperationalMode::Rover) {
+        // Calculate final displacement from originPoint_
+        double finalDistMeters = 0.0, finalBearing = 0.0;
+        calculateWgs84(originPoint_, currentPosition_, finalDistMeters, finalBearing);
+        float finalDistKm = static_cast<float>(finalDistMeters / 1000.0);
+        bool qualified = (finalDistKm >= ROVER_ALERT_THRESHOLD_KM);
+
+        uint32_t epoch = gpsManager_.getEpochTime();
+        uint32_t ts = (epoch > 0) ? epoch : (hasTime_ ? (hours_ * 3600 + minutes_ * 60) : static_cast<uint32_t>(nowMs / 1000));
+        RoverStop stop(ts, currentPosition_.latitude, currentPosition_.longitude, myGrid_, finalDistKm, qualified);
+        roverLogManagerRef_->appendStop(stop);
+
+        roverWarningUntilMs_ = 0;
+        displayUi_.clearRoverCard();
+        operationalMode_ = OperationalMode::Bearing;
+    }
+}
+
+void AppController::stopRoverMode(unsigned long nowMs) {
+#if defined(ARDUINO)
+    if (nowMs == 0) nowMs = millis();
+#endif
+    if (nowMs > 0) currentNowMs_ = nowMs;
+
+    if (operationalMode_ == OperationalMode::Rover) {
+        roverWarningUntilMs_ = 0;
+        onTargetEdited(nowMs);
+        updateNavigation();
+        redrawMainScreen();
+    }
+}
+
+void AppController::discardLastStopAndRearm(unsigned long nowMs) {
+#if defined(ARDUINO)
+    if (nowMs == 0) nowMs = millis();
+#endif
+    if (nowMs > 0) currentNowMs_ = nowMs;
+    roverWarningUntilMs_ = 0;
+
+    // 1. Pop topmost stop from NVS history
+    roverLogManagerRef_->popLastStop();
+
+    // 2. Restore active origin baseline to prior stop (or current position if stack became empty)
+    if (!roverLogManagerRef_->isEmpty()) {
+        const RoverStop *restored = roverLogManagerRef_->getLastStop();
+        originPoint_ = GeoPoint(restored->latitude, restored->longitude, true);
+        snprintf(originGrid_, sizeof(originGrid_), "%s", restored->grid);
+    } else {
+        originPoint_ = currentPosition_;
+        snprintf(originGrid_, sizeof(originGrid_), "%s", myGrid_);
+    }
+    targetPosition_ = originPoint_;
+    gridEditor_.setGrid(originGrid_);
+
+    // 3. Auto-close dialog and auto-rearm Rover Mode
+    setUiMode(UiMode::Normal);
+    operationalMode_ = OperationalMode::Rover;
+    gridEditor_.setEditing(false);
+
+    updateNavigation();
+    redrawMainScreen();
 }
 
 void AppController::setUiMode(UiMode mode) {
     currentUiMode_ = mode;
     inputManager_.setUiMode(mode);
+    if (mode != UiMode::Normal) {
+        gridEditor_.setEditing(false);
+    }
 }
 
 void AppController::setHeadingState(bool hasHeading, BearingQuality quality, unsigned long lastUpdate) {
@@ -80,29 +218,55 @@ void AppController::drawCurrentBearing() {
         displayUi_.getCalModal().drawRawHeading(bf.getRawHeading(), hasHeading_);
         return;
     }
+    if (currentUiMode_ != UiMode::Normal) {
+        return;
+    }
     displayUi_.renderCurrentBearing(bf.getCalibratedHeading(calibration_.getOffset()),
                                   currentBearingQuality_, hasHeading_);
 }
 
 void AppController::recalculateGeodesy() {
-    if (!isRoverAlertActive_) {
+    if (operationalMode_ == OperationalMode::Rover) {
+        targetPosition_ = originPoint_;
+        calculateWgs84(originPoint_, currentPosition_, distance_, bearing_);
+        revbearing_ = calculateReverseBearing(currentPosition_, originPoint_);
+    } else {
         gridToGeoPoint(gridEditor_.getGrid(), targetPosition_);
-    }
-    calculateWgs84(currentPosition_, targetPosition_, distance_, bearing_);
+        calculateWgs84(currentPosition_, targetPosition_, distance_, bearing_);
 #if !ENABLE_ARRL_DIST
-    if (!isRoverAlertActive_) {
         distance_ = calculateArrlContestDistance(myGrid_, gridEditor_.getGrid()) * 1000.0;
-    }
 #endif
-    revbearing_ = calculateReverseBearing(currentPosition_, targetPosition_);
+        revbearing_ = calculateReverseBearing(currentPosition_, targetPosition_);
+    }
 }
 
 void AppController::renderNavigationRows() {
-    if (currentUiMode_ == UiMode::Calibrating) {
+    if (currentUiMode_ == UiMode::Calibrating || currentUiMode_ == UiMode::RoverHistory) {
         return;
     }
 
-    displayUi_.renderReverseBearingAndDistance(revbearing_, distance_, isRoverAlertActive_);
+    if (operationalMode_ == OperationalMode::Rover) {
+        bool isFresh = hasLocation_ && (lastLocationUpdate_ > 0) &&
+                       (currentNowMs_ == 0 || (currentNowMs_ >= lastLocationUpdate_ && (currentNowMs_ - lastLocationUpdate_ <= 3000)));
+        double dispKm = distance_ / 1000.0;
+        if (isFresh) {
+            lastValidDisplacementKm_ = dispKm;
+        } else {
+            dispKm = lastValidDisplacementKm_;
+        }
+        bool isRevisit = roverLogManagerRef_->hasVisitedGrid(myGrid_);
+        lastRoverState_ = evaluateRoverState(dispKm, isRevisit, isFresh);
+        if (roverWarningUntilMs_ == 0 || (currentNowMs_ > 0 && currentNowMs_ >= roverWarningUntilMs_)) {
+            displayUi_.renderRoverCard(lastRoverState_, dispKm, isRevisit);
+        }
+    } else {
+        if (lastRenderedMode_ == OperationalMode::Rover) {
+            displayUi_.clearRoverCard();
+        }
+        displayUi_.renderReverseBearingAndDistance(revbearing_, distance_);
+    }
+    lastRenderedMode_ = operationalMode_;
+
     drawCurrentBearing();
     displayUi_.renderCalibrationPill(calibration_.getOffset(), calibration_.isCalibrated());
     displayUi_.renderTargetBearing(bearing_);
@@ -115,6 +279,7 @@ void AppController::updateNavigation() {
 }
 
 void AppController::redrawMainScreen() {
+    lastRenderedMode_ = operationalMode_;
     BearingFilter &bf = gpsManager_.getBearingFilter();
     MainScreenState s;
     s.myGrid = myGrid_;
@@ -124,7 +289,21 @@ void AppController::redrawMainScreen() {
     s.targetBearing = bearing_;
     s.revBearing = revbearing_;
     s.distanceMeters = distance_;
-    s.isRoverAlertActive = isRoverAlertActive_;
+    s.isRoverMode = (operationalMode_ == OperationalMode::Rover);
+    bool isFresh = hasLocation_ && (lastLocationUpdate_ > 0) &&
+                   (currentNowMs_ == 0 || (currentNowMs_ >= lastLocationUpdate_ && (currentNowMs_ - lastLocationUpdate_ <= 3000)));
+    if (s.isRoverMode) {
+        if (!isFresh) {
+            lastRoverState_ = RoverState::GpsLostStale;
+        }
+        s.roverState = lastRoverState_;
+        s.roverDisplacementKm = isFresh ? (distance_ / 1000.0) : lastValidDisplacementKm_;
+        s.isRoverRevisit = roverLogManagerRef_->hasVisitedGrid(myGrid_);
+    } else {
+        s.roverState = lastRoverState_;
+        s.roverDisplacementKm = 0.0;
+        s.isRoverRevisit = false;
+    }
     s.currentHeading = bf.getCalibratedHeading(calibration_.getOffset());
     s.bearingQuality = currentBearingQuality_;
     s.hasHeading = hasHeading_;
@@ -150,6 +329,7 @@ void AppController::begin() {
 #endif
     inputManager_.begin();
     calibration_.begin();
+    roverLogManagerRef_->begin();
 
     gpsManager_.setSimulator(&gpsSimulator_);
 #if defined(ARDUINO)
@@ -161,7 +341,7 @@ void AppController::begin() {
     // Wire GPS Manager event callbacks (passing this as context)
     gpsManager_.setOnHeadingUpdated([](float /* heading */, BearingQuality quality, void *ctx) {
         auto *self = static_cast<AppController*>(ctx);
-        if (!self) return;
+        if (!self || self->isSelfTesting_) return;
         self->hasHeading_ = self->gpsManager_.hasHeading();
         self->currentBearingQuality_ = quality;
         self->lastHeadingUpdate_ = self->gpsManager_.getLastHeadingUpdate();
@@ -170,30 +350,59 @@ void AppController::begin() {
 
     gpsManager_.setOnLocationUpdated([](const GeoPoint &pos, void *ctx) {
         auto *self = static_cast<AppController*>(ctx);
-        if (!self) return;
+        if (!self || self->isSelfTesting_) return;
         self->setCurrentPosition(pos);
     }, this);
 
     gpsManager_.setOnTimeUpdated([](int h, int m, void *ctx) {
         auto *self = static_cast<AppController*>(ctx);
-        if (!self) return;
+        if (!self || self->isSelfTesting_) return;
         self->hasTime_ = true;
         self->hours_ = h;
         self->minutes_ = m;
-        if (self->currentUiMode_ != UiMode::Calibrating) {
+        if (self->currentUiMode_ == UiMode::Normal) {
             self->displayUi_.renderUtcTime(h, m, true);
         }
     }, this);
 
     // Wire Serial CLI callbacks (passing this as context)
     serialCli_.begin();
+    serialCli_.setRoverLogManager(roverLogManagerRef_);
+    serialCli_.setRoverCallbacks(
+        [](void *ctx, unsigned long nowMs) {
+            auto *self = static_cast<AppController*>(ctx);
+            if (self) self->startRoverMode(nowMs);
+        },
+        [](void *ctx, unsigned long nowMs) {
+            auto *self = static_cast<AppController*>(ctx);
+            if (self) self->stopRoverMode(nowMs);
+        },
+        [](void *ctx, unsigned long nowMs) {
+            auto *self = static_cast<AppController*>(ctx);
+            if (self) self->discardLastStopAndRearm(nowMs);
+        },
+        this
+    );
+
     serialCli_.setNavigationContextProvider([](void *ctx) -> CliNavContext {
         CliNavContext nctx;
         auto *self = static_cast<AppController*>(ctx);
         if (self) {
             nctx.targetBearing = self->bearing_;
-            nctx.isRoverAlertActive = self->isRoverAlertActive_;
+            nctx.isRoverMode = self->isRoverMode();
             nctx.roverDistanceMeters = self->distance_;
+            nctx.originLat = self->originPoint_.latitude;
+            nctx.originLon = self->originPoint_.longitude;
+            std::snprintf(nctx.originGrid, sizeof(nctx.originGrid), "%s", self->originGrid_);
+            std::snprintf(nctx.currentGrid, sizeof(nctx.currentGrid), "%s", self->myGrid_);
+            nctx.roverState = self->lastRoverState_;
+            nctx.lastValidDisplacementKm = self->lastValidDisplacementKm_;
+            unsigned long now = self->currentNowMs_;
+#if defined(ARDUINO)
+            if (now == 0) now = millis();
+#endif
+            nctx.isGpsFresh = self->hasLocation_ && (now >= self->lastLocationUpdate_) &&
+                              ((now - self->lastLocationUpdate_) <= 3000);
         }
         return nctx;
     }, this);
@@ -213,7 +422,7 @@ void AppController::begin() {
             self->hasLocation_ = true;
             self->currentPosition_ = self->gpsManager_.getLocation();
             geoPointToGrid(self->currentPosition_, self->myGrid_);
-            if (self->currentUiMode_ != UiMode::Calibrating) {
+            if (self->currentUiMode_ == UiMode::Normal) {
                 self->displayUi_.renderMyGrid(self->myGrid_);
             }
         }
@@ -221,7 +430,7 @@ void AppController::begin() {
             self->hasTime_ = true;
             self->hours_ = self->gpsManager_.getHours();
             self->minutes_ = self->gpsManager_.getMinutes();
-            if (self->currentUiMode_ != UiMode::Calibrating) {
+            if (self->currentUiMode_ == UiMode::Normal) {
                 self->displayUi_.renderUtcTime(self->hours_, self->minutes_, true);
             }
         }
@@ -238,9 +447,11 @@ void AppController::begin() {
         } else {
             self->gridEditor_.setGrid(self->myGrid_);
         }
+        self->originPoint_ = originPoint;
+        snprintf(self->originGrid_, sizeof(self->originGrid_), "%s", self->gridEditor_.getGrid());
         self->gridEditor_.setEditing(false); // Disarm edit mode on rover snapshot to protect origin & bezel
         self->targetPosition_ = originPoint;
-        self->isRoverAlertActive_ = true;
+        self->operationalMode_ = OperationalMode::Rover;
 
         GeoPoint simulatedPoint = GpsSimulator::calculateRoverDisplacement(originPoint, dist_km, 45.0);
         self->gpsManager_.setLocation(simulatedPoint);
@@ -274,6 +485,7 @@ void AppController::handleUserEvent(const UserEvent &event, unsigned long nowMs)
 #if defined(ARDUINO)
     if (nowMs == 0) nowMs = millis();
 #endif
+    if (nowMs > 0) currentNowMs_ = nowMs;
 
     switch (event.type) {
         case UserEventType::RotateClockwise:
@@ -281,8 +493,10 @@ void AppController::handleUserEvent(const UserEvent &event, unsigned long nowMs)
                 calModalOpenedMillis_ = nowMs;
                 calibration_.adjustProposedOffset(0.1f);
                 displayUi_.getCalModal().drawProposedOffsetRow(calibration_.getProposedOffset());
-            } else if (gridEditor_.isEditing()) {
-                isRoverAlertActive_ = false;
+            } else if (currentUiMode_ == UiMode::Normal && gridEditor_.isEditing()) {
+                if (operationalMode_ == OperationalMode::Rover) {
+                    onTargetEdited(nowMs);
+                }
                 gridEditor_.rollChar(+1, nowMs);
                 displayUi_.renderTargetGrid(gridEditor_.getGrid(), gridEditor_.getCursorColumn(), gridEditor_.isEditing());
                 updateNavigation();
@@ -294,8 +508,10 @@ void AppController::handleUserEvent(const UserEvent &event, unsigned long nowMs)
                 calModalOpenedMillis_ = nowMs;
                 calibration_.adjustProposedOffset(-0.1f);
                 displayUi_.getCalModal().drawProposedOffsetRow(calibration_.getProposedOffset());
-            } else if (gridEditor_.isEditing()) {
-                isRoverAlertActive_ = false;
+            } else if (currentUiMode_ == UiMode::Normal && gridEditor_.isEditing()) {
+                if (operationalMode_ == OperationalMode::Rover) {
+                    onTargetEdited(nowMs);
+                }
                 gridEditor_.rollChar(-1, nowMs);
                 displayUi_.renderTargetGrid(gridEditor_.getGrid(), gridEditor_.getCursorColumn(), gridEditor_.isEditing());
                 updateNavigation();
@@ -303,13 +519,21 @@ void AppController::handleUserEvent(const UserEvent &event, unsigned long nowMs)
             break;
 
         case UserEventType::EncoderButtonPressed:
-            // Toggle edit mode on knob press
+            // Toggle edit mode on knob press in Normal Bearing Mode only.
+            // Disarmed in modals (Calibrating, RoverHistory) to prevent target grid poking through.
+            // Locked out in Rover Mode to enforce 2-step natural exit.
+            if (currentUiMode_ != UiMode::Normal || operationalMode_ == OperationalMode::Rover) {
+                break;
+            }
             gridEditor_.setEditing(!gridEditor_.isEditing());
             gridEditor_.recordActivity(nowMs);
             displayUi_.renderTargetGrid(gridEditor_.getGrid(), gridEditor_.getCursorColumn(), gridEditor_.isEditing());
             break;
 
         case UserEventType::TouchCalibrationPill:
+            if (currentUiMode_ != UiMode::Normal) {
+                break;
+            }
             if (hasHeading_) {
                 calibration_.snapProposed(bearing_, gpsManager_.getBearingFilter().getRawHeading());
             } else {
@@ -317,50 +541,83 @@ void AppController::handleUserEvent(const UserEvent &event, unsigned long nowMs)
             }
             setUiMode(UiMode::Calibrating);
             calModalOpenedMillis_ = nowMs;
-            gridEditor_.setEditing(false);
             displayUi_.getCalModal().drawModal(bearing_, gpsManager_.getBearingFilter().getRawHeading(), hasHeading_,
                                               calibration_.getOffset(), calibration_.getProposedOffset());
             break;
 
         case UserEventType::TouchLocalGrid:
-            gridEditor_.setGrid(myGrid_);
-            gridEditor_.setEditing(false); // Disarm edit mode on rover snapshot to protect origin & bezel
-            targetPosition_ = currentPosition_;
-            isRoverAlertActive_ = true;
-            displayUi_.renderTargetGrid(gridEditor_.getGrid(), gridEditor_.getCursorColumn(), gridEditor_.isEditing());
-            updateNavigation();
+            if (currentUiMode_ != UiMode::Normal) {
+                break;
+            }
+            startRoverMode(nowMs);
+            break;
+
+        case UserEventType::LongPressLocalGridTriggered:
+            if (currentUiMode_ != UiMode::Normal) {
+                break;
+            }
+            setUiMode(UiMode::RoverHistory);
+            calModalOpenedMillis_ = nowMs;
+            displayUi_.getRoverHistoryModal().drawModal(
+                roverLogManagerRef_->getLastStop(),
+                roverLogManagerRef_->getStopCount(),
+                roverLogManagerRef_->getStopCount()
+            );
             break;
 
         case UserEventType::TouchGridCharacter:
-            isRoverAlertActive_ = false;
+            if (currentUiMode_ != UiMode::Normal) {
+                break;
+            }
+            // 2-step natural target exit protection: character touch arms editing and shows cursor,
+            // but does NOT exit Rover Mode until the bezel is physically rotated.
             gridEditor_.selectCharacter(event.gridIndex, nowMs);
             displayUi_.renderTargetGrid(gridEditor_.getGrid(), gridEditor_.getCursorColumn(), gridEditor_.isEditing());
             updateNavigation();
             break;
 
         case UserEventType::TouchVersionFooter:
+            if (currentUiMode_ != UiMode::Normal) {
+                break;
+            }
             runVisualSelfTest();
             break;
 
         case UserEventType::ModalButtonDown:
-            if (event.buttonId == ModalButtonId::Snap && hasHeading_) {
-                displayUi_.getCalModal().drawSnapButton(true, hasHeading_);
-            } else if (event.buttonId == ModalButtonId::Reset) {
-                displayUi_.getCalModal().drawResetButton(true);
-            } else if (event.buttonId == ModalButtonId::Cancel) {
-                displayUi_.getCalModal().drawCancelButton(true);
+            if (currentUiMode_ == UiMode::Calibrating) {
+                if (event.buttonId == ModalButtonId::Snap && hasHeading_) {
+                    displayUi_.getCalModal().drawSnapButton(true, hasHeading_);
+                } else if (event.buttonId == ModalButtonId::Reset) {
+                    displayUi_.getCalModal().drawResetButton(true);
+                } else if (event.buttonId == ModalButtonId::Cancel) {
+                    displayUi_.getCalModal().drawCancelButton(true);
+                }
+            } else if (currentUiMode_ == UiMode::RoverHistory) {
+                if (event.buttonId == ModalButtonId::Cancel) {
+                    displayUi_.getRoverHistoryModal().drawCancelButton(true);
+                }
             }
             break;
 
         case UserEventType::ModalButtonUp:
-            displayUi_.getCalModal().drawSnapButton(false, hasHeading_);
-            displayUi_.getCalModal().drawResetButton(false);
-            displayUi_.getCalModal().drawCancelButton(false);
+            if (currentUiMode_ == UiMode::Calibrating) {
+                displayUi_.getCalModal().drawSnapButton(false, hasHeading_);
+                displayUi_.getCalModal().drawResetButton(false);
+                displayUi_.getCalModal().drawCancelButton(false);
+            } else if (currentUiMode_ == UiMode::RoverHistory) {
+                displayUi_.getRoverHistoryModal().drawDiscardButton(false, 0.0f);
+                displayUi_.getRoverHistoryModal().drawCancelButton(false);
+            }
             break;
 
         case UserEventType::HoldSaveButtonProgress:
             calModalOpenedMillis_ = nowMs;
             displayUi_.getCalModal().drawSaveButton(event.progress > 0.0f, event.progress);
+            break;
+
+        case UserEventType::HoldDiscardButtonProgress:
+            calModalOpenedMillis_ = nowMs;
+            displayUi_.getRoverHistoryModal().drawDiscardButton(event.progress > 0.0f, event.progress);
             break;
 
         case UserEventType::SaveButtonCommitted:
@@ -389,8 +646,19 @@ void AppController::handleUserEvent(const UserEvent &event, unsigned long nowMs)
             pendingModalButtonReleaseStartMillis_ = nowMs;
             break;
 
+        case UserEventType::DiscardLastStopTriggered:
+            displayUi_.getRoverHistoryModal().drawDiscardButton(true, 1.0f);
+            pendingModalButtonRelease_ = ModalButtonId::Discard;
+            pendingModalButtonReleaseStartMillis_ = nowMs;
+            discardLastStopAndRearm(nowMs);
+            break;
+
         case UserEventType::CancelModalTriggered:
-            displayUi_.getCalModal().drawCancelButton(true);
+            if (currentUiMode_ == UiMode::RoverHistory) {
+                displayUi_.getRoverHistoryModal().drawCancelButton(true);
+            } else {
+                displayUi_.getCalModal().drawCancelButton(true);
+            }
             pendingModalButtonRelease_ = ModalButtonId::Cancel;
             pendingModalButtonReleaseStartMillis_ = nowMs;
             break;
@@ -404,6 +672,7 @@ void AppController::update(unsigned long nowMs) {
 #if defined(ARDUINO)
     if (nowMs == 0) nowMs = millis();
 #endif
+    if (nowMs > 0) currentNowMs_ = nowMs;
 
     // 1. Ingest GPS UART bytes & check staleness timeouts
     gpsManager_.update(nowMs);
@@ -428,20 +697,43 @@ void AppController::update(unsigned long nowMs) {
         } else if (pendingModalButtonRelease_ == ModalButtonId::Cancel) {
             setUiMode(UiMode::Normal);
             redrawMainScreen();
+        } else if (pendingModalButtonRelease_ == ModalButtonId::Discard) {
+            // Already handled by discardLastStopAndRearm
         }
         pendingModalButtonRelease_ = ModalButtonId::None;
     }
 
     // 5. Modal timeout check
-    if (currentUiMode_ == UiMode::Calibrating) {
+    if (currentUiMode_ == UiMode::Calibrating || currentUiMode_ == UiMode::RoverHistory) {
         if ((nowMs - calModalOpenedMillis_) >= CAL_MODAL_TIMEOUT_MS) {
             setUiMode(UiMode::Normal);
             redrawMainScreen();
         }
     }
 
-    // 6. Edit timeout check
+    // 6. In Rover Mode, evaluate GPS watchdog staleness and warning expiration
+    if (operationalMode_ == OperationalMode::Rover && currentUiMode_ == UiMode::Normal) {
+        bool isRevisit = roverLogManagerRef_->hasVisitedGrid(myGrid_);
+        if (roverWarningUntilMs_ > 0 && nowMs >= roverWarningUntilMs_) {
+            roverWarningUntilMs_ = 0;
+            displayUi_.renderRoverCard(lastRoverState_, lastValidDisplacementKm_, isRevisit);
+        }
+
+        bool isFresh = hasLocation_ && (lastLocationUpdate_ > 0) && (nowMs >= lastLocationUpdate_) && ((nowMs - lastLocationUpdate_) <= 3000);
+        if (!isFresh) {
+            if (lastRoverState_ != RoverState::GpsLostStale) {
+                lastRoverState_ = RoverState::GpsLostStale;
+                if (roverWarningUntilMs_ == 0) {
+                    displayUi_.renderRoverCard(RoverState::GpsLostStale, lastValidDisplacementKm_, isRevisit);
+                }
+            }
+        }
+    }
+
+    // 7. Edit timeout check
     if (gridEditor_.checkTimeout(nowMs)) {
-        displayUi_.renderTargetGrid(gridEditor_.getGrid(), gridEditor_.getCursorColumn(), gridEditor_.isEditing());
+        if (currentUiMode_ == UiMode::Normal) {
+            displayUi_.renderTargetGrid(gridEditor_.getGrid(), gridEditor_.getCursorColumn(), gridEditor_.isEditing());
+        }
     }
 }

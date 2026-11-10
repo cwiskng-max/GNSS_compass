@@ -72,8 +72,16 @@ bool parseKSXT(const char *sentence, float *heading_out, BearingQuality *quality
     }
 
     const char *q_field = getNthField(sentence, 11);
+    if (q_field == nullptr || *q_field == '*' || *q_field == '\0' || *q_field == '\r' || *q_field == '\n') {
+        // Backward compatibility: If KSXT sentence does not include the RTK quality field
+        // (e.g. legacy/compact KSXT configurations), default to FIXED (consistent with $GNHDT).
+        *heading_out = strtof(h_field, nullptr);
+        *quality_out = BEARING_FIXED;
+        return true;
+    }
+
     int qual = 0;
-    if (q_field != nullptr && *q_field >= '0' && *q_field <= '9') {
+    if (*q_field >= '0' && *q_field <= '9') {
         qual = *q_field - '0';
     }
 
@@ -124,11 +132,69 @@ bool parseKSXTTime(const char *sentence, int *hours_out, int *minutes_out) {
     return false;
 }
 
+uint32_t utcCalendarToEpoch(int year, int month, int day, int hour, int min, int sec) {
+    if (year < 1970 || month < 1 || month > 12 || day < 1 || day > 31 ||
+        hour < 0 || hour > 23 || min < 0 || min > 59 || sec < 0 || sec > 60) {
+        return 0;
+    }
+    static const uint16_t kDaysBeforeMonth[13] = {
+        0, 0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334
+    };
+    auto isLeap = [](int y) {
+        return (y % 4 == 0 && (y % 100 != 0 || y % 400 == 0));
+    };
+    int y = year - 1970;
+    int leapDays = (year - 1969) / 4 - (year - 1901) / 100 + (year - 1601) / 400;
+    uint32_t days = static_cast<uint32_t>(y * 365 + leapDays + kDaysBeforeMonth[month] + (day - 1));
+    if (month > 2 && isLeap(year)) {
+        days += 1;
+    }
+    return days * 86400UL + static_cast<uint32_t>(hour * 3600 + min * 60 + sec);
+}
+
+bool parseKsxtDateTime(const char *sentence, int &yearOut, int &monthOut, int &dayOut, int &hoursOut, int &minutesOut, int &secondsOut) {
+    if (!sentence) return false;
+
+    const char *utc_field = getNthField(sentence, 1);
+    if (utc_field == nullptr || *utc_field == ',' || *utc_field == '*' || *utc_field == '\0') {
+        return false;
+    }
+
+    int len = 0;
+    while (isdigit((unsigned char)utc_field[len])) {
+        len++;
+    }
+
+    if (len >= 12) {
+        // Format: yyyymmddhhmmss (14) or yyyymmddhhmm (12)
+        yearOut = (utc_field[0] - '0') * 1000 + (utc_field[1] - '0') * 100 + (utc_field[2] - '0') * 10 + (utc_field[3] - '0');
+        monthOut = (utc_field[4] - '0') * 10 + (utc_field[5] - '0');
+        dayOut = (utc_field[6] - '0') * 10 + (utc_field[7] - '0');
+        hoursOut = (utc_field[8] - '0') * 10 + (utc_field[9] - '0');
+        minutesOut = (utc_field[10] - '0') * 10 + (utc_field[11] - '0');
+        secondsOut = (len >= 14) ? ((utc_field[12] - '0') * 10 + (utc_field[13] - '0')) : 0;
+
+        return (yearOut >= 1970 && monthOut >= 1 && monthOut <= 12 && dayOut >= 1 && dayOut <= 31 &&
+                hoursOut >= 0 && hoursOut < 24 && minutesOut >= 0 && minutesOut < 60 && secondsOut >= 0 && secondsOut < 60);
+    }
+    return false;
+}
+
+bool parseKsxtEpochTime(const char *sentence, uint32_t &epochOut) {
+    int y = 0, m = 0, d = 0, h = 0, min = 0, s = 0;
+    if (!parseKsxtDateTime(sentence, y, m, d, h, min, s)) {
+        return false;
+    }
+    epochOut = utcCalendarToEpoch(y, m, d, h, min, s);
+    return epochOut > 0;
+}
+
 bool parseKSXTLocation(const char *sentence, double *lat_out, double *lon_out) {
     if (!sentence || !lat_out || !lon_out) return false;
 
     const char *q_field = getNthField(sentence, 10);
-    if (q_field == nullptr || *q_field <= '0' || *q_field > '9') {
+    // If field 10 exists, require valid fix status (> '0')
+    if (q_field != nullptr && *q_field != '*' && (*q_field <= '0' || *q_field > '9')) {
         return false;
     }
 

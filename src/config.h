@@ -73,6 +73,8 @@
 #define BUTTON_CANCEL_BG     0x2945
 #define BUTTON_SAVE_IDLE_BG  0x0320
 #define BUTTON_SAVE_HOLD_BG  0x0540
+#define BUTTON_DISCARD_IDLE_BG   0x4000
+#define BUTTON_DISCARD_HOLD_BG   0x6000
 
 // ==============================================================================
 // Display Dimensions & Layout (480 x 480 Round Display)
@@ -99,7 +101,7 @@
 #define TOUCH_X_MIN          50
 #define TOUCH_X_MAX          430
 #define TOUCH_Y_MIN          70
-#define TOUCH_Y_MAX          235
+#define TOUCH_Y_MAX          200
 
 // Row 3: Antenna Heading & Target Bearing
 #define BEARSZ               6
@@ -114,7 +116,7 @@
 #define CAL_PILL_H           44
 #define CAL_TOUCH_X_MIN      180
 #define CAL_TOUCH_X_MAX      300
-#define CAL_TOUCH_Y_MIN      210
+#define CAL_TOUCH_Y_MIN      205
 #define CAL_TOUCH_Y_MAX      280
 
 // Set to 1 to show ARRL contest distance (Row 6), 0 to hide
@@ -127,8 +129,8 @@
 #define TIME_Y               290
 
 // Row 5: Reverse Bearing & Distance
-#define REVBEAR_SZ           4
-#define REVBEAR_X            90
+#define REVBEAR_SZ           3
+#define REVBEAR_X            105
 #define REVBEAR_Y            352
 
 // Row 6: ARRL Contest Distance
@@ -142,8 +144,8 @@
 #define TIME_Y               300
 
 // Row 5: Reverse Bearing & Distance
-#define REVBEAR_SZ           4
-#define REVBEAR_X            90
+#define REVBEAR_SZ           3
+#define REVBEAR_X            105
 #define REVBEAR_Y            376
 #endif
 
@@ -211,6 +213,62 @@
 #define TOUCH_FOOTER_Y_MAX       480
 
 // ==============================================================================
+// Rover Mode & History Configuration
+// ==============================================================================
+#define ROVER_CFG_NAMESPACE          "rover_cfg"
+#define ROVER_CFG_KEY_MAX_STOPS      "max_stops"
+#define ROVER_LOG_NAMESPACE          "rover_log"
+#define ROVER_LOG_KEY_COUNT          "count"
+
+#define DEFAULT_MAX_ROVER_STOPS      100
+#define MIN_ROVER_STOPS              10
+#define ABS_MAX_ROVER_STOPS          500
+
+// Row 5 Rover Qualification Card Layout & Colors (RGB565)
+// Scaled to fit within 480x480 circular screen chord (chord width ~330 px at Y: 374..414)
+#define ROVER_CARD_SZ                3
+#define ROVER_CARD_W                 320
+#define ROVER_CARD_H                 40
+#define ROVER_CARD_X                 ((SCREEN_WIDTH - ROVER_CARD_W) / 2)
+#define ROVER_CARD_Y                 374
+#define ROVER_CARD_R                 8
+#define ROVER_CARD_TEXT_X            (ROVER_CARD_X + (ROVER_CARD_W - (16 * CHAR_W(ROVER_CARD_SZ))) / 2)
+#define ROVER_CARD_TEXT_Y            (ROVER_CARD_Y + (ROVER_CARD_H - CHAR_H(ROVER_CARD_SZ)) / 2)
+
+#define COLOR_ROVER_TRANSIT_RED      0xF800
+#define COLOR_ROVER_QUALIFIED_GREEN  0x03E0
+#define COLOR_ROVER_REVISIT_BLUE     0x011C
+#define COLOR_ROVER_NOGPS_AMBER      0xDC00
+
+// Rover History Modal Dialog Geometry
+#define ROVER_MODAL_X                35
+#define ROVER_MODAL_Y                75
+#define ROVER_MODAL_W                410
+#define ROVER_MODAL_H                335
+
+// Rover History Modal Buttons
+#define ROVER_BTN_DISCARD_X          75
+#define ROVER_BTN_DISCARD_Y          260
+#define ROVER_BTN_DISCARD_W          330
+#define ROVER_BTN_DISCARD_H          46
+
+#define ROVER_BTN_CANCEL_X           140
+#define ROVER_BTN_CANCEL_Y           320
+#define ROVER_BTN_CANCEL_W           200
+#define ROVER_BTN_CANCEL_H           40
+
+// Rover History Modal Touch Hit Areas
+#define ROVER_TOUCH_DISCARD_X_MIN    70
+#define ROVER_TOUCH_DISCARD_X_MAX    410
+#define ROVER_TOUCH_DISCARD_Y_MIN    255
+#define ROVER_TOUCH_DISCARD_Y_MAX    310
+
+#define ROVER_TOUCH_CANCEL_X_MIN     130
+#define ROVER_TOUCH_CANCEL_X_MAX     350
+#define ROVER_TOUCH_CANCEL_Y_MIN     315
+#define ROVER_TOUCH_CANCEL_Y_MAX     365
+
+// ==============================================================================
 // Timeouts & Operational Thresholds
 // ==============================================================================
 #define HEADING_TIMEOUT_MS        1500
@@ -218,6 +276,7 @@
 #define CAL_MODAL_TIMEOUT_MS      15000
 #define LONG_PRESS_MS             1500
 #define ROVER_ALERT_THRESHOLD_KM  16.0
+#define ROVER_WARNING_DURATION_MS 3000
 
 // ==============================================================================
 // Character Rolling Helpers (for Target Grid manual editing)

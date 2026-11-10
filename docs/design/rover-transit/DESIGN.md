@@ -1,112 +1,414 @@
-# Rover Station Proximity Alert & 1-Tap Transit Tracking — Design Specification
+# Rover Mode, Transit Tracking, Location History & Modular Geodesics — Technical Design
 
-* **Feature:** Rover Transit Check & One-Tap Origin Grid Copy
-* **Status:** Implemented (v0.2-dev / PR #2)
-* **Target Hardware:** ESP32-S3, 480x480 Round Touch Display (ST7701 + CST8XX)
-
----
-
-## 1. Problem Statement & Motivation
-
-In microwave amateur radio contests—most notably the **ARRL 10 GHz and Up Contest**—operators frequently compete in the "Rover" category. Rovers travel between mountain tops, coastal bluffs, and grid boundaries during the contest weekend to make microwave contacts with fixed stations and other rovers.
-
-### The ARRL 16 km Rover Rule
-Contest rules require that a rover station move at least **16 kilometers (9.94 miles)** from its previous operating location before making contacts that count for additional points:
-> *"A rover must move at least 16 km (9.94 miles) between operating sites to qualify as a new location."*
-
-In the field, when packing up gear and driving down winding mountain roads to the next summit or pullout, rovers must track their straight-line transit distance from the last operating location to ensure they have met the 16 km requirement before deploying masts, pointing dishes, and initiating contacts.
-
-Doing this manually requires:
-* Remembering the 6-character Maidenhead locator of the previous summit.
-* Manually tapping through all 6 characters into a calculator or compass device while operating a vehicle or setting up camp.
-* Risking disqualification or lost QSO points if the new site is only 15.5 km away.
+* **Feature:** Dual Operational Modes (Bearing vs. Rover), Dynamic 16 km Displacement Tracking, Visited Grid History & Duplicate Contact Avoidance, and Modular Geodesic Integration
+* **Status:** Proposed / Ready for Review
+* **Target Hardware:** ESP32-S3 (16 MB Flash, 8 MB OPI PSRAM), 480×480 Round Touch Display (ST7701S RGB + CST8XX I2C Touch), Rotary Encoder with Push-Button (CLK, DT, SW)
+* **Architecture Base:** Implemented Modular C++ Architecture (`src/geo/`, `src/ui/`, `src/gnss/`, `src/protocol/`)
+* **Supersedes:** Earlier v0.2 single-alert design
 
 ---
 
-## 2. System Architecture & Workflow
+## 1. Executive Summary & Operational Philosophy
 
-The Rover Transit subsystem automates this tracking with a two-part workflow:
-1. **One-Tap Origin Snapshot:** Before tearing down at the current summit, the operator taps the local grid display on screen. This captures the exact current location as the reference origin.
-2. **Dynamic In-Transit Distance Alert:** As the rover moves, the compass continuously calculates the great-circle distance back to the origin and renders a high-visibility visual warning if the distance is under 16 km.
+In amateur microwave weak-signal contesting (e.g., the **ARRL 10 GHz and Up Contest** and **ARRL VHF/UHF Contests**), roving stations operate in two fundamentally distinct states:
 
 ```mermaid
-flowchart TD
-    A["Station Operating at Summit A<br>(e.g. CM87wa)"] --> B["Operator taps Local Grid (Row 1)"]
-    B --> C["Snapshot: remote = mygrid<br>origin = current coords<br>rovdist flag = true"]
-    C --> D["Rover travels to new operating location"]
-    D --> E["GNSS updates mygrid and lat/lon"]
-    E --> F{"Transit Distance <br> < 16 km?"}
-    F -- "Yes (< 16 km)" --> G["Highlight Row 4 in bold RED on WHITE<br>Operator must keep moving"]
-    F -- "No (>= 16 km)" --> H["Render Normal White on Black<br>Legal site reached!"]
-    H --> I["Operator taps Target Grid to edit target for contacts"]
-    I --> J["rovdist flag cleared (false)<br>Normal contest bearing operation resumed"]
+stateDiagram-v2
+    [*] --> BearingMode : Power On / Boot
+
+    state BearingMode {
+        direction TB
+        BM_Target : Aiming high-gain dish at distant station
+        BM_Display : Showing live heading, target bearing, and contest distance
+        BM_Edit : Tuning target grid via touch or rotary dial
+    }
+
+    state RoverMode {
+        direction TB
+        RM_Tracking : Packing up and driving to next operating site
+        RM_Distance : High-precision lat/lon geodesic tracking from origin
+        RM_Rules : Continuous evaluation of 16 km rule
+        RM_Backtrack : Dynamic monitoring of backtracks or canyon turns
+        RM_History : Cross-referencing visited grids to avoid duplicate QSOs
+    }
+
+    BearingMode --> RoverMode : 1-Tap Origin Snapshot (Row 1 My Grid)
+    RoverMode --> BearingMode : Tap Character & Turn Bezel (Natural Target Tuning)
+    BearingMode --> RoverMode : Discard Last Stop (Auto-rearm to prior site)
 ```
+
+1. **Bearing Mode (Stationary Operation):**
+   The station is stationary at an operating location. The operator rotates the mast to aim high-gain antennas/dishes at distant targets, monitoring live antenna heading, target azimuth, and target distance.
+2. **Rover Mode (In-Transit Relocation):**
+   The station has torn down equipment and is driving along roads or highways to the next operating site. Bearing to distant targets is irrelevant; the critical tasks are:
+   - Tracking exact straight-line displacement from the last operating location against the **ARRL 16 km legal rule**.
+   - Dynamic awareness of backtracking (e.g., switchbacks, missed turns, dead-ends).
+   - Logging visited operating locations and grids across the contest weekend to **prevent duplicate contacts**.
 
 ---
 
-## 3. User Interface & Touch Interaction
+## 2. Rover Mode: User Experience & Transit Tracking
 
-### Row 1: One-Tap Origin Grid Snapshot
-Row 1 ($Y = 35$, Height $\approx 40\text{ px}$) displays the current Maidenhead grid locator derived from live GPS coordinates (`LOC_SZ = 4`).
+### 2.1 Entering Rover Mode: One-Tap Origin Snapshot
+Rover Mode is triggered deliberately when packing up from an operating location:
 
-* **Touch Hit Zone:** $100 \le X \le 340$, $0 \le Y \le 75$.
-* **Action:**
-  1. Copies current 6-character `mygrid` into the target `remote` buffer.
-  2. Copies `mylatitude` / `mylongitude` into reference target coordinates `remlatitude` / `remlongitude`.
-  3. Sets the rover tracking state flag `rovdist = true`.
-  4. Triggers immediate recalculation and redraw (`printrem()`, `updateBearings()`).
+```text
+[Row 1 Tap] -> My Grid "CM87wa22" (Tap hit zone: X: 100-340, Y: 0-75)
+```
+
+1. **Snapshot Coordinates (`GeoPoint`):** Captures current live GPS decimal coordinates as `GeoPoint originPoint_` to full double precision (derived directly from `$GNGLL` / `$KSXT` via `GpsManager`). It **never snaps to grid center**, preventing up to $\sim 2.5\text{ km}$ of artificial quantization error.
+2. **Snapshot Grid (`GridSquare`):** Copies current `myGrid_` into the origin reference buffer `originGrid_`.
+3. **Bezel / Knob Lockout:** Automatically disarms edit mode (`gridEditor_.setEditing(false)`) and hides the editing cursor (`^`). This guarantees that road vibration bumps or accidental turns of the rotary bezel during transit cannot mutate the origin grid or drop out of Rover Mode.
+4. **Timestamp:** Records UNIX/GPS epoch departure timestamp.
+5. **Mode Engagement:** Firmware transitions `AppController` into `operationalMode = MODE_ROVER`.
+6. **Initial Contest Departure Log (Stop #1):** If the contest history log is currently empty (e.g. beginning of the contest weekend at the first summit), tapping Row 1 automatically records the current site as **Stop #1 (`0.0 km`, Status: `ORIGIN`)** in NVS before arming Rover Mode. This ensures that the complete weekend roster—from starting summit through all subsequent stops—is preserved in history and exported over serial.
+
+---
+
+### 2.2 Continuous Dynamic Tracking & The 16 km Rule
+
+In contest roving, the legal site qualification criterion is strictly **straight-line displacement**:
+
+$$\text{Legal Requirement: Straight-Line Displacement } \Delta D \ge 16.0\text{ km}$$
+
+#### Grid Geometry vs. The 16 km Rule
+A 6-character Maidenhead subsquare (e.g., `CM87wa`) spans $5' \text{ longitude} \times 2.5' \text{ latitude}$ ($\approx 7.3\text{ km} \times 4.63\text{ km}$ at mid-latitudes, with a maximum diagonal of $\approx 8.6\text{ km}$). Because the entire span of a 6-character grid is under $9\text{ km}$, **any valid move of $\ge 16.0\text{ km}$ has already traversed into a new grid square by mathematical definition**.
+
+#### Purpose of Visited Grid Tracking: Avoiding Duplicate Contacts
+While grid traversal occurs naturally when moving $\ge 16\text{ km}$, tracking visited grids serves a critical contest purpose: **avoiding duplicate contacts**. 
+- In microwave contesting, an operator may legally return to a previously activated grid square later in the contest weekend (e.g., driving a loop course).
+- However, contest rules prohibit claiming QSO points with the same station on the same band from the same grid square twice.
+- Therefore, the system tracks visited grids to alert the operator upon arrival if a grid was activated earlier in the weekend, advising them to check their band log for prior contacts.
+
+#### Continuous Displacement Resolution (`src/geo/geo_math.h`)
+Calculates the exact **WGS-84 geodesic distance** between `originPoint_` and the live GPS antenna coordinates `currentPoint_`:
+
+$$\Delta D = \text{distanceWGS84}(\text{originPoint}, \text{currentPoint})$$
+
+**Mandatory 0.1 km Decimal Precision (`%5.1f k`):**
+Displacement is continuously rendered with tenths-of-a-kilometer decimal precision (e.g., ` 6.4 k`, ` 18.2 k`, ` 22.4 k`). At typical driving speeds (e.g., 50 km/h), integer kilometers take over 70 seconds to increment, giving the driver the false impression that tracking is frozen. Tenths of a kilometer increment every ~7 seconds, providing immediate visual feedback that the vehicle is in motion and distance is actively accumulating.
+
+#### Dynamic Qualification Matrix (4 States)
+
+| State | Displacement $\Delta D$ | Grid History Context | Visual Indication | Operating Legality |
+| :--- | :--- | :--- | :--- | :--- |
+| **A: In-Transit Under 16k** | $< 16.0\text{ km}$ | Any grid | **Red text on White** (`0xF800` on `0xFFFF`) | **ILLEGAL** (Keep driving; under 16 km) |
+| **B: Qualified New Location** | $\ge 16.0\text{ km}$ | New grid (unvisited) | **Forest Green on White** (`0x03E0` on `0xFFFF`) | **QUALIFIED** (Legal site; all bands open) |
+| **C: Qualified Revisited Grid** | $\ge 16.0\text{ km}$ | Visited earlier in log | **Royal Blue on White** (`0x011C` on `0xFFFF`) | **QUALIFIED** (Legal site; check band log for duplicate QSOs) |
+| **D: GPS Signal Lost / Stale** | Holds last valid | Stale GPS fix (> 3s) | **Deep Amber on White** (`0xDC00` on `0xFFFF`) | **WAIT GPS** (Signal lost in foliage/tunnel; holds last known value) |
+
+---
+
+### 2.3 Row 5 Qualification Card Presentation: Status Word + Decimal Distance
+
+In stationary Bearing Mode, Row 5 renders reverse bearing on the left and contest distance to target on the right: `"%5.1f %4i k  "`.
+
+In Rover Mode, Row 5 seamlessly transforms into the dedicated **Rover Qualification Card** on a solid white background (`0xFFFF`). Rather than showing the back-azimuth to the previous summit (which has no operational utility while driving), the left slot displays an explicit textual status word, and the right slot displays continuous decimal displacement (`%5.1f k`):
+
+* **State A (In-Transit Under 16k):** `TRANSIT    6.4 k` (Red text on White `0xF800` / `0xFFFF`)
+* **State B (Qualified New Grid):** `QUALIFIED 18.2 k` (Forest Green on White `0x03E0` / `0xFFFF`)
+* **State C (Qualified Revisited Grid):** `REVISIT   22.4 k` (Royal Blue on White `0x011C` / `0xFFFF`)
+* **State D (GPS Lost / Stale):** `NO GPS    11.2 k` (Deep Amber `NO GPS` `0xDC00` on White `0xFFFF`, distance retaining last qualification color — holds last known value)
+
+This provides instant, unambiguous clarity for drivers, eliminating any confusion between states (especially between New Grid and Revisited Grid) without relying solely on color recognition while watching the road.
+
+When entering a tunnel, dense canopy, or deep mountain canyon where GPS signal is temporarily lost, **State D preserves and holds the last known valid distance** (e.g. `11.2 k`) rather than blanking with dashes (`--.- k`). While the "NO GPS" warning is displayed in Deep Amber, the distance field retains the color of the state it represented at the last GPS reading (Red for Transit, Green for Qualified New Grid, or Royal Blue for Revisited Grid) to preserve qualification context until satellites are re-acquired.
+
+---
+
+### 2.4 Visual Preview: On-Screen Color Examples (Row 5)
+
+Below is an exact visual simulation of the 4 states rendered on the solid white background card:
+
+![Rover Mode Qualification Card: Status Word and Decimal Distance](images/rover_option_b.svg)
+
+*(Note: Earlier design explorations considered retaining the reverse azimuth, e.g. ` 184.2  18.2 k `, but explicit textual status words were selected for superior at-a-glance driving ergonomics.)*
+
+---
+
+### 2.5 Dynamic Backtrack & Hysteresis Handling
+
+Mountain transit rarely occurs in a straight line. An operator driving through canyons or climbing mountain roads may:
+1. Reach $16.2\text{ km}$ straight-line displacement on a ridge.
+2. Turn down a switchback or side road looking for a safe pullout, causing straight-line distance to drop back to $15.7\text{ km}$.
+3. Accidentally clip back into the prior grid boundary.
+
+**Design Rule: Instantaneous, Hysteresis-Free Reversibility**
+- The system **never "latches"** qualification.
+- If $\Delta D$ drops from $16.1\text{ km} \to 15.9\text{ km}$, the state drops immediately from **Qualified (Green)** back to **Under-16k (Red/Amber)**.
+- The operator always knows their exact legal status at the moment they come to a stop.
+
+---
+
+### 2.6 Ending Rover Mode & Natural Targeting Transition
+
+Ending Rover Mode signifies that the vehicle has parked, antennas will be aimed, and the operator is ready to work distant stations.
+
+#### Zero-Overhead Natural Interaction
+Rather than requiring a modal popup or dedicated push-button press that interrupts the operator's workflow, the exit transition is completely natural:
+1. **Step 1 (Tap Character):** The operator taps a character in Row 2 (Target Grid) to select it, arming editing (`isEditing = true`) and displaying the yellow cursor (`^`).
+2. **Step 2 (Turn Bezel):** The operator turns the rotary encoder knob to begin rolling the character to tune their first target station.
+3. **Commit Transition:** On the very first encoder tick that changes a character while editing is armed:
+   - The completed transit stop is automatically appended to the **Rover Location History Log** (NVS).
+   - Rover Mode cleanly disarms (`operationalMode = MODE_BEARING`).
+   - The system is now in standard **Bearing Mode** (Row 5 displays normal target bearing and contest distance).
+
+#### Two-Step Accidental Touch Protection
+This design provides built-in 2-step protection against accidental transitions while driving over rough terrain:
+- An accidental touchscreen bump (from a loose cable, coat, or road vibration) might select a character, but **touch alone does not exit Rover Mode**.
+- It requires the combination of a touch selection **followed by a deliberate physical rotation of the rotary bezel**.
+- If the screen was touched accidentally and the bezel is not turned, the standard 5-second inactivity auto-lock fires (`EDIT_TIME_OUT_MS`), automatically disarming edit mode (`isEditing = false`), hiding the cursor, and keeping Rover Mode active without user intervention.
+- Finally, if the operator intentionally tunes a target and later realizes the site is unviable, the **"Discard Last Entry"** feature provides a complete safety net, reverting the log and automatically re-arming Rover Mode relative to the prior legitimate site.
+
+---
+
+## 3. Multi-Stop Rover Location History & Contest Log
+
+As rovers travel between multiple operating locations across a contest weekend, the device maintains a persistent chronological history of operating locations.
+
+```text
+[Stop 1: CM87wa (Site 1)] ──(24.2 km)──> [Stop 2: CM87wb (Site 2)] ──(38.5 km)──> [Stop 3: CM88ec (Site 3)]
+```
+
+### 3.1 Data Model (`RoverStop`) & Non-Volatile Capacity
 
 ```cpp
-// Tap on local grid (Row 1): copy local grid to target for rover distance check
-else if (100 <= p.x && p.x <= 340 && 0 <= p.y && p.y <= 75) {
-  for (int ii = 0; ii < 6; ii++) {
-    remote[ii] = mygrid[ii];
-  }
-  remlatitude = mylatitude;
-  remlongitude = mylongitude;
-  rovdist = true;
-  printrem();
-  updateBearings();
-}
+// Factory default for non-volatile configuration ("rover_cfg", key "max_stops")
+constexpr uint16_t DEFAULT_MAX_ROVER_STOPS = 100;
+constexpr uint16_t ABS_MAX_ROVER_STOPS     = 500;
+
+struct RoverStop {
+    uint32_t timestamp;        // GPS epoch timestamp (seconds)
+    double   latitude;         // Decimal latitude of operating site
+    double   longitude;        // Decimal longitude of operating site
+    char     grid[9];          // 8-character Maidenhead locator (e.g. "CM87wa22")
+    float    displacement_km;  // Verified straight-line km from immediate prior stop
+    bool     qualified_16km;   // Whether the move met the 16 km requirement
+};
 ```
+
+Stored in ESP32 Non-Volatile Storage (`Preferences.h`) under namespace `"rover_log"` (stops) and `"rover_cfg"` (configuration):
+- **Non-Volatile Configurable Capacity (`MAX_ROVER_STOPS`):** Persisted in NVS under `"rover_cfg"` (key `"max_stops"`) with a factory default of **100 stops** (configurable between 10 and 500 stops via CLI or setup menu).
+- **Storage Footprint:** At 100 stops, $100 \times 32\text{ bytes} \approx 3.2\text{ KB}$, entirely negligible within the 16 MB NOR flash partition and 8 MB PSRAM.
+- **Log Management:** Operates as a persistent chronological log. If the log reaches capacity, the oldest unpinned entries roll over, or capacity can be expanded dynamically via CLI/UI without data loss.
+
+#### Viewing Rover History
+Because the compact 480×480 circular display prioritizes live driving and dish-aiming metrics without cluttering the screen with multi-column tabular logs, full contest history is retrieved via the USB Serial CLI using `rover history` (or `rover log`). The on-screen modal focuses exclusively on showing the latest stop and providing the quick-action "Discard Last Stop" undo.
 
 ---
 
-### Row 4: High-Visibility Proximity Alert Rendering
-Row 4 ($Y = 352\text{ px}$, Size 4) displays the reverse bearing and distance in kilometers:
+### 3.2 "Undo / Discard Last Entry" & Automatic Rover Re-Arm
 
-$$\text{Format: } \texttt{"\%5.1f \%4i k"}$$
+In real field operations, rovers occasionally encounter unviable operating locations:
+- The gate to a road, turnout, or hilltop is locked.
+- Dense fog, freezing rain, or high winds prevent raising antennas.
+- Extreme RF noise, trees, or terrain obstructions block microwave line-of-sight.
 
-* **Normal State ($\text{Distance} \ge 16\text{ km}$ or $\texttt{rovdist} == \text{false}$):**
-  * Foreground: White (`0xFFFF`)
-  * Background: Black (`0x0000`)
-* **Proximity Alert State ($\text{Distance} < 16\text{ km}$ and $\texttt{rovdist} == \text{true}$):**
-  * Foreground: **Bright Red** (`0xF800`)
-  * Background: **Solid White** (`0xFFFF`)
+If the operator had already tuned a target grid (exiting Rover Mode) at that location, that unviable site would be committed as the latest stop in NVS. If they pack up and move to an alternative site, displacement would calculate relative to the *unviable* stop rather than the *previous legitimate operating site*.
 
-```cpp
-char buf[20];
-int rdist = (int)floor(distance / 1000.0);
-sprintf(&buf[0], "%5.1f %4i k  ", revbearing, rdist);
+#### Access Gesture: Long-Press Row 1 (My Grid)
+To access history and undo on the physical touchscreen without cluttering the driving interface:
+- **Short Tap on Row 1 ($< 1.5\text{s}$):** Snapshots origin and arms Rover Mode.
+- **Long Press on Row 1 ($\ge 1.5\text{s}$):** Opens the **Rover History & Undo Modal** (matches `#define LONG_PRESS_MS 1500`). Accessible in both Bearing Mode and Rover Mode.
 
-if ((rdist < 16) && rovdist) {
-  gfx->setTextColor(RED, WHITE);
-} else {
-  gfx->setTextColor(WHITE, BLACK);
-}
-gfx->setTextSize(REVBEAR_SZ);
-gfx->setCursor(REVBEAR_X, REVBEAR_Y);
-gfx->print(buf);
+```text
++-------------------------------------------------+
+|              ROVER CONTEST HISTORY              |
+|                                                 |
+|  Last Stop: Stop #4 — CM88ec  (18:42Z)          |
+|  Displacement: 24.2 km (QUALIFIED)              |
+|  Total Logged Stops: 4                          |
+|                                                 |
+|       [ DISCARD LAST STOP ]   (Red 0xF800)      |
+|       [      CANCEL       ]   (Gray 0x2945)     |
++-------------------------------------------------+
 ```
 
-The inverted red-on-white block creates high visual contrast that is immediately noticeable in daylight even from the driver's seat or outside the vehicle.
+#### One-Shot Discard Action & Automatic Rover Re-Arm
+To keep field operations completely foolproof with zero modal confusion:
+- **Tapping [ CANCEL ]:** (or 15-second modal timeout `CAL_MODAL_TIMEOUT_MS`) immediately closes the dialog with zero changes, returning to the prior operational state.
+- **Tapping [ DISCARD LAST STOP ]:**
+  1. Immediately pops the topmost stop from the NVS history stack (`RoverLogManager`).
+  2. Restores the active origin reference (`originPoint_`, `originGrid_`) to the previous legitimate stop.
+  3. **Auto-Closes & Auto-Re-Arms:** The modal immediately closes and returns directly to the main screen, automatically re-arming **Rover Mode** relative to that restored prior stop! As the rover pulls out and drives away, live displacement $\Delta D$ instantly recalculates relative to the earlier valid site.
+- **Sequential Multi-Stop Discard:** In the rare event that an operator accidentally logged multiple unviable stops in succession, they simply long-press Row 1 again on the main screen to discard the next stop.
+- **Serial CLI Equivalence:** The `rover undo` command also pops the top of the history stack over USB.
 
 ---
 
-## 4. State Lifecycle & Auto-Reset
+### 3.3 Historical Grid Duplication Warning
 
-To prevent false alarms when the operator subsequently works target stations that happen to be within 16 km, rover origin tracking (`rovdist` / `isRoverAlertActive`) disarms whenever the operator intentionally interacts with the target grid:
+While ARRL microwave contest rules do not require being 16 km away from *all* past locations (only the *immediate prior* location), operating from a grid square already activated earlier in the weekend has specific scoring constraints (e.g., stations cannot claim QSO points for the same contact on the same band from the same grid twice).
 
-* **Origin Snapshot Protection:** Tapping the local grid (Row 1) automatically disarms edit mode (`isEditing = false`). The cursor (`^`) is hidden, protecting the origin grid from accidental bezel turns and road vibration bumps while driving. Turning the rotary bezel while in transit will not mutate characters or drop out of rover mode.
-* **Target Grid Character Tap:** When the rover arrives at a destination and the operator taps a character on Row 2, edit mode is re-armed (`isEditing = true`) and rover transit mode is cleanly disarmed, returning the compass to standard target station tracking.
+**Visual Presentation:**
+When the rover arrives at a site with $\ge 16.0\text{ km}$ displacement, but the current grid matches an earlier stop in the contest log:
+- **Card Color:** Qualified **Royal Blue on White** (`0x011C` on `0xFFFF`) (State C).
+- **Textual Indicator:** Displays `REVISIT  22.4 k ` in high-contrast Royal Blue on White.
+- **Operating Context:** Confirms legal 16 km displacement has been met, but immediately alerts the operator to check their log for duplicate contacts on the bands they plan to activate.
 
+---
+
+## 4. Modular Geodesics & Domain Model Integration
+
+The modular geodesic and coordinate engine was formally adopted in PR #10 under [`src/geo/`](../../src/geo/):
+
+```text
+src/geo/
+├── geo_point.h        # Struct GeoPoint (lat, lon)
+├── grid_square.h      # Class GridSquare (4, 6, 8-char Maidenhead)
+├── geo_math.h         # calculateWgs84, isRoverTransitInsideAlert, calculateReverseBearing
+├── maidenhead.h       # gridToGeoPoint, geoPointToGrid
+└── bearing_filter.h   # Vector circular mean smoothing
+```
+
+### 4.1 Integration with Existing Geodesic Functions
+
+Rover Mode directly consumes the existing, unit-tested functions in `src/geo/geo_math.h` and `src/geo/maidenhead.h`:
+
+1. **Rover Transit Displacement (`calculateWgs84` & `isRoverTransitInsideAlert`):**
+   - Evaluated directly between `originPoint_` and `currentPoint_` (`GeoPoint`).
+   - Uses WGS-84 ellipsoidal model in true meters.
+   - Evaluates `isRoverTransitInsideAlert(currentPoint_, originPoint_, 16.0)` to drive the qualification state.
+2. **Stationary Target Distance (Bearing Mode):**
+   - Evaluates either `calculateArrlContestDistance(myGrid_, targetGrid_)` (Grid-to-Grid spherical Earth, 0 km same-grid) or `calculateWgs84(currentPoint_, targetCenter)` depending on distance display mode.
+   - Grid centers are converted via `gridToGeoPoint()`.
+
+---
+
+## 5. Screen Layout & Visual Design (480×480 Circular Display)
+
+### 5.1 Bearing Mode vs. Rover Mode UI Budget
+
+Following the layout rebalancing in PR #12 (`ENABLE_ARRL_DIST = 0`), Row 6 has been eliminated, rebalancing vertical spacing across the circular screen. In stationary Bearing Mode, Row 5 renders reverse bearing on the left and ARRL contest distance to target on the right. In Rover Mode, Row 5 seamlessly transforms into the dedicated **Rover Qualification Card** on a solid white background:
+
+```text
+           --- BEARING MODE (Stationary) ---                          --- ROVER MODE (In-Transit) ---
+                      (Y = 0)                                                   (Y = 0)
+                   .-----------.                                             .-----------.
+                .-'   Row 1     '-.                                       .-'   Row 1     '-.
+              .'   My Grid:       '.  Y=35                              .'   My Grid:       '.  Y=35
+             /     CM87wa22         \                                  /     CM87wb44         \
+            |        Row 2           | Y=95                           |        Row 2           | Y=95
+            |   Target: CM97be       |                                |   Target: CM97be       |
+            |        Row 3           | Y=223                          |        Row 3           | Y=223
+            |  Hdg: 142  Tgt: 142    |                                |  Hdg: 142  Tgt: 142    |
+            |        Row 4           | Y=300                          |        Row 4           | Y=300
+             \   UTC: 18:42:15 Z    /                                  \   UTC: 18:42:15 Z    /
+              '.     Row 5        .'   Y=376                            '.     Row 5        .'   Y=376
+                '-. 184.2   42 k  .-'                                     '-.[QUALIFIED 18.2 k]-'  <-- White Card Slot
+                     (Y = 480)                                                 (Y = 480)
+```
+
+#### Geometry Budget & Typography (`src/config.h`)
+- **Card Geometry:** Padded white card ($X=40, Y=372, W=400, H=44$) with $8\text{ px}$ corner radius, centered horizontally at $Y=376$.
+- **Chord Clearance:** On a $480\text{ px}$ circular display, the horizontal chord at $Y=372\text{--}416$ provides ample clearance for the $400\text{ px}$ card width, fitting comfortably above the version footer ($Y=444$).
+- **Text Sizing (`REVBEAR_SZ = 4`):** Fixed-width monospace at $24\text{ px}$ per character. 16 characters occupy $384\text{ px}$, centered inside the card.
+- **Unified 5-Row Architecture:** Eliminating Row 6 prevents information overload while driving and gives the Rover Qualification Card dedicated prominence.
+
+---
+
+### 5.2 Row 5 Rover Qualification Card (4 Visual States)
+
+The Rover Qualification Card renders on a solid white background card (`0xFFFF`) at Row 5:
+
+1. **State A: In-Transit Under 16 km (Red on White Warning)**
+   - **Text Color:** High-contrast Red (`0xF800`) on Pure White (`0xFFFF`)
+   - **Display Format:** `TRANSIT  6.4 k `
+   - **Legality:** **ILLEGAL** (Displacement $< 16.0\text{ km}$; continue driving to satisfy the 16 km rule).
+
+2. **State B: Qualified New Location (Forest Green on White)**
+   - **Text Color:** Forest Green (`0x03E0`) on Pure White (`0xFFFF`)
+   - **Display Format:** `QUALIFIED 18.2 k`
+   - **Legality:** **QUALIFIED** (Displacement $\ge 16.0\text{ km}$; unvisited grid square; all contest bands open for new contacts).
+
+3. **State C: Qualified Revisited Grid (Royal Blue on White)**
+   - **Text Color:** Royal Blue (`0x011C`) on Pure White (`0xFFFF`)
+   - **Display Format:** `REVISIT  22.4 k `
+   - **Legality:** **QUALIFIED** (Displacement $\ge 16.0\text{ km}$; grid was activated earlier in contest weekend; check log for duplicate contacts).
+
+4. **State D: GPS Signal Lost / Stale (Deep Amber on White — Holds Last Known)**
+   - **Text Color:** Deep Amber (`0xDC00`) on Pure White (`0xFFFF`)
+   - **Display Format:** `NO GPS   11.2 k ` (holds last known valid displacement)
+   - **Legality:** **WAIT GPS** (GPS fix lost $> 3\text{s}$ in tunnel/heavy canopy; holds last known reading rather than blanking).
+
+---
+
+### 5.3 Rendering Pipeline & Flicker-Free Partial Refresh
+
+The display architecture in `DisplayUi` is optimized for high readability and zero flicker:
+- **Card Drawing:** Background card drawn via `gfx_->fillRoundRect(40, 372, 400, 44, 8, 0xFFFF)`.
+- **Text Drawing:** Foreground text rendered with transparent or white background `gfx_->setTextColor(stateColor, 0xFFFF)`.
+- **Selective Redraw:** Row 5 redraws only when displacement changes by $\ge 0.1\text{ km}$, qualification state transitions, or the 1 Hz GPS watchdog detects a signal loss/recovery event.
+
+---
+
+## 6. Serial CLI & Simulation Framework Integration
+
+Integrating with [`src/protocol/serial_cli.h`](../../src/protocol/serial_cli.h) and [`tools/gps_sim.py`](../../tools/gps_sim.py):
+
+### 6.1 CLI Commands for Rover Operations
+
+| Command | Action | Output / Behavior |
+| :--- | :--- | :--- |
+| `rover` / `rover status` | Displays active rover transit status | Origin coords, live displacement, grid boundary status, qualification state (A–D), and GPS fix health |
+| `rover start` | Emulates Row 1 tap | Captures current location as origin and arms Rover Mode |
+| `rover stop` | Emulates natural target tuning exit | Commits location to history log and returns to Bearing Mode (primarily for scripts/testing) |
+| `rover history` / `rover log` | Prints full rover history to serial | Formatted ASCII table of all recorded stops, timestamps, coordinates, grids, displacements, and 16 km qualification status |
+| `rover undo` | Discards last stop | Discards most recent entry, restores origin baseline, and auto-rearms Rover Mode |
+| `rover max [n]` | Gets / sets max capacity | Reports current limit, or sets and persists new NVS capacity (default 100, range 10–500) |
+| `rover clear` | Clears rover history | Resets the rover location history log in NVS (with confirmation prompt; does not affect calibration, target presets, or other device configuration) |
+
+#### Example Serial Output (`rover history`)
+```text
+=== ROVER LOCATION HISTORY (3 stops / max 100) ===
+# | UTC Timestamp       | Latitude   | Longitude    | Grid     | Disp (km) | Status
+--+---------------------+------------+--------------+----------+-----------+-----------
+1 | 2026-10-14 14:15:22 |  37.421998 | -122.084000  | CM87wa22 |     0.0 k | ORIGIN
+2 | 2026-10-14 16:32:04 |  37.581204 | -122.215401  | CM87wb44 |    24.2 k | QUALIFIED
+3 | 2026-10-14 18:42:15 |  37.774929 | -122.419418  | CM88ec12 |    28.5 k | QUALIFIED
+==================================================
+```
+
+### 6.2 Simulation Verification with `gps_sim.py`
+
+The simulation framework in [`tools/gps_sim.py`](../../tools/gps_sim.py) enables full automated and interactive validation without requiring road trips:
+- **Transit Journey (States A $\to$ B):**  
+  `./tools/gps_sim.py rover --origin CM87wa --speed 75 --distance 25`  
+  Feeds a live vehicle track driving from `CM87wa` past 16 km into `CM87wb`, testing real-time State A (Red) to State B (Green) qualification.
+- **Mountain Canyon Backtrack (States B $\to$ A):**  
+  `./tools/gps_sim.py backtrack --origin CM87wa`  
+  Simulates switchback retreat, validating instantaneous, hysteresis-free drop from Qualified (Green) back to In-Transit (Red) when straight-line distance drops under 16 km.
+- **GPS Loss & Watchdog Degradation (State D):**  
+  `./tools/gps_sim.py rtk`  
+  Simulates signal drop and watchdog timeout, verifying that the display transitions to Deep Amber (`0xDC00`) and preserves the last known valid distance.
+- **Loop Course Revisit (State C):**  
+  `./tools/gps_sim.py rover --origin CM87wb --dest CM87wa`  
+  Simulates returning to an earlier activated grid square after $\ge 16\text{ km}$, asserting State C (Royal Blue on White / `REVISIT`).
+
+---
+
+## 7. Verification & Automated Test Strategy
+
+The Rover Mode architecture is verified across three testing tiers:
+
+### 7.1 Native C++ Unit Tests (`tests/test_calculations.cpp`)
+Executed locally via `./tests/run_tests.sh` with zero hardware dependencies:
+1. **Continuous 0.1 km Geodesic Precision:** Asserting `%5.1f k` decimal formatting across integer boundaries and 0.1 km increments.
+2. **4-State Qualification Matrix (States A, B, C, D):** Validating truth table combinations of displacement ($< 16\text{ km}$ vs. $\ge 16\text{ km}$), grid history (unvisited vs. revisited), and GPS freshness (active vs. stale $> 3\text{s}$).
+3. **Dynamic Backtrack Assertions:** Validating instantaneous state reversibility without hysteresis latching.
+4. **Natural 2-Step Exit State Machine:**
+   - Tap character arms `isEditing = true` and shows cursor (`^`).
+   - Physical bezel rotation commits stop to NVS history and disarms Rover Mode on first tick.
+   - Inactivity auto-lock timeout (`EDIT_TIME_OUT_MS = 5000`) disarms accidental touch selections without exiting Rover Mode.
+5. **History Log Stack Operations (`RoverLogManager`):**
+   - Appending stops, chronological query, and duplicate grid search.
+   - "Discard Last Entry" undo fallback, multi-level sequential popping, empty stack bounds, and automatic Rover Mode re-arm relative to prior site.
+6. **Non-Volatile Configuration Persistence:**
+   - Storing and loading `max_stops` in NVS (`Preferences.h` under namespace `"rover_cfg"`), asserting factory default of 100 stops and bounds clamping (10 to 500).
+
+### 7.2 Interactive Simulation & Automated Serial Assertions
+- USB CDC serial test runner executing `tools/gps_sim.py` scenarios, asserting live CLI reports (`rover status`) at each transit milestone.
+
+### 7.3 Continuous Integration (CI Pipeline)
+- Automated execution of `./tests/run_tests.sh` on every pull request.
+- Headless `arduino-cli` build verification ensuring ESP32-S3 firmware compilation within NOR flash and PSRAM limits.

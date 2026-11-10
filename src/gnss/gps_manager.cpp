@@ -9,6 +9,7 @@ GpsManager::GpsManager()
       hasTime_(false),
       hours_(0),
       minutes_(0),
+      epochTime_(0),
       totalBytesReceived_(0),
       lastByteMillis_(0),
       gllPacketCount_(0),
@@ -231,6 +232,11 @@ void GpsManager::processSentence(char *sentence, unsigned long nowMs) {
 
     // Extract Time and Position from $KSXT (5 Hz)
     if (strncmp(sentence, "$KSXT", 5) == 0) {
+        uint32_t ksxtEpoch = 0;
+        if (parseKsxtEpochTime(sentence, ksxtEpoch)) {
+            setEpochTime(ksxtEpoch);
+        }
+
         int ksxtH = 0, ksxtM = 0;
         if (parseKsxtTime(sentence, ksxtH, ksxtM)) {
             if (!hasTime_ || ksxtH != hours_ || ksxtM != minutes_) {
@@ -240,11 +246,7 @@ void GpsManager::processSentence(char *sentence, unsigned long nowMs) {
 
         GeoPoint ksxtPt;
         if (parseKsxtLocation(sentence, ksxtPt)) {
-            if (!hasLocation() ||
-                std::abs(ksxtPt.latitude - location_.latitude) > 0.00001 ||
-                std::abs(ksxtPt.longitude - location_.longitude) > 0.00001) {
-                setLocation(ksxtPt, nowMs);
-            }
+            setLocation(ksxtPt, nowMs);
         }
     } else if (strncmp(sentence, "$GNGLL", 6) == 0 || strncmp(sentence, "$GPGLL", 6) == 0) {
         gllPacketCount_++;
