@@ -35,6 +35,8 @@ void setup() {
   // The BLE name is derived from the MAC address inside app.begin()
   Serial.print(F("BLE Device: "));
   Serial.println(bleSerialManager.getDeviceName());
+
+  serialCli.printPrompt();
 }
 
 void loop() {

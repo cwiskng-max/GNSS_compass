@@ -76,10 +76,11 @@ If the firmware were designed to execute `SAVECONFIG` unconditionally on every b
    - Detailed progress is mirrored over USB CDC and BLE UART.
    - On all future boots, `$KSXT` is already saved in receiver flash, so auto-config never runs again.
 5. **Active Non-Destructive Query & Configuration Audit:** When TX is available, the ESP32 can audit the receiver's running parameters against [RECEIVER.md](../../RECEIVER.md) without writing flash:
-   - `UNILOGLIST COM1`: Checks active output logs. Verifies `$KSXT` is logged at 0.2s and confirms no extraneous sentences (`GPGGA`, `GPHDT`, `GPGLL`, `GPRMC`) are active.
+   - `VERSION`: Inspects product model, firmware build, serial number, and build date.
    - `MODE`: Verifies operating mode is `MODE ROVER UAV`.
-   - `CONFIG SIGNALGROUP`: Verifies multi-frequency constellations (`3 6`).
-   - `CONFIG HEADING`: Inspects baseline lock status (`FIXLENGTH`).
+   - `UNILOGLIST COM1`: Checks active output logs. Verifies `$KSXT` is logged at 0.2s and confirms no extraneous sentences (`GPGGA`, `GPHDT`, `GPGLL`, `GPRMC`) are active.
+   - `LOG COM1 HEADINGSTATUSA ONCE`: Inspects baseline configuration (`#HEADINGSTATUSA`), returning the configured baseline length (cm) and error tolerance (cm).
+   *(Note: `CONFIG SIGNALGROUP` and `CONFIG HEADING` are write-only configuration commands requiring arguments on Unicore receivers; bare queries return a grammar error).*
 6. **Clean Slate with `UNLOG COM1`:** Rather than attempting to guess and unlog individual legacy sentences, Unicore supports `UNLOG COM1`, which wipes all active message streams on `COM1` in a single command before enabling `KSXT com1 0.2`.
 
 ---
@@ -92,6 +93,8 @@ To test whether the TX wire is connected from ESP32 GPIO 43 to UM982 COM1 RX:
   ```text
   version\r\n
   ```
+* **Automatic Discovery on Stream Ingest:** When the receiver data stream is first detected from `UNKNOWN` state (or after stream recovery following $\ge 5$ s silence), the ESP32 automatically transmits a discovery probe. Probing is skipped when running under synthetic simulation.
+* **On-Demand Discovery:** Running `gps check` (or `gps audit`) while TX state is `UNKNOWN` automatically initiates an in-flight probe on GPIO 43, queueing the parameter audit queries to run immediately once receiver acknowledgment is confirmed.
 * **If TX wire is connected:** UM982 receives the command and replies on COM1 TX with:
   ```text
   $command,version,response: OK*<checksum>
@@ -105,13 +108,15 @@ To test whether the TX wire is connected from ESP32 GPIO 43 to UM982 COM1 RX:
 ```mermaid
 stateDiagram-v2
     [*] --> UNKNOWN
-    UNKNOWN --> PROBING: Start Probe (send 'version')
+    UNKNOWN --> PROBING: First RX stream detected OR on-demand 'gps check' / 'gps probe'
     PROBING --> AVAILABLE: Received '<OK' or '#VERSION' within 1000ms
     PROBING --> RETRY: Timeout (no response)
     RETRY --> PROBING: Retry 1..2
     RETRY --> UNAVAILABLE: Max Retries Expired
     AVAILABLE --> PROBING: On-demand 'gps probe'
     UNAVAILABLE --> PROBING: On-demand 'gps probe'
+    AVAILABLE --> UNKNOWN: Stream silence >= 5s (unplugged / powered off)
+    UNAVAILABLE --> UNKNOWN: Stream silence >= 5s (unplugged / powered off)
 ```
 
 ### 3.3 State Representation & API
@@ -230,7 +235,7 @@ The following subcommands will be added to the unified `SerialCli` parser (acces
   Config State:   OPTIMAL ($KSXT streaming at 5.0 Hz, legacy unlogged)
   ```
 * `gps probe`: Manually triggers a TX discovery probe cycle.
-* `gps check` (or `gps audit`): Queries `MODE`, `UNILOGLIST COM1`, and `CONFIG SIGNALGROUP` to report compliance with [RECEIVER.md](../../RECEIVER.md) without modifying flash.
+* `gps check` (or `gps audit`): Queries `VERSION`, `MODE`, `UNILOGLIST COM1`, and `HEADINGSTATUSA` (baseline length & tolerance) to report hardware/firmware details and runtime configuration without modifying flash.
 * `gps config`: Runs the standard [RECEIVER.md](../../RECEIVER.md) configuration pipeline (`MODE ROVER UAV` -> `CONFIG SIGNALGROUP 3 6` -> `UNLOG COM1` -> `KSXT com1 0.2` -> `SAVECONFIG`).
 * `gps config baseline <length_cm> [tol_cm]`: Runs configuration including physical antenna separation constraint (default tolerance 2.5 cm).
 * `gps send <raw_command>`: Power-user command allowing transmission of arbitrary Unicore commands (e.g. `gps send uniloglist`, `gps send version`, `gps send config`).

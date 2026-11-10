@@ -57,7 +57,9 @@ SerialCli::SerialCli(GpsManager &gpsManager, Calibration &calibration, GpsSimula
       roverActionContext_(nullptr),
       outputFn_(nullptr),
       outputContext_(nullptr),
-      pendingRoverClear_(false)
+      pendingRoverClear_(false),
+      pendingAudit_(false),
+      pendingAuditSource_(CLI_SOURCE_USB)
 {
     registerGpsCallbacks();
     attachBle();
@@ -78,10 +80,26 @@ void SerialCli::registerGpsCallbacks() {
         }
     }, this);
 
-    gpsManager_.setOnProbeResult([](GpsTxState, const char *msg, void *ctx) {
+    gpsManager_.setOnProbeResult([](GpsTxState state, const char *msg, void *ctx) {
         auto *self = static_cast<SerialCli*>(ctx);
-        if (self && msg && msg[0] != '\0') {
+        if (!self) return;
+        if (msg && msg[0] != '\0') {
             self->broadcastln(msg);
+        }
+        if (self->pendingAudit_) {
+            self->pendingAudit_ = false;
+            CliSource prevSource = self->getActiveSource();
+            self->setActiveSource(self->pendingAuditSource_);
+            if (state == GpsTxState::Available) {
+                self->println("[GPS AUDIT] Querying receiver parameters (VERSION, MODE, UNILOGLIST COM1, HEADINGSTATUSA)...");
+                self->gpsManager_.sendCommand("VERSION");
+                self->gpsManager_.sendCommand("MODE");
+                self->gpsManager_.sendCommand("UNILOGLIST COM1");
+                self->gpsManager_.sendCommand("LOG COM1 HEADINGSTATUSA ONCE");
+            } else if (state == GpsTxState::Unavailable) {
+                self->println("[GPS] Cannot audit: TX wire not connected (Receive-only mode).");
+            }
+            self->setActiveSource(prevSource);
         }
     }, this);
 }
@@ -90,6 +108,8 @@ void SerialCli::begin() {
     usbLine_.clear();
     bleLine_.clear();
     pendingRoverClear_ = false;
+    pendingAudit_ = false;
+    pendingAuditSource_ = CLI_SOURCE_USB;
     activeSource_ = CLI_SOURCE_USB;
 }
 
@@ -182,6 +202,10 @@ void SerialCli::printFormat(const char *fmt, ...) {
     va_end(args);
 }
 
+void SerialCli::printPrompt() {
+    print("> ");
+}
+
 void SerialCli::broadcast(const char *str) {
     if (!str) return;
     consoleWrite(str);
@@ -255,21 +279,14 @@ void SerialCli::update(unsigned long nowMs) {
 void SerialCli::executeCommand(const char *cmdLine, unsigned long nowMs, CliSource source) {
     activeSource_ = source;
     if (!cmdLine) return;
-    while (*cmdLine == ' ' || *cmdLine == '\t') cmdLine++;
-    if (*cmdLine == '\0') return;
 
-    if (pendingRoverClear_) {
-        pendingRoverClear_ = false;
-        if (equalsIgnoreCase(cmdLine, "yes") || equalsIgnoreCase(cmdLine, "y") ||
-            equalsIgnoreCase(cmdLine, "confirm")) {
-            doRoverClear();
-            return;
-        }
-        println("[ROVER] Rover clear aborted.");
-        if (equalsIgnoreCase(cmdLine, "no") || equalsIgnoreCase(cmdLine, "n") ||
-            equalsIgnoreCase(cmdLine, "cancel")) {
-            return;
-        }
+    // Skip leading whitespace
+    while (*cmdLine == ' ' || *cmdLine == '\t' || *cmdLine == '\r' || *cmdLine == '\n') {
+        cmdLine++;
+    }
+    if (*cmdLine == '\0') {
+        printPrompt();
+        return;
     }
 
     // Direct sentence injection: e.g. "$KSXT..." or "$GNGLL..."
@@ -285,62 +302,71 @@ void SerialCli::executeCommand(const char *cmdLine, unsigned long nowMs, CliSour
         return;
     }
 
-    if (startsWithIgnoreCase(cmdLine, "rover")) {
-        const char *arg = cmdLine + 5;
+    // Copy to trimmed buffer and strip trailing whitespace
+    char cleanCmd[LineBuffer::kCapacity];
+    size_t len = 0;
+    while (cmdLine[len] && len < sizeof(cleanCmd) - 1) {
+        cleanCmd[len] = cmdLine[len];
+        len++;
+    }
+    cleanCmd[len] = '\0';
+
+    while (len > 0 && (cleanCmd[len - 1] == ' ' || cleanCmd[len - 1] == '\t' ||
+                       cleanCmd[len - 1] == '\r' || cleanCmd[len - 1] == '\n')) {
+        cleanCmd[--len] = '\0';
+    }
+    if (len == 0) {
+        printPrompt();
+        return;
+    }
+
+    if (pendingRoverClear_) {
+        pendingRoverClear_ = false;
+        if (equalsIgnoreCase(cleanCmd, "yes") || equalsIgnoreCase(cleanCmd, "y") ||
+            equalsIgnoreCase(cleanCmd, "confirm")) {
+            doRoverClear();
+        } else {
+            println("[ROVER] Rover clear aborted.");
+        }
+        printPrompt();
+        return;
+    }
+
+    if (startsWithIgnoreCase(cleanCmd, "rover")) {
+        const char *arg = cleanCmd + 5;
         while (*arg == ' ' || *arg == '\t') arg++;
         handleRoverCommand(arg, nowMs);
-        return;
-    }
-
-    if (startsWithIgnoreCase(cmdLine, "sim")) {
-        const char *arg = cmdLine + 3;
+    } else if (startsWithIgnoreCase(cleanCmd, "sim")) {
+        const char *arg = cleanCmd + 3;
         while (*arg == ' ' || *arg == '\t') arg++;
         handleSimCommand(arg, nowMs);
-        return;
-    }
-
-    if (equalsIgnoreCase(cmdLine, "help") || strcmp(cmdLine, "?") == 0) {
+    } else if (equalsIgnoreCase(cleanCmd, "help") || strcmp(cleanCmd, "?") == 0) {
         printHelp();
-        return;
-    }
-
-    if (startsWithIgnoreCase(cmdLine, "gps")) {
-        const char *arg = cmdLine + 3;
+    } else if (startsWithIgnoreCase(cleanCmd, "gps")) {
+        const char *arg = cleanCmd + 3;
         while (*arg == ' ' || *arg == '\t') arg++;
         if (*arg == '\0' || equalsIgnoreCase(arg, "status")) {
             printGpsStatus(nowMs);
-            return;
+        } else {
+            handleGpsCommand(arg, nowMs);
         }
-        handleGpsCommand(arg, nowMs);
-        return;
-    }
-
-    if (equalsIgnoreCase(cmdLine, "status") ||
-        equalsIgnoreCase(cmdLine, "diag")   || equalsIgnoreCase(cmdLine, "s")   ||
-        equalsIgnoreCase(cmdLine, "g")) {
+    } else if (equalsIgnoreCase(cleanCmd, "status") ||
+               equalsIgnoreCase(cleanCmd, "diag")   || equalsIgnoreCase(cleanCmd, "s")   ||
+               equalsIgnoreCase(cleanCmd, "g")) {
         printGpsStatus(nowMs);
-        return;
-    }
-
-    if (equalsIgnoreCase(cmdLine, "test") || equalsIgnoreCase(cmdLine, "demo") ||
-        equalsIgnoreCase(cmdLine, "t")) {
+    } else if (equalsIgnoreCase(cleanCmd, "test") || equalsIgnoreCase(cleanCmd, "demo") ||
+               equalsIgnoreCase(cleanCmd, "t")) {
         if (runTestCb_) {
             runTestCb_(runTestContext_);
         } else {
             println("[CLI] Test runner callback not registered.");
         }
-        return;
-    }
-
-    // BLE link status and diagnostic logging control
-    if (equalsIgnoreCase(cmdLine, "ble") || startsWithIgnoreCase(cmdLine, "ble ")) {
-        const char *arg = cmdLine + 3;
+    } else if (equalsIgnoreCase(cleanCmd, "ble") || startsWithIgnoreCase(cleanCmd, "ble ")) {
+        const char *arg = cleanCmd + 3;
         while (*arg == ' ' || *arg == '\t') arg++;
         if (!bleManager_) {
             println("[BLE] Bluetooth not available");
-            return;
-        }
-        if (equalsIgnoreCase(arg, "diag on")) {
+        } else if (equalsIgnoreCase(arg, "diag on")) {
             bleManager_->setDiagEnabled(true);
             println("[BLE] Diagnostics ON (RSSI every 3 s while connected, main-loop stall reports; USB serial)");
         } else if (equalsIgnoreCase(arg, "diag off")) {
@@ -361,28 +387,23 @@ void SerialCli::executeCommand(const char *cmdLine, unsigned long nowMs, CliSour
         } else {
             println("Usage: ble [status] | ble diag on|off");
         }
-        return;
-    }
-
-    if (startsWithIgnoreCase(cmdLine, "cal")) {
-        const char *arg = cmdLine + 3;
+    } else if (startsWithIgnoreCase(cleanCmd, "cal")) {
+        const char *arg = cleanCmd + 3;
         while (*arg == ' ' || *arg == '\t') arg++;
         handleCalCommand(arg);
-        return;
-    }
-
-    if (equalsIgnoreCase(cmdLine, "disconnect") || equalsIgnoreCase(cmdLine, "exit") ||
-        equalsIgnoreCase(cmdLine, "quit")) {
+    } else if (equalsIgnoreCase(cleanCmd, "disconnect") || equalsIgnoreCase(cleanCmd, "exit") ||
+               equalsIgnoreCase(cleanCmd, "quit")) {
         if (activeSource_ == CLI_SOURCE_BLE && bleManager_) {
             println("Disconnecting BLE connection...");
             bleManager_->disconnect();
         } else {
             println("[CLI] 'disconnect' applies to active wireless Bluetooth sessions.");
         }
-        return;
+    } else {
+        printFormat("Unknown command: '%s'. Type 'help' for available commands.\r\n", cleanCmd);
     }
 
-    printFormat("Unknown command: '%s'. Type 'help' for available commands.\r\n", cmdLine);
+    printPrompt();
 }
 
 void SerialCli::handleGpsCommand(const char *arg, unsigned long nowMs) {
@@ -453,14 +474,21 @@ void SerialCli::handleGpsCommand(const char *arg, unsigned long nowMs) {
 
     if (equalsIgnoreCase(arg, "check") || equalsIgnoreCase(arg, "audit")) {
         if (!gpsManager_.isSendAvailable()) {
+            if (gpsManager_.getTxState() == GpsTxState::Unknown) {
+                println("[GPS AUDIT] Testing TX connection on GPIO 43 before query...");
+                pendingAudit_ = true;
+                pendingAuditSource_ = activeSource_;
+                gpsManager_.probeTx(nowMs);
+                return;
+            }
             println("[GPS] Cannot audit: TX wire not connected (Receive-only mode).");
             return;
         }
-        println("[GPS AUDIT] Querying receiver parameters (MODE, UNILOGLIST COM1, CONFIG SIGNALGROUP, CONFIG HEADING)...");
+        println("[GPS AUDIT] Querying receiver parameters (VERSION, MODE, UNILOGLIST COM1, HEADINGSTATUSA)...");
+        gpsManager_.sendCommand("VERSION");
         gpsManager_.sendCommand("MODE");
         gpsManager_.sendCommand("UNILOGLIST COM1");
-        gpsManager_.sendCommand("CONFIG SIGNALGROUP");
-        gpsManager_.sendCommand("CONFIG HEADING");
+        gpsManager_.sendCommand("LOG COM1 HEADINGSTATUSA ONCE");
         return;
     }
 

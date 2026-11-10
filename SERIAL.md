@@ -163,7 +163,7 @@ flowchart LR
 ```
 
 #### 1. Discover TX Wire (`gps probe`)
-Sends an ASCII `version\r\n` probe command to the UM982. If the receiver responds with `<OK` or `#VERSIONA`, the system confirms bidirectional communication:
+The compass automatically discovers TX capability as soon as receiver stream data is detected on boot or upon cable connection. You can also manually trigger a discovery probe at any time:
 
 ```text
 > gps probe
@@ -206,13 +206,17 @@ If your physical antenna spacing is known (e.g. 101.6 cm / 40 inches center-to-c
 ```
 
 #### 4. Audit Running Receiver Parameters (`gps check` or `gps audit`)
-Non-destructively queries the receiver's running settings (`MODE`, `UNILOGLIST COM1`, `CONFIG SIGNALGROUP`, `CONFIG HEADING`) to inspect configuration compliance without writing to NOR Flash:
+Non-destructively queries the receiver's running settings (`VERSION`, `MODE`, `UNILOGLIST COM1`, and `HEADINGSTATUSA` for baseline constraint) to inspect firmware build, operating mode, active message logs, and configured baseline length/tolerance without writing to NOR Flash. If TX status has not yet been established at the time of query, `gps check` automatically initiates an in-flight probe on GPIO 43 and executes the query sequence as soon as the receiver acknowledges:
 
 ```text
 > gps check
-[GPS AUDIT] Querying receiver parameters (MODE, UNILOGLIST COM1, CONFIG SIGNALGROUP, CONFIG HEADING)...
-[GPS RX] #MODEA,91,GPS,FINE...;ROVER,UAV*...
-[GPS RX] < KSXT COM1 0.200000
+[GPS AUDIT] Querying receiver parameters (VERSION, MODE, UNILOGLIST COM1, HEADINGSTATUSA)...
+[GPS RX] #VERSION,98,GPS,UNKNOWN,1,...;UM982,R4.10Build13495...
+[GPS RX] #MODE,98,GPS,UNKNOWN,1,...;MODE ROVER UAV,*...
+[GPS RX] #UNILOGLIST,98,GPS,UNKNOWN,1,...;
+[GPS RX] <	1
+[GPS RX] <	KSXT COM1 0.2
+[GPS RX] #HEADINGSTATUSA,98,GPS,UNKNOWN,1,...;101.6000,2.5000,0.0,0.0,...
 ```
 
 #### 5. Send Raw Receiver Command (`gps send <cmd>`)

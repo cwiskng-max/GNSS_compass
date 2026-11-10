@@ -1061,6 +1061,30 @@ void test_gps_tx_discovery() {
     ASSERT_TRUE(gm.getProbeRetries() == 1);
     ASSERT_TRUE(gm.getTxState() == GpsTxState::Probing);
 
+    // 11. Auto-probe upon initial stream sentence arrival from Unknown state
+    GpsManager gmAuto;
+    std::string autoSentData;
+    gmAuto.setTxHandler([](const uint8_t *data, size_t len, void *ctx) {
+        auto *s = static_cast<std::string*>(ctx);
+        if (s) s->append(reinterpret_cast<const char*>(data), len);
+    }, &autoSentData);
+    ASSERT_TRUE(gmAuto.getTxState() == GpsTxState::Unknown);
+    gmAuto.feedSentence("$GNGLL,3821.2472,N,11927.4926,W,193000.00,A*3C", 100);
+    ASSERT_TRUE(gmAuto.getTxState() == GpsTxState::Probing);
+    ASSERT_STR_EQ(autoSentData.c_str(), "version\r\n");
+
+    // Receiver acknowledges auto-probe
+    gmAuto.feedSentence("<OK", 150);
+    ASSERT_TRUE(gmAuto.getTxState() == GpsTxState::Available);
+
+    // 12. Stream silence timeout (>= 5000 ms) resets state to Unknown, and fresh data re-probes
+    gmAuto.checkStaleness(5151); // 5001 ms elapsed since 150 -> resets to Unknown
+    ASSERT_TRUE(gmAuto.getTxState() == GpsTxState::Unknown);
+    autoSentData.clear();
+    gmAuto.feedSentence("$KSXT,20261110180000.00,119.45,38.35,100.0,0.0,0.0,0.0,0,0,3,10,0*00", 5200);
+    ASSERT_TRUE(gmAuto.getTxState() == GpsTxState::Probing);
+    ASSERT_STR_EQ(autoSentData.c_str(), "version\r\n");
+
     PASS();
 }
 
@@ -1366,6 +1390,42 @@ void test_serial_cli() {
     cli.executeCommand("sim off");
     ASSERT_TRUE(!sim.isActive());
 
+    // Whitespace trimming tests (leading and trailing spaces, tabs, e.g. 'help ')
+    cliOutput.clear();
+    cli.executeCommand("help   ");
+    ASSERT_TRUE(cliOutput.find("=== GNSS Compass Serial Commands ===") != std::string::npos);
+    ASSERT_TRUE(cliOutput.find("Unknown command") == std::string::npos);
+    cliOutput.clear();
+
+    cli.executeCommand("   status  ");
+    ASSERT_TRUE(cliOutput.find("GNSS Receiver Stream Diagnosis") != std::string::npos);
+    ASSERT_TRUE(cliOutput.find("Unknown command") == std::string::npos);
+    cliOutput.clear();
+
+    cli.executeCommand("  cal zero  ");
+    ASSERT_NEAR(cal.getOffset(), 0.0f, 1e-4);
+    ASSERT_TRUE(cliOutput.find("[CAL] Offset reset to 0.0 deg") != std::string::npos);
+    cliOutput.clear();
+
+    // Prompt '> ' tests
+    cliOutput.clear();
+    cli.executeCommand(""); // Empty Enter
+    ASSERT_STR_EQ(cliOutput.c_str(), "> ");
+    cliOutput.clear();
+
+    cli.executeCommand("   "); // Spaces only Enter
+    ASSERT_STR_EQ(cliOutput.c_str(), "> ");
+    cliOutput.clear();
+
+    cli.printPrompt();
+    ASSERT_STR_EQ(cliOutput.c_str(), "> ");
+    cliOutput.clear();
+
+    // Sentence injection must NOT emit prompt
+    cli.executeCommand("$GNGLL,3821.2472,N,11927.4926,W,193000.00,A*3C");
+    ASSERT_TRUE(cliOutput.find("> ") == std::string::npos);
+    cliOutput.clear();
+
     PASS();
 }
 
@@ -1452,10 +1512,10 @@ void test_serial_cli_gps_commands() {
     sentUartData.clear();
     cli.executeCommand("gps check");
     ASSERT_TRUE(cliOutput.find("[GPS AUDIT] Querying receiver parameters") != std::string::npos);
+    ASSERT_TRUE(sentUartData.find("VERSION\r\n") != std::string::npos);
     ASSERT_TRUE(sentUartData.find("MODE\r\n") != std::string::npos);
     ASSERT_TRUE(sentUartData.find("UNILOGLIST COM1\r\n") != std::string::npos);
-    ASSERT_TRUE(sentUartData.find("CONFIG SIGNALGROUP\r\n") != std::string::npos);
-    ASSERT_TRUE(sentUartData.find("CONFIG HEADING\r\n") != std::string::npos);
+    ASSERT_TRUE(sentUartData.find("LOG COM1 HEADINGSTATUSA ONCE\r\n") != std::string::npos);
     cliOutput.clear();
 
     // 9. 'gps config' execution and progress mirroring
@@ -1513,6 +1573,40 @@ void test_serial_cli_gps_commands() {
     ASSERT_TRUE(ble.getTxBuffer().find("TX queue:") != std::string::npos);
     ble.simulateRx("ble diag off\r\n", 14);
     ASSERT_TRUE(!ble.isDiagEnabled());
+
+    // 13. 'gps check' on-demand probe when TX state is Unknown
+    GpsManager gmCheck;
+    Calibration calCheck;
+    GpsSimulator simCheck;
+    SerialCli cliCheck(gmCheck, calCheck, simCheck);
+    cliCheck.begin();
+
+    std::string checkOutput;
+    cliCheck.setOutputHandler([](const char *str, void *ctx) {
+        static_cast<std::string*>(ctx)->append(str);
+    }, &checkOutput);
+
+    std::string checkSentUart;
+    gmCheck.setTxHandler([](const uint8_t *data, size_t len, void *ctx) {
+        static_cast<std::string*>(ctx)->append(reinterpret_cast<const char*>(data), len);
+    }, &checkSentUart);
+
+    ASSERT_TRUE(gmCheck.getTxState() == GpsTxState::Unknown);
+    cliCheck.executeCommand("gps check", 500);
+    ASSERT_TRUE(checkOutput.find("[GPS AUDIT] Testing TX connection on GPIO 43 before query...") != std::string::npos);
+    ASSERT_TRUE(gmCheck.getTxState() == GpsTxState::Probing);
+    ASSERT_STR_EQ(checkSentUart.c_str(), "version\r\n");
+
+    // Receiver acknowledges: audit queries must execute automatically
+    checkSentUart.clear();
+    gmCheck.feedSentence("<OK", 550);
+    ASSERT_TRUE(gmCheck.isSendAvailable());
+    ASSERT_TRUE(checkOutput.find("Receiver acknowledged!") != std::string::npos);
+    ASSERT_TRUE(checkOutput.find("[GPS AUDIT] Querying receiver parameters") != std::string::npos);
+    ASSERT_TRUE(checkSentUart.find("VERSION\r\n") != std::string::npos);
+    ASSERT_TRUE(checkSentUart.find("MODE\r\n") != std::string::npos);
+    ASSERT_TRUE(checkSentUart.find("UNILOGLIST COM1\r\n") != std::string::npos);
+    ASSERT_TRUE(checkSentUart.find("LOG COM1 HEADINGSTATUSA ONCE\r\n") != std::string::npos);
 
     PASS();
 }

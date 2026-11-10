@@ -61,6 +61,16 @@ void GpsManager::checkStaleness(unsigned long nowMs) {
             }
         }
     }
+
+    // Stream disconnection / cable unplugged detection:
+    // If we previously confirmed TX state but have been silent for >= 5000ms,
+    // reset TX state to Unknown so that reconnecting or hot-plugging the
+    // receiver triggers a fresh discovery probe.
+    if ((txState_ == GpsTxState::Available || txState_ == GpsTxState::Unavailable) &&
+        lastByteMillis_ > 0 && (nowMs - lastByteMillis_) >= 5000) {
+        txState_ = GpsTxState::Unknown;
+        probeRetries_ = 0;
+    }
 }
 
 void GpsManager::checkTxProbe(unsigned long nowMs) {
@@ -285,7 +295,7 @@ void GpsManager::processSentence(char *sentence, unsigned long nowMs) {
         isProbeAck = true;
     }
 
-    if (isProbeAck && txState_ == GpsTxState::Probing) {
+    if (isProbeAck && (txState_ == GpsTxState::Probing || txState_ == GpsTxState::Unknown)) {
         txState_ = GpsTxState::Available;
         if (onProbeResult_) {
             onProbeResult_(GpsTxState::Available,
@@ -302,6 +312,11 @@ void GpsManager::processSentence(char *sentence, unsigned long nowMs) {
             onResponse_(p, responseContext_);
         }
         return;
+    }
+
+    // Auto-probe TX presence when receiver data stream is first detected
+    if (txState_ == GpsTxState::Unknown && !(simulator_ && simulator_->isActive())) {
+        probeTx(nowMs);
     }
 
     float newHeading = 0.0f;

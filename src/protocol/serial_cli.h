@@ -141,6 +141,7 @@ public:
     void printRoverStatus(unsigned long nowMs = 0);
     void printRoverHistory();
     void printRoverHelp();
+    void printPrompt();
 
 private:
     void print(const char *str);
@@ -189,6 +190,8 @@ private:
     void *outputContext_;
 
     bool pendingRoverClear_;
+    bool pendingAudit_;
+    CliSource pendingAuditSource_;
     LineBuffer usbLine_;
     LineBuffer bleLine_;
 };
