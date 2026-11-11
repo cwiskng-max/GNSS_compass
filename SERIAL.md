@@ -192,8 +192,8 @@ Executes the verified multi-step configuration sequence from [RECEIVER.md](RECEI
 [GPS CONFIG] Complete! Receiver configured at 5 Hz KSXT.
 ```
 
-> [!CAUTION]
-> **Flash Wear & Safety Abort Safeguard:** To protect the receiver's NOR Flash from unnecessary write cycles or corrupted parameters, if any step prior to `SAVECONFIG` fails or times out, the sequence **immediately aborts** without sending `SAVECONFIG`.
+> [!NOTE]
+> **Built-In Flash Wear Protection:** To protect the receiver's NOR Flash from unnecessary write cycles or corrupted parameters, if any step prior to `SAVECONFIG` fails or times out, the sequence safely aborts without sending `SAVECONFIG`.
 
 #### 3. Setup with Fixed Baseline Distance (`gps config baseline <cm> [tol_cm]`)
 If your physical antenna spacing is known (e.g. 101.6 cm / 40 inches center-to-center with a default 2.5 cm tolerance), provide the baseline distance to lock the search constraint:

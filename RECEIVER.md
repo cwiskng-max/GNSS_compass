@@ -76,8 +76,8 @@ The ESP32 executes and verifies the complete receiver configuration sequence:
 [GPS CONFIG] Complete! Receiver configured at 5 Hz KSXT.
 ```
 
-> [!CAUTION]
-> **NOR Flash Protection Safeguard:** The UM982 NOR Flash has an endurance limit (~10,000–100,000 write cycles). To protect the flash from corrupt writes or excessive cycles, the ESP32 configuration pipeline validates each command response. If any step fails or times out, the pipeline **immediately aborts** without sending `SAVECONFIG`.
+> [!NOTE]
+> **Built-In NOR Flash Protection:** To protect the receiver's NOR Flash from unnecessary write cycles or corrupted parameters, the ESP32 configuration pipeline validates each command response before committing changes. If any step fails or times out, the sequence safely aborts without sending `SAVECONFIG`.
 
 ### 2.3 Inspecting Running Parameters (`gps check` / `gps status`)
 To verify what is running on the receiver at any time without writing to flash:
