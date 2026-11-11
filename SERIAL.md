@@ -440,6 +440,18 @@ Accepts both `restart` and `reboot`. Over physical USB CDC or wireless BLE, the 
 
 ---
 
+### 3.10 Firmware Version (`version` or `ver`)
+Queries the compiled firmware version, Git commit hash, and build timestamp:
+
+```text
+> ver
+GNSS Compass v0.3-dev+d73f187 (Built Nov 10 2026 17:48:12)
+```
+
+Useful over USB or Bluetooth Serial to instantly confirm which build is flashed to hardware.
+
+---
+
 ## 4. Host Simulator Script (`tools/gps_sim.py`)
 
 A comprehensive scenario-based simulation script is available in `tools/gps_sim.py`. It communicates directly with the ESP32 over `/dev/ttyACM0` (or auto-detected port).

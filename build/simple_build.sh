@@ -23,6 +23,14 @@ rm -rf "$SCRATCH_DIR"
 mkdir -p "$SCRATCH_DIR"
 cp -r "$REPO_ROOT/gps_compass.ino" "$REPO_ROOT/src" "$SCRATCH_DIR/"
 
+# Inject Git short hash into scratch config.h for local dev identification
+GIT_HASH="$(git rev-parse --short HEAD 2>/dev/null || echo 'dev')"
+DIRTY=""
+if ! git diff-index --quiet HEAD -- 2>/dev/null; then
+    DIRTY="-dirty"
+fi
+sed -i "s/#define FW_VERSION .*/#define FW_VERSION           \"v0.3-dev+${GIT_HASH}${DIRTY}\"/" "$SCRATCH_DIR/src/config.h"
+
 # Compile using modern --output-dir (replaces deprecated --export-binaries)
 arduino-cli compile \
     --fqbn esp32:esp32:esp32s3:FlashSize=16M,PSRAM=opi,CDCOnBoot=cdc \

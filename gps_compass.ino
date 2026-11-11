@@ -27,7 +27,12 @@ AppController app(board, displayUi, inputManager, gpsManager, calibration, gpsSi
 void setup() {
   Serial.begin(115200);
   Serial.print("GNSS Compass ");
-  Serial.println(FW_VERSION);
+  Serial.print(FW_VERSION);
+  Serial.print(" (Built ");
+  Serial.print(__DATE__);
+  Serial.print(" ");
+  Serial.print(__TIME__);
+  Serial.println(")");
   Serial.println(F("Commands: 'status' (GPS stream), 'gps' (receiver config), 'rover' (transit), 'cal' (antenna), 'sim' (simulation), 'help'"));
 
   app.begin();

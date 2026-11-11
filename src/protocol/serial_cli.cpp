@@ -61,7 +61,11 @@ SerialCli::SerialCli(GpsManager &gpsManager, Calibration &calibration, GpsSimula
       restartContext_(nullptr),
       pendingRoverClear_(false),
       pendingAudit_(false),
-      pendingAuditSource_(CLI_SOURCE_USB)
+      pendingAuditSource_(CLI_SOURCE_USB),
+      pendingConfig_(false),
+      pendingConfigSource_(CLI_SOURCE_USB),
+      pendingConfigBaselineCm_(0.0f),
+      pendingConfigTolCm_(2.5f)
 {
     registerGpsCallbacks();
     attachBle();
@@ -99,6 +103,24 @@ void SerialCli::registerGpsCallbacks() {
                 self->startGpsAudit(0);
             } else if (state == GpsTxState::Unavailable) {
                 self->println("[GPS] Cannot audit: TX wire not connected (Receive-only mode).");
+                self->printPrompt();
+            }
+            self->setActiveSource(prevSource);
+        }
+        if (self->pendingConfig_) {
+            self->pendingConfig_ = false;
+            CliSource prevSource = self->getActiveSource();
+            self->setActiveSource(self->pendingConfigSource_);
+            if (state == GpsTxState::Available) {
+                if (self->pendingConfigBaselineCm_ > 0.0f) {
+                    self->printFormat("[GPS CONFIG] Initiating configuration pipeline (Baseline: %.1f cm, Tol: %.1f cm)...\r\n",
+                                      self->pendingConfigBaselineCm_, self->pendingConfigTolCm_);
+                } else {
+                    self->println("[GPS CONFIG] Initiating configuration pipeline (Standard 5 Hz $KSXT)...");
+                }
+                self->gpsManager_.startConfiguration(self->pendingConfigBaselineCm_, self->pendingConfigTolCm_, true, 0);
+            } else if (state == GpsTxState::Unavailable) {
+                self->println("[GPS] TX wire not detected. Connect GPIO 43 to UM982 RX to configure.");
                 self->printPrompt();
             }
             self->setActiveSource(prevSource);
@@ -260,13 +282,9 @@ void SerialCli::update(unsigned long nowMs) {
     }
 
     if (auditState_.inProgress) {
-        bool quietAfterResponses = (auditState_.receivedVersion &&
-                                     auditState_.receivedMode &&
-                                     auditState_.lastRespTimeMs > 0 &&
-                                     (nowMs - auditState_.lastRespTimeMs >= 500));
-        bool hardTimeout = (nowMs - auditState_.startTimeMs >= 3500);
-
-        if (quietAfterResponses || hardTimeout) {
+        // If all 4 responses arrive, isComplete() renders immediately in handleAuditResponse().
+        // If any response is missing or unsupported, wait up to 4000 ms before rendering partial results.
+        if (nowMs - auditState_.startTimeMs >= 4000) {
             renderAuditReport();
         }
     }
@@ -429,6 +447,8 @@ void SerialCli::executeCommand(const char *cmdLine, unsigned long nowMs, CliSour
         } else {
             println("[CLI] 'disconnect' applies to active wireless Bluetooth sessions.");
         }
+    } else if (equalsIgnoreCase(cleanCmd, "ver") || equalsIgnoreCase(cleanCmd, "version")) {
+        printFormat("GNSS Compass %s (Built %s %s)\r\n", FW_VERSION, __DATE__, __TIME__);
     } else if (equalsIgnoreCase(cleanCmd, "restart") || equalsIgnoreCase(cleanCmd, "reboot")) {
         println("[SYSTEM] Restarting ESP32 controller...");
         if (bleManager_) {
@@ -460,10 +480,6 @@ void SerialCli::handleGpsCommand(const char *arg, unsigned long nowMs) {
     }
 
     if (startsWithIgnoreCase(arg, "config")) {
-        if (!gpsManager_.isSendAvailable()) {
-            println("[GPS] TX wire not detected. Connect GPIO 43 to UM982 RX to configure.");
-            return;
-        }
         if (gpsManager_.getConfigPipeline().isRunning()) {
             println("[GPS CONFIG] Configuration pipeline is already running.");
             return;
@@ -491,6 +507,20 @@ void SerialCli::handleGpsCommand(const char *arg, unsigned long nowMs) {
                 float t = std::strtof(endPtr, nullptr);
                 if (t > 0.0f) tolCm = t;
             }
+        }
+
+        if (!gpsManager_.isSendAvailable()) {
+            if (gpsManager_.getTxState() == GpsTxState::Unknown) {
+                println("[GPS CONFIG] Testing TX connection on GPIO 43 before configuration...");
+                pendingConfig_ = true;
+                pendingConfigSource_ = activeSource_;
+                pendingConfigBaselineCm_ = baselineCm;
+                pendingConfigTolCm_ = tolCm;
+                gpsManager_.probeTx(nowMs);
+                return;
+            }
+            println("[GPS] TX wire not detected. Connect GPIO 43 to UM982 RX to configure.");
+            return;
         }
 
         if (baselineCm > 0.0f) {
@@ -813,6 +843,7 @@ void SerialCli::printHelp() {
     println("  sim [on|off|hdg|pos|grid|rover|status] - GPS simulation commands");
     println("  exit (or disconnect)  - Terminate wireless BLE connection cleanly");
     println("  restart (or reboot)   - Restart the ESP32 controller");
+    println("  version (or ver)      - Display firmware build version and compile time");
     println("  ble [diag on|off]     - BLE link status / toggle BLE RF diagnostics");
     println("  $<NMEA/KSXT sentence> - Inject raw GNSS sentence directly");
     println("  help (or ?)           - Show this help menu");

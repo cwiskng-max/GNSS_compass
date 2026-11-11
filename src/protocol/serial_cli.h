@@ -251,6 +251,10 @@ private:
     bool pendingRoverClear_;
     bool pendingAudit_;
     CliSource pendingAuditSource_;
+    bool pendingConfig_;
+    CliSource pendingConfigSource_;
+    float pendingConfigBaselineCm_;
+    float pendingConfigTolCm_;
     GpsAuditState auditState_;
     LineBuffer usbLine_;
     LineBuffer bleLine_;
