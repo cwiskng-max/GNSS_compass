@@ -104,6 +104,7 @@ Displays a summary of available serial commands.
   cal [snap|zero|<val>] - View or configure antenna calibration
   sim [on|off|hdg|pos|grid|rover|status] - GPS simulation commands
   exit (or disconnect)  - Terminate wireless BLE connection cleanly
+  restart (or reboot)   - Restart the ESP32 controller
   ble [diag on|off]     - BLE link status / toggle BLE RF diagnostics
   $<NMEA/KSXT sentence> - Inject raw GNSS sentence directly
   help (or ?)           - Show this help menu
@@ -424,6 +425,18 @@ This makes the ESP32 send a link-layer `LL_TERMINATE_IND`, closing any lingering
 * **TX queue:** BLE output is buffered (12 KB) and sent in the background, so long reports never stall the compass. If the queue ever fills, further output is dropped until it drains, and the client sees `[BLE] N bytes of output dropped (send queue full)`. *Dropped* is the running total.
 * **Send retries:** how often the Bluetooth stack was momentarily out of buffers and a packet had to be retried. It is harmless unless it keeps climbing quickly.
 * `ble diag on|off`: prints RSSI every 3 s, main-loop stall reports, TX power, MTU, connection-parameter and congestion changes on the **USB** serial port. Connects, disconnects (with reason code) and advertising failures are always printed there.
+
+---
+
+### 3.9 System Restart (`restart` or `reboot`)
+Restarts the ESP32-S3 microcontroller via software reset:
+
+```text
+> restart
+[SYSTEM] Restarting ESP32 controller...
+```
+
+Accepts both `restart` and `reboot`. Over physical USB CDC or wireless BLE, the confirmation message is dispatched before triggering software reset via `esp_restart()`.
 
 ---
 

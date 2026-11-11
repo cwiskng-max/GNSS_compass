@@ -57,6 +57,8 @@ SerialCli::SerialCli(GpsManager &gpsManager, Calibration &calibration, GpsSimula
       roverActionContext_(nullptr),
       outputFn_(nullptr),
       outputContext_(nullptr),
+      restartCb_(nullptr),
+      restartContext_(nullptr),
       pendingRoverClear_(false),
       pendingAudit_(false),
       pendingAuditSource_(CLI_SOURCE_USB)
@@ -105,8 +107,13 @@ void SerialCli::registerGpsCallbacks() {
 }
 
 void SerialCli::begin() {
-    usbLine_.clear();
-    bleLine_.clear();
+#if defined(ARDUINO)
+    while (Serial.available()) {
+        (void)Serial.read();
+    }
+#endif
+    usbLine_.reset();
+    bleLine_.reset();
     pendingRoverClear_ = false;
     pendingAudit_ = false;
     pendingAuditSource_ = CLI_SOURCE_USB;
@@ -130,7 +137,7 @@ void SerialCli::handleBleConnectionChanged(bool connected) {
     (void)connected;
     // A partial line from the previous session must not prefix the next client's first command,
     // and replies to later asynchronous output should no longer target the old BLE session.
-    bleLine_.clear();
+    bleLine_.reset();
     activeSource_ = CLI_SOURCE_USB;
 }
 
@@ -276,6 +283,10 @@ void SerialCli::update(unsigned long nowMs) {
             case LineBuffer::Erased:
                 Serial.print("\b \b");
                 break;
+            case LineBuffer::Cleared:
+                Serial.println("^C");
+                printPrompt();
+                break;
             case LineBuffer::LineReady:
                 if (usbLine_.c_str()[0] != '$') {
                     Serial.println(); // Terminal newline echo for interactive commands
@@ -418,6 +429,20 @@ void SerialCli::executeCommand(const char *cmdLine, unsigned long nowMs, CliSour
         } else {
             println("[CLI] 'disconnect' applies to active wireless Bluetooth sessions.");
         }
+    } else if (equalsIgnoreCase(cleanCmd, "restart") || equalsIgnoreCase(cleanCmd, "reboot")) {
+        println("[SYSTEM] Restarting ESP32 controller...");
+        if (bleManager_) {
+            bleManager_->update(nowMs);
+        }
+        if (restartCb_) {
+            restartCb_(restartContext_);
+        } else {
+#if defined(ARDUINO)
+            delay(100);
+            esp_restart();
+#endif
+        }
+        return;
     } else {
         printFormat("Unknown command: '%s'. Type 'help' for available commands.\r\n", cleanCmd);
     }
@@ -787,6 +812,7 @@ void SerialCli::printHelp() {
     println("  cal [snap|zero|<val>] - View or configure antenna calibration");
     println("  sim [on|off|hdg|pos|grid|rover|status] - GPS simulation commands");
     println("  exit (or disconnect)  - Terminate wireless BLE connection cleanly");
+    println("  restart (or reboot)   - Restart the ESP32 controller");
     println("  ble [diag on|off]     - BLE link status / toggle BLE RF diagnostics");
     println("  $<NMEA/KSXT sentence> - Inject raw GNSS sentence directly");
     println("  help (or ?)           - Show this help menu");

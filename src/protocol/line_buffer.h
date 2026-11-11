@@ -14,19 +14,39 @@ public:
         Ignored,   // Character was dropped (non-printable, buffer full, or backspace on empty)
         Appended,  // Printable character was added
         Erased,    // Backspace/DEL removed the last character
-        LineReady  // CR/LF completed a non-empty line; read it with c_str(), then clear()
+        Cleared,   // Ctrl+C (ETX) or Ctrl+U (NAK) cancelled and cleared the line
+        LineReady  // CR/LF completed a line; read it with c_str(), then clear()
     };
 
     static const size_t kCapacity = 256;
 
-    LineBuffer() { clear(); }
+    LineBuffer() : len_(0), lastWasCr_(false) {
+        buf_[0] = '\0';
+    }
 
     Event feed(char c) {
-        if (c == '\r' || c == '\n') {
-            if (len_ == 0) return Ignored;
+        if (c == '\r') {
+            lastWasCr_ = true;
             buf_[len_] = '\0';
             return LineReady;
         }
+        if (c == '\n') {
+            if (lastWasCr_ || len_ == 0) {
+                lastWasCr_ = false;
+                return Ignored;
+            }
+            lastWasCr_ = false;
+            buf_[len_] = '\0';
+            return LineReady;
+        }
+        lastWasCr_ = false;
+
+        if (c == 3 || c == 21) {
+            clear();
+            lastWasCr_ = false;
+            return Cleared;
+        }
+
         if (c == '\b' || c == 127) {
             if (len_ == 0) return Ignored;
             buf_[--len_] = '\0';
@@ -43,6 +63,11 @@ public:
         buf_[0] = '\0';
     }
 
+    void reset() {
+        clear();
+        lastWasCr_ = false;
+    }
+
     const char *c_str() const { return buf_; }
     size_t length() const { return len_; }
     bool empty() const { return len_ == 0; }
@@ -50,5 +75,6 @@ public:
 private:
     char buf_[kCapacity];
     size_t len_;
+    bool lastWasCr_;
 };
 

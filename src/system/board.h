@@ -18,6 +18,7 @@ public:
 
     void init();
     void setBacklight(uint8_t brightness = 250);
+    void restart();
 
 #if defined(ARDUINO)
     PCF8574& getPcf8574() { return pcf8574_; }

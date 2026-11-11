@@ -431,6 +431,10 @@ void AppController::begin() {
         auto *self = static_cast<AppController*>(ctx);
         if (self) self->runVisualSelfTest();
     }, this);
+    serialCli_.setRestartCallback([](void *ctx) {
+        auto *self = static_cast<AppController*>(ctx);
+        if (self) self->getBoard().restart();
+    }, this);
 
     serialCli_.setStateChangedCallback([](void *ctx) {
         auto *self = static_cast<AppController*>(ctx);

@@ -48,11 +48,19 @@ bool Board::isEncoderSwPressed() {
     return pcf8574_.digitalRead(P5) == LOW;
 }
 
+void Board::restart() {
+#if defined(ARDUINO)
+    delay(100);
+    esp_restart();
+#endif
+}
+
 #else
 
 Board::Board() {}
 void Board::init() {}
 void Board::setBacklight(uint8_t) {}
+void Board::restart() {}
 
 #endif
 

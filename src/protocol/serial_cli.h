@@ -17,6 +17,7 @@ typedef void (*CliRunTestCallback)(void *context);
 typedef void (*CliStateChangedCallback)(void *context);
 typedef void (*CliRoverSimCallback)(const char *originGrid, double distKm, void *context);
 typedef void (*CliRoverActionCallback)(void *context, unsigned long nowMs);
+typedef void (*CliRestartCallback)(void *context);
 
 /**
  * @brief Input source of the CLI command
@@ -91,6 +92,7 @@ public:
 
     // Callbacks & listeners
     void setRunTestCallback(CliRunTestCallback cb, void *context = nullptr) { runTestCb_ = cb; runTestContext_ = context; }
+    void setRestartCallback(CliRestartCallback cb, void *context = nullptr) { restartCb_ = cb; restartContext_ = context; }
     void setStateChangedCallback(CliStateChangedCallback cb, void *context = nullptr) { stateChangedCb_ = cb; stateChangedContext_ = context; }
     void setRoverSimCallback(CliRoverSimCallback cb, void *context = nullptr) { roverSimCb_ = cb; roverSimContext_ = context; }
     void setOutputHandler(CliCommandOutputFn fn, void *context = nullptr) { outputFn_ = fn; outputContext_ = context; }
@@ -243,6 +245,8 @@ private:
     void *roverActionContext_;
     CliCommandOutputFn outputFn_;
     void *outputContext_;
+    CliRestartCallback restartCb_;
+    void *restartContext_;
 
     bool pendingRoverClear_;
     bool pendingAudit_;

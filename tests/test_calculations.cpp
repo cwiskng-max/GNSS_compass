@@ -1426,6 +1426,24 @@ void test_serial_cli() {
     ASSERT_TRUE(cliOutput.find("> ") == std::string::npos);
     cliOutput.clear();
 
+    // Restart / reboot command tests
+    bool restartCalled = false;
+    cli.setRestartCallback([](void *ctx) {
+        *static_cast<bool*>(ctx) = true;
+    }, &restartCalled);
+
+    cliOutput.clear();
+    cli.executeCommand("restart");
+    ASSERT_TRUE(restartCalled);
+    ASSERT_TRUE(cliOutput.find("[SYSTEM] Restarting ESP32 controller...") != std::string::npos);
+
+    restartCalled = false;
+    cliOutput.clear();
+    cli.executeCommand("reboot");
+    ASSERT_TRUE(restartCalled);
+    ASSERT_TRUE(cliOutput.find("[SYSTEM] Restarting ESP32 controller...") != std::string::npos);
+    cliOutput.clear();
+
     PASS();
 }
 
@@ -3680,8 +3698,26 @@ void test_ble_diagnostics_and_text_helpers() {
     ASSERT_STR_EQ(lb.c_str(), "ab");
     lb.clear();
     ASSERT_TRUE(lb.empty());
+    // Bare Enter (\r) on empty buffer returns LineReady, and trailing \n is ignored
+    ASSERT_TRUE(lb.feed('\r') == LineBuffer::LineReady);
+    ASSERT_STR_EQ(lb.c_str(), "");
+    lb.clear();
+    ASSERT_TRUE(lb.feed('\n') == LineBuffer::Ignored);
+
     for (int i = 0; i < 300; ++i) lb.feed('z');
     ASSERT_TRUE(lb.length() == LineBuffer::kCapacity - 1);
+
+    // Ctrl+C (3) and Ctrl+U (21) clear the line
+    lb.reset();
+    lb.feed('r');
+    lb.feed('e');
+    lb.feed('t');
+    ASSERT_TRUE(lb.feed(3) == LineBuffer::Cleared); // Ctrl+C
+    ASSERT_TRUE(lb.empty());
+    lb.feed('r');
+    lb.feed('e');
+    ASSERT_TRUE(lb.feed(21) == LineBuffer::Cleared); // Ctrl+U
+    ASSERT_TRUE(lb.empty());
 
     // textout::println delivers text and CRLF in one sink call, even for long lines
     struct Capture { std::string text; int calls = 0; } cap;
@@ -3721,6 +3757,11 @@ void test_serial_cli_dual_transport() {
     ble.simulateRx("status\r\n", 8);
     ASSERT_TRUE(cli.getActiveSource() == CLI_SOURCE_BLE);
     ASSERT_TRUE(ble.getTxBuffer().find("GNSS Receiver Stream Diagnosis") != std::string::npos);
+
+    // 1b. Verify bare Enter over BLE emits prompt
+    ble.clearTxBuffer();
+    ble.simulateRx("\r\n", 2);
+    ASSERT_STR_EQ(ble.getTxBuffer().c_str(), "> ");
 
     // 2. Verify independent line buffering: partial keystrokes on BLE and USB do not collide
     ble.clearTxBuffer();
