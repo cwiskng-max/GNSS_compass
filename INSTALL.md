@@ -129,4 +129,4 @@ Once flashing completes, the display will restart automatically:
    * **Row 6:** Calculated ARRL contest distance (`ARRL <dist> k`).
    * **Footer:** Firmware version string (e.g., `v0.2`).
 2. **On-Device Self-Test:** Tap directly on the firmware version string at the bottom center of the screen. The display will run through the 5-step visual self-test and display `SELF-TEST PASSED` in green. See [tests/README.md](tests/README.md) for details.
-3. **Connect Receiver:** Connect and configure the Unicore UM982 GNSS receiver following [RECEIVER.md](RECEIVER.md).
+3. **Connect & Configure Receiver:** Connect and configure the Unicore UM982 GNSS receiver following [RECEIVER.md](RECEIVER.md). If using the standard 4-pin GX12 harness with the TX line wired (ESP32 GPIO 43 $\to$ UM982 COM1 RX), receiver setup is performed in-system using the `gps config` command.
