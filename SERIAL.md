@@ -110,6 +110,8 @@ Displays a summary of available serial commands.
   restart (or reboot)   - Restart the ESP32 controller
   version (or ver)      - Display firmware build version and compile time
   ble [diag on|off]     - BLE link status / toggle BLE RF diagnostics
+  ble suffix [<val>|reset]
+                        - Configure BLE device name suffix (max 16 chars)
   $<NMEA/KSXT sentence> - Inject raw GNSS sentence directly
   help (or ?)           - Show this help menu
 ====================================
@@ -415,7 +417,9 @@ This makes the ESP32 send a link-layer `LL_TERMINATE_IND`, closing any lingering
 
 ---
 
-### 3.8 BLE Link Status & Diagnostics (`ble`)
+### 3.8 BLE Configuration & Diagnostics (`ble`)
+
+#### Link Status (`ble` or `ble status`)
 
 ```text
 > ble
@@ -429,6 +433,23 @@ This makes the ESP32 send a link-layer `LL_TERMINATE_IND`, closing any lingering
 * **Subscribed:** the client has enabled notifications. Output is only sent to a subscribed client.
 * **TX queue:** BLE output is buffered (12 KB) and sent in the background, so long reports never stall the compass. If the queue ever fills, further output is dropped until it drains, and the client sees `[BLE] N bytes of output dropped (send queue full)`. *Dropped* is the running total.
 * **Send retries:** how often the Bluetooth stack was momentarily out of buffers and a packet had to be retried. It is harmless unless it keeps climbing quickly.
+
+#### Customizing the BLE Device Suffix (`ble suffix`)
+By default, the device name is `GNSS-Compass-xxxxxx`, derived from the last 6 characters of the ESP32's Bluetooth MAC address. When operating multiple compasses near each other at a contest summit, you can customize the suffix (up to 16 characters, e.g. your callsign, vehicle, or rover number):
+
+```text
+> ble suffix Rover1
+[BLE] Device name updated to: GNSS-Compass-Rover1
+[BLE] Saved to non-volatile storage.
+[BLE] Note: If your phone still displays the old name, toggle your phone's Bluetooth off and on to clear its scan cache.
+```
+
+* **Query current suffix:** `ble suffix` displays the current name and active suffix.
+* **Reset to default MAC:** `ble suffix reset` (or `ble suffix default`) removes the custom suffix and restores the hardware MAC default.
+* **Length limit:** Maximum 16 characters (to ensure the Complete Local Name fits within the 29-byte BLE scan response payload limit with the fixed `GNSS-Compass-` prefix).
+* **Phone Caching Note:** Mobile operating systems (especially iOS and Android) aggressively cache peripheral names by MAC address. If your phone continues displaying the previous name in its Bluetooth scanner list after changing the suffix, toggle Bluetooth off and on in your phone's quick settings to clear its device scan cache.
+
+#### RF Diagnostics (`ble diag on|off`)
 * `ble diag on|off`: prints RSSI every 3 s, main-loop stall reports, TX power, MTU, connection-parameter and congestion changes on the **USB** serial port. Connects, disconnects (with reason code) and advertising failures are always printed there.
 
 ---

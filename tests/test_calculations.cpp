@@ -1613,8 +1613,30 @@ void test_serial_cli_gps_commands() {
     ASSERT_TRUE(cli.getActiveSource() == CLI_SOURCE_BLE);
     ASSERT_TRUE(ble.getTxBuffer().find("[GPS PROBE] Transmitting 'version'") != std::string::npos);
 
-    // 12. 'ble' status and diagnostics toggle over BLE transport
+    // 12. 'ble' status, suffix configuration, and diagnostics toggle over BLE transport
     ble.clearTxBuffer();
+    ble.simulateRx("ble suffix\r\n", 12);
+    ASSERT_TRUE(ble.getTxBuffer().find("Device name: GNSS-Compass-test") != std::string::npos);
+    ble.clearTxBuffer();
+
+    ble.simulateRx("ble suffix Rover-42\r\n", 21);
+    ASSERT_TRUE(ble.getTxBuffer().find("Device name updated to: GNSS-Compass-Rover-42") != std::string::npos);
+    ASSERT_TRUE(ble.getTxBuffer().find("Saved to non-volatile storage") != std::string::npos);
+    ASSERT_TRUE(ble.getTxBuffer().find("scan cache") != std::string::npos);
+    ble.clearTxBuffer();
+
+    ble.simulateRx("ble suffix reset\r\n", 18);
+    ASSERT_TRUE(ble.getTxBuffer().find("Device name reset to default: GNSS-Compass-test") != std::string::npos);
+    ble.clearTxBuffer();
+
+    ble.simulateRx("ble suffix 12345678901234567\r\n", 29);
+    ASSERT_TRUE(ble.getTxBuffer().find("Suffix too long") != std::string::npos);
+    ble.clearTxBuffer();
+
+    ble.simulateRx("ble suffix bad name\r\n", 21);
+    ASSERT_TRUE(ble.getTxBuffer().find("Invalid suffix") != std::string::npos);
+    ble.clearTxBuffer();
+
     ble.simulateRx("ble diag on\r\n", 13);
     ASSERT_TRUE(ble.isDiagEnabled());
     ASSERT_TRUE(ble.getTxBuffer().find("Diagnostics ON") != std::string::npos);
@@ -3564,6 +3586,42 @@ void test_ble_serial_manager() {
     ASSERT_TRUE(ble.isDiagEnabled());
     ble.setDiagEnabled(false);
     ASSERT_TRUE(!ble.isDiagEnabled());
+
+    // Suffix configuration & persistence
+    BleSerialManager::resetHostStorage();
+    BleSerialManager bleSuff;
+    bleSuff.begin();
+    ASSERT_STR_EQ(bleSuff.getDeviceName(), "GNSS-Compass-test");
+    ASSERT_STR_EQ(bleSuff.getDeviceSuffix(), "test");
+    ASSERT_TRUE(!bleSuff.isCustomSuffix());
+
+    // Validation: too long (> 16 chars)
+    ASSERT_TRUE(!bleSuff.setDeviceSuffix("12345678901234567"));
+    // Validation: contains spaces
+    ASSERT_TRUE(!bleSuff.setDeviceSuffix("bad suffix"));
+    // Validation: empty
+    ASSERT_TRUE(!bleSuff.setDeviceSuffix("   "));
+
+    // Valid suffix
+    ASSERT_TRUE(bleSuff.setDeviceSuffix("Rover-99"));
+    ASSERT_STR_EQ(bleSuff.getDeviceName(), "GNSS-Compass-Rover-99");
+    ASSERT_STR_EQ(bleSuff.getDeviceSuffix(), "Rover-99");
+    ASSERT_TRUE(bleSuff.isCustomSuffix());
+
+    // Persistence across instances
+    BleSerialManager bleSuff2;
+    bleSuff2.begin();
+    ASSERT_STR_EQ(bleSuff2.getDeviceName(), "GNSS-Compass-Rover-99");
+    ASSERT_STR_EQ(bleSuff2.getDeviceSuffix(), "Rover-99");
+    ASSERT_TRUE(bleSuff2.isCustomSuffix());
+
+    // Reset back to default
+    ASSERT_TRUE(bleSuff2.resetDeviceSuffix());
+    ASSERT_STR_EQ(bleSuff2.getDeviceName(), "GNSS-Compass-test");
+    ASSERT_STR_EQ(bleSuff2.getDeviceSuffix(), "test");
+    ASSERT_TRUE(!bleSuff2.isCustomSuffix());
+
+    BleSerialManager::resetHostStorage();
 
     PASS();
 }

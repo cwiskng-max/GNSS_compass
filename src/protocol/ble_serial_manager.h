@@ -3,6 +3,7 @@
 #include <atomic>
 #include <cstdint>
 #include <cstddef>
+#include <cstring>
 #include <string>
 
 #include "ble_platform.h"
@@ -71,6 +72,14 @@ public:
     uint16_t getMtu() const { return negotiatedMtu_.load(); }
     const char* getDeviceName() const { return deviceName_; }
 
+    // Suffix configuration (stored in NVS under "compass" namespace, key "ble_suffix")
+    static const size_t kMaxSuffixLength = 16;
+    bool setDeviceSuffix(const char *suffix, bool persist = true);
+    bool resetDeviceSuffix(bool persist = true);
+    const char* getDeviceSuffix() const { return deviceSuffix_; }
+    const char* getDefaultSuffix() const { return defaultSuffix_; }
+    bool isCustomSuffix() const { return std::strcmp(deviceSuffix_, defaultSuffix_) != 0; }
+
     // Output (main loop only); see class comment for queueing and drop policy
     void write(const uint8_t *data, size_t length);
     void print(const char *str);
@@ -133,6 +142,7 @@ public:
     void clearTxBuffer() { testTxBuffer_.clear(); }
     size_t getNotifyCount() const { return testNotifyCount_; }
     size_t getMaxNotifySize() const { return testMaxNotify_; }
+    static void resetHostStorage();
 #endif
 
 private:
@@ -146,6 +156,8 @@ private:
     void platformDisconnect();
     static unsigned long platformMillis();
     static uint8_t *platformAllocTx(size_t size);
+    void platformUpdateDeviceName();
+    void platformSaveSuffix(const char *suffix);
 
     // Portable core
     void serviceSessionChange();
@@ -162,6 +174,8 @@ private:
 
     bool initialized_ = false;
     char deviceName_[32];
+    char deviceSuffix_[17];
+    char defaultSuffix_[7];
 
     // Shared with the Bluetooth task
     std::atomic<bool> connected_{false};

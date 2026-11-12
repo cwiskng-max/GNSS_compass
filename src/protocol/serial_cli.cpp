@@ -420,6 +420,57 @@ void SerialCli::executeCommand(const char *cmdLine, unsigned long nowMs, CliSour
         } else if (equalsIgnoreCase(arg, "diag off")) {
             bleManager_->setDiagEnabled(false);
             println("[BLE] Diagnostics OFF");
+        } else if (startsWithIgnoreCase(arg, "suffix")) {
+            const char *sub = arg + 6;
+            while (*sub == ' ' || *sub == '\t') sub++;
+            if (*sub == '\0') {
+                if (bleManager_->isCustomSuffix()) {
+                    printFormat("[BLE] Device name: %s (Custom suffix: %s)\r\n",
+                                bleManager_->getDeviceName(), bleManager_->getDeviceSuffix());
+                } else {
+                    printFormat("[BLE] Device name: %s (Default MAC suffix: %s)\r\n",
+                                bleManager_->getDeviceName(), bleManager_->getDeviceSuffix());
+                }
+            } else if (equalsIgnoreCase(sub, "reset") || equalsIgnoreCase(sub, "default")) {
+                bleManager_->resetDeviceSuffix(true);
+                printFormat("[BLE] Device name reset to default: %s\r\n", bleManager_->getDeviceName());
+                println("[BLE] Saved to non-volatile storage.");
+                println("[BLE] Note: If your phone still displays the old name, toggle your phone's Bluetooth off and on to clear its scan cache.");
+            } else {
+                size_t len = std::strlen(sub);
+                while (len > 0 && (sub[len - 1] == ' ' || sub[len - 1] == '\t' ||
+                                   sub[len - 1] == '\r' || sub[len - 1] == '\n')) {
+                    len--;
+                }
+                if (len > BleSerialManager::kMaxSuffixLength) {
+                    println("[BLE ERROR] Suffix too long (maximum 16 characters).");
+                    return;
+                }
+                char cleanSuffix[BleSerialManager::kMaxSuffixLength + 1];
+                std::memcpy(cleanSuffix, sub, len);
+                cleanSuffix[len] = '\0';
+
+                bool valid = true;
+                for (size_t i = 0; i < len; ++i) {
+                    char c = cleanSuffix[i];
+                    if (c <= 32 || c >= 127) {
+                        valid = false;
+                        break;
+                    }
+                }
+                if (!valid) {
+                    println("[BLE ERROR] Invalid suffix. Use letters, numbers, hyphens or underscores (no spaces).");
+                    return;
+                }
+
+                if (bleManager_->setDeviceSuffix(cleanSuffix, true)) {
+                    printFormat("[BLE] Device name updated to: %s\r\n", bleManager_->getDeviceName());
+                    println("[BLE] Saved to non-volatile storage.");
+                    println("[BLE] Note: If your phone still displays the old name, toggle your phone's Bluetooth off and on to clear its scan cache.");
+                } else {
+                    println("[BLE ERROR] Failed to set device suffix.");
+                }
+            }
         } else if (arg[0] == '\0' || equalsIgnoreCase(arg, "status")) {
             printFormat("[BLE] Device: %s\r\n", bleManager_->getDeviceName());
             printFormat("[BLE] Connected: %s | Subscribed: %s | MTU: %u\r\n",
@@ -433,7 +484,7 @@ void SerialCli::executeCommand(const char *cmdLine, unsigned long nowMs, CliSour
                         (unsigned long)bleManager_->getTxRetries());
             printFormat("[BLE] Diagnostics: %s\r\n", bleManager_->isDiagEnabled() ? "on" : "off");
         } else {
-            println("Usage: ble [status] | ble diag on|off");
+            println("Usage: ble [status] | ble suffix [<val>|reset] | ble diag on|off");
         }
     } else if (startsWithIgnoreCase(cleanCmd, "cal")) {
         const char *arg = cleanCmd + 3;
@@ -849,6 +900,8 @@ void SerialCli::printHelp() {
     println("  restart (or reboot)   - Restart the ESP32 controller");
     println("  version (or ver)      - Display firmware build version and compile time");
     println("  ble [diag on|off]     - BLE link status / toggle BLE RF diagnostics");
+    println("  ble suffix [<val>|reset]");
+    println("                        - Configure BLE device name suffix (max 16 chars)");
     println("  $<NMEA/KSXT sentence> - Inject raw GNSS sentence directly");
     println("  help (or ?)           - Show this help menu");
     println("====================================");

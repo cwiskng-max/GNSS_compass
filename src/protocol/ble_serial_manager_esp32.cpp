@@ -4,6 +4,7 @@
 #if BLE_SERIAL_HW
 
 #include <Arduino.h>
+#include <Preferences.h>
 #include <BLEDevice.h>
 #include <BLEServer.h>
 #include <BLEUtils.h>
@@ -90,11 +91,27 @@ bool BleSerialManager::platformBegin(bool haveCustomName) {
         return false;
     }
 
+    uint8_t mac[6] = {0};
+    if (esp_read_mac(mac, ESP_MAC_BT) == ESP_OK) {
+        std::snprintf(defaultSuffix_, sizeof(defaultSuffix_), "%02x%02x%02x", mac[3], mac[4], mac[5]);
+    } else {
+        std::snprintf(defaultSuffix_, sizeof(defaultSuffix_), "000000");
+    }
+
     if (!haveCustomName) {
-        uint8_t mac[6] = {0};
-        if (esp_read_mac(mac, ESP_MAC_BT) == ESP_OK) {
-            std::snprintf(deviceName_, sizeof(deviceName_), "GNSS-Compass-%02x%02x%02x", mac[3], mac[4], mac[5]);
+        Preferences prefs;
+        prefs.begin("compass", true);
+        String savedSuffix = prefs.getString("ble_suffix", "");
+        prefs.end();
+
+        if (savedSuffix.length() > 0 && savedSuffix.length() <= kMaxSuffixLength) {
+            std::strncpy(deviceSuffix_, savedSuffix.c_str(), sizeof(deviceSuffix_) - 1);
+            deviceSuffix_[sizeof(deviceSuffix_) - 1] = '\0';
+        } else {
+            std::strncpy(deviceSuffix_, defaultSuffix_, sizeof(deviceSuffix_) - 1);
+            deviceSuffix_[sizeof(deviceSuffix_) - 1] = '\0';
         }
+        std::snprintf(deviceName_, sizeof(deviceName_), "GNSS-Compass-%s", deviceSuffix_);
     }
 
     s_bleInstance = this;
@@ -320,6 +337,30 @@ void BleSerialManager::onGattsEvent(int event, uint8_t gattsIf, const void *p) {
         default:
             break;
     }
+}
+
+void BleSerialManager::platformUpdateDeviceName() {
+    BLEAdvertisementData scanResponseData;
+    scanResponseData.setName(deviceName_);
+    BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
+    if (pAdvertising) {
+        pAdvertising->setScanResponseData(scanResponseData);
+        if (advertising_.load()) {
+            pAdvertising->stop();
+            pAdvertising->start();
+        }
+    }
+}
+
+void BleSerialManager::platformSaveSuffix(const char *suffix) {
+    Preferences prefs;
+    prefs.begin("compass", false);
+    if (suffix && suffix[0]) {
+        prefs.putString("ble_suffix", suffix);
+    } else {
+        prefs.remove("ble_suffix");
+    }
+    prefs.end();
 }
 
 #endif // BLE_SERIAL_HW

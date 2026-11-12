@@ -27,11 +27,63 @@ const char kDropNoticeFmt[] = "\r\n[BLE] %lu bytes of output dropped (send queue
 
 BleSerialManager::BleSerialManager() {
     std::memset(deviceName_, 0, sizeof(deviceName_));
-    std::strncpy(deviceName_, "GNSS-Compass", sizeof(deviceName_) - 1);
+    std::memset(deviceSuffix_, 0, sizeof(deviceSuffix_));
+    std::memset(defaultSuffix_, 0, sizeof(defaultSuffix_));
+#if !BLE_SERIAL_HW
+    std::snprintf(defaultSuffix_, sizeof(defaultSuffix_), "test");
+    std::snprintf(deviceSuffix_, sizeof(deviceSuffix_), "test");
+    std::snprintf(deviceName_, sizeof(deviceName_), "GNSS-Compass-test");
+#else
+    std::snprintf(defaultSuffix_, sizeof(defaultSuffix_), "000000");
+    std::snprintf(deviceSuffix_, sizeof(deviceSuffix_), "000000");
+    std::snprintf(deviceName_, sizeof(deviceName_), "GNSS-Compass");
+#endif
 }
 
 BleSerialManager::~BleSerialManager() {
     std::free(txBuf_);
+}
+
+bool BleSerialManager::setDeviceSuffix(const char *suffix, bool persist) {
+    if (!suffix) return false;
+    while (*suffix == ' ' || *suffix == '\t') suffix++;
+    size_t len = std::strlen(suffix);
+    while (len > 0 && (suffix[len - 1] == ' ' || suffix[len - 1] == '\t' ||
+                       suffix[len - 1] == '\r' || suffix[len - 1] == '\n')) {
+        len--;
+    }
+    if (len == 0 || len > kMaxSuffixLength) {
+        return false;
+    }
+    for (size_t i = 0; i < len; ++i) {
+        char c = suffix[i];
+        if (c <= 32 || c >= 127) {
+            return false;
+        }
+    }
+    std::memcpy(deviceSuffix_, suffix, len);
+    deviceSuffix_[len] = '\0';
+    std::snprintf(deviceName_, sizeof(deviceName_), "GNSS-Compass-%s", deviceSuffix_);
+
+    if (persist) {
+        platformSaveSuffix(deviceSuffix_);
+    }
+    platformUpdateDeviceName();
+    return true;
+}
+
+bool BleSerialManager::resetDeviceSuffix(bool persist) {
+    if (defaultSuffix_[0] == '\0') {
+        std::snprintf(defaultSuffix_, sizeof(defaultSuffix_), "000000");
+    }
+    std::snprintf(deviceSuffix_, sizeof(deviceSuffix_), "%s", defaultSuffix_);
+    std::snprintf(deviceName_, sizeof(deviceName_), "GNSS-Compass-%s", deviceSuffix_);
+
+    if (persist) {
+        platformSaveSuffix("");
+    }
+    platformUpdateDeviceName();
+    return true;
 }
 
 void BleSerialManager::begin(const char *customName) {

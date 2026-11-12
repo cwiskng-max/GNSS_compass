@@ -7,11 +7,37 @@
 #include <cstdlib>
 #include <cstring>
 
+namespace {
+char s_hostBleSuffix[17] = {0};
+}
+
 bool BleSerialManager::platformBegin(bool haveCustomName) {
+    std::snprintf(defaultSuffix_, sizeof(defaultSuffix_), "test");
     if (!haveCustomName) {
-        std::strncpy(deviceName_, "GNSS-Compass-test", sizeof(deviceName_) - 1);
+        if (s_hostBleSuffix[0] != '\0') {
+            std::snprintf(deviceSuffix_, sizeof(deviceSuffix_), "%s", s_hostBleSuffix);
+        } else {
+            std::snprintf(deviceSuffix_, sizeof(deviceSuffix_), "%s", defaultSuffix_);
+        }
+        std::snprintf(deviceName_, sizeof(deviceName_), "GNSS-Compass-%s", deviceSuffix_);
     }
     return true;
+}
+
+void BleSerialManager::platformUpdateDeviceName() {
+    // Host mock: deviceName_ already updated in memory
+}
+
+void BleSerialManager::platformSaveSuffix(const char *suffix) {
+    if (suffix && suffix[0]) {
+        std::snprintf(s_hostBleSuffix, sizeof(s_hostBleSuffix), "%s", suffix);
+    } else {
+        s_hostBleSuffix[0] = '\0';
+    }
+}
+
+void BleSerialManager::resetHostStorage() {
+    s_hostBleSuffix[0] = '\0';
 }
 
 void BleSerialManager::platformUpdate(unsigned long nowMs) {
