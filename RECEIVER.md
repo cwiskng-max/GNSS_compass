@@ -65,8 +65,9 @@ The ESP32 executes and verifies the complete receiver configuration sequence:
 2. `CONFIG SIGNALGROUP 3 6`: Enables multi-frequency tracking across GPS, BDS, GLONASS, and Galileo.
 3. `UNLOG COM1`: Wipes all factory default and legacy NMEA sentences in a single command.
 4. `KSXT com1 0.2`: Activates the unified 5 Hz `$KSXT` stream on `COM1`.
-5. `SAVECONFIG`: Commits configuration parameters to the receiver's non-volatile NOR Flash.
-6. **Stream Verification:** Verifies that active `$KSXT` packets are streaming into the display at 5 Hz.
+5. `CONFIG HEADING FIXLENGTH`: Constrains heading calculation to a rigid fixed-length baseline (standard for boom-mounted antennas; does not require setting an explicit length).
+6. `SAVECONFIG`: Commits configuration parameters to the receiver's non-volatile NOR Flash.
+7. **Stream Verification:** Verifies that active `$KSXT` packets are streaming into the display at 5 Hz.
 
 ```text
 > gps config
@@ -91,13 +92,15 @@ This queries `#VERSION`, operating `MODE`, active message logs via `UNILOGLIST C
 
 ---
 
-## 3. Configuring the Antenna Baseline Distance Constraint
+## 3. Optional: Constraining the Physical Baseline Length
 
-While the ESP32 automatically configures the general receiver operating mode, constellations, and 5 Hz message streaming, **the physical antenna baseline distance must still be configured manually**. 
+Because the GNSS Compass is designed with two antennas rigidly mounted on a fixed pole, **`CONFIG HEADING FIXLENGTH` is standard and applied automatically during setup**. 
 
-The receiver defaults to an unconstrained baseline (it does not know the physical distance between your antennas). Locking the physical center-to-center baseline distance into the receiver provides major operational benefits:
+With `CONFIG HEADING FIXLENGTH` enabled, the receiver knows the baseline distance is rigid and will dynamically compute and maintain the fixed baseline without drift. 
 
-### Why Configure the Baseline Constraint?
+Optionally, you can also set the **physical baseline length and tolerance** (`CONFIG HEADING LENGTH <length_cm> <tolerance_cm>`) in the receiver to tighten the RTK search space even further:
+
+### Benefits of Constraining Baseline Length
 * **Substantially Faster RTK Lock:** Reduces initial carrier-phase ambiguity resolution time (Yellow $\to$ White) from ~30+ seconds down to **2–5 seconds** by restricting the mathematical search space from a large 3D volume to a thin spherical shell.
 * **Immunity to False Integer Fixes:** Prevents false integer ambiguity solutions (momentary 90° or 180° heading errors) that can occur during hot antenna reconnects, severe multipath reflections from metal dishes/towers, or degraded satellite geometry.
 
@@ -109,7 +112,7 @@ The receiver defaults to an unconstrained baseline (it does not know the physica
 
 ### Method 1: Via the ESP32 Serial Interface (Preferred)
 
-Configuring the baseline constraint is done in one command via the ESP32 serial interface (over USB-C or Bluetooth BLE):
+To apply the baseline length constraint in-system, run `gps config baseline` via the ESP32 serial interface (over USB-C or Bluetooth BLE):
 
 ```text
 > gps config baseline <length_cm> [tolerance_cm]
@@ -134,14 +137,13 @@ The ESP32 sends `CONFIG HEADING FIXLENGTH` followed by `CONFIG HEADING LENGTH 10
 
 ### Method 2: Via Direct UM982 Configuration Tools (UPrecise or Terminal)
 
-If you prefer to configure the baseline using direct UM982 tools (such as Unicore UPrecise or a serial terminal connected to the UM982 USB-C port), send the following commands manually:
+If you configure the receiver using direct UM982 tools (such as Unicore UPrecise or a serial terminal connected to the UM982 USB-C port), send:
 
 ```text
-CONFIG HEADING FIXLENGTH
 CONFIG HEADING LENGTH 101.6 2.5
 SAVECONFIG
 ```
-*(Replace `101.6` and `2.5` with your measured distance and tolerance in centimeters).*
+*(Replace `101.6` and `2.5` with your measured distance and tolerance in centimeters. Note that `CONFIG HEADING FIXLENGTH` is already set).*
 
 ---
 
@@ -187,6 +189,7 @@ Once connected, send the following commands one by one to configure the operatio
 ```text
 MODE ROVER UAV
 CONFIG SIGNALGROUP 3 6
+CONFIG HEADING FIXLENGTH
 KSXT com1 0.2
 SAVECONFIG
 ```
@@ -194,15 +197,15 @@ SAVECONFIG
 #### Explanation of Commands
 * `MODE ROVER UAV`: Configures the receiver in moving-baseline / dual-antenna heading mode.
 * `CONFIG SIGNALGROUP 3 6`: Selects multi-frequency constellations (GPS, BDS, GLONASS, Galileo).
+* `CONFIG HEADING FIXLENGTH`: Informs the receiver that the two antennas are rigidly mounted on a fixed boom.
 * `KSXT com1 0.2`: Outputs the unified `$KSXT` sentence on `COM1` every 0.2 seconds (5 Hz), providing dual-antenna heading, RTK quality, decimal coordinates, and UTC time in a single stream.
 * `SAVECONFIG`: Saves the current configuration to receiver flash so it persists across power cycles.
 
 *(Note: `GPGLL` is no longer needed because `$KSXT` provides position and time 5 times per second).*
 
-### 4.3 Manual Baseline Distance Constraint
-Configure your antenna spacing using the baseline commands described in Section 3:
+### 4.3 Optional: Physical Baseline Length Constraint
+If you wish to configure your antenna spacing and tolerance in the receiver:
 ```text
-CONFIG HEADING FIXLENGTH
 CONFIG HEADING LENGTH 101.6 2.5
 SAVECONFIG
 ```

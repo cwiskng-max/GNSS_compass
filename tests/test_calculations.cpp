@@ -1144,16 +1144,23 @@ void test_gps_config_pipeline() {
     ASSERT_TRUE(pipe.getCurrentStep() == ConfigStep::KsxtOutput);
     ASSERT_STR_EQ(sentData.c_str(), "KSXT com1 0.2\r\n");
 
-    // Acknowledge step 4 -> Step 5 SAVECONFIG (baseline steps skipped)
+    // Acknowledge step 4 -> Step 5 CONFIG HEADING FIXLENGTH (standard on all builds)
     sentData.clear();
     gm.feedSentence("<OK", 1200);
+    ASSERT_TRUE(pipe.isRunning());
+    ASSERT_TRUE(pipe.getCurrentStep() == ConfigStep::HeadingFixLength);
+    ASSERT_STR_EQ(sentData.c_str(), "CONFIG HEADING FIXLENGTH\r\n");
+
+    // Acknowledge step 5 -> Step 6 SAVECONFIG (explicit baseline length skipped when baselineCm == 0)
+    sentData.clear();
+    gm.feedSentence("<OK", 1250);
     ASSERT_TRUE(pipe.isRunning());
     ASSERT_TRUE(pipe.getCurrentStep() == ConfigStep::SaveConfig);
     ASSERT_STR_EQ(sentData.c_str(), "SAVECONFIG\r\n");
 
-    // Acknowledge step 5 -> Step 6 VerifyStream
+    // Acknowledge step 6 -> Step 7 VerifyStream
     sentData.clear();
-    gm.feedSentence("<OK", 1250);
+    gm.feedSentence("<OK", 1300);
     ASSERT_TRUE(pipe.isRunning());
     ASSERT_TRUE(pipe.getCurrentStep() == ConfigStep::VerifyStream);
     ASSERT_TRUE(pipe.isWaitingForStream());
@@ -1164,7 +1171,7 @@ void test_gps_config_pipeline() {
     GpsSimulator::generateKsxt(ksxtBuf, sizeof(ksxtBuf),
                               "20261109120000.00", 37.7749, -122.4194,
                               90.0, BEARING_FIXED);
-    gm.feedSentence(ksxtBuf, 1300);
+    gm.feedSentence(ksxtBuf, 1350);
     ASSERT_TRUE(pipe.isSuccess());
     ASSERT_TRUE(pipe.getCurrentStep() == ConfigStep::Done);
     ASSERT_STR_EQ(pipe.getStateString(), "SUCCESS");
@@ -1263,15 +1270,16 @@ void test_gps_config_pipeline() {
     gm.feedSentence("<OK", 6100); // SIGNALGROUP
     gm.feedSentence("<OK", 6150); // UNLOG
     gm.feedSentence("<OK", 6200); // KSXT
-    gm.feedSentence("<OK", 6250); // SAVECONFIG
+    gm.feedSentence("<OK", 6250); // FIXLENGTH
+    gm.feedSentence("<OK", 6300); // SAVECONFIG
     ASSERT_TRUE(pipe.getCurrentStep() == ConfigStep::VerifyStream);
 
     // Advance time: 1000 ms (< 1500 ms verify timeout) -> still waiting
-    gm.update(7250);
+    gm.update(7300);
     ASSERT_TRUE(pipe.isWaitingForStream());
 
     // Advance time: 1500 ms elapsed -> Stream verification timeout!
-    gm.update(7751);
+    gm.update(7801);
     ASSERT_TRUE(pipe.isFailed());
     ASSERT_TRUE(pipe.getFailureReason() == ConfigFailureReason::StreamVerifyTimeout);
     ASSERT_STR_EQ(pipe.getFailureReasonString(), "STREAM_VERIFY_TIMEOUT");
@@ -1573,8 +1581,9 @@ void test_serial_cli_gps_commands() {
     gm.feedSentence("<OK", 2050); // MODE -> SIGNALGROUP
     gm.feedSentence("<OK", 2100); // SIGNALGROUP -> UNLOG
     gm.feedSentence("<OK", 2150); // UNLOG -> KSXT
-    gm.feedSentence("<OK", 2200); // KSXT -> SAVECONFIG
-    gm.feedSentence("<OK", 2250); // SAVECONFIG -> VerifyStream
+    gm.feedSentence("<OK", 2200); // KSXT -> FIXLENGTH
+    gm.feedSentence("<OK", 2250); // FIXLENGTH -> SAVECONFIG
+    gm.feedSentence("<OK", 2300); // SAVECONFIG -> VerifyStream
     ASSERT_TRUE(cliOutput.find("[GPS CONFIG] Settings saved. Verifying KSXT 5 Hz stream...") != std::string::npos);
     cliOutput.clear();
 
@@ -1583,7 +1592,7 @@ void test_serial_cli_gps_commands() {
     GpsSimulator::generateKsxt(ksxtSentence, sizeof(ksxtSentence),
                               "20261109120000.00", 37.7749, -122.4194,
                               90.0, BEARING_FIXED);
-    gm.feedSentence(ksxtSentence, 2300);
+    gm.feedSentence(ksxtSentence, 2350);
     ASSERT_TRUE(cliOutput.find("[GPS CONFIG] Complete! Receiver configured at 5 Hz KSXT.") != std::string::npos);
     cliOutput.clear();
 

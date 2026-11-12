@@ -117,14 +117,14 @@ void GpsConfigPipeline::advanceStep(unsigned long nowMs) {
             currentStep_ = ConfigStep::KsxtOutput;
             break;
         case ConfigStep::KsxtOutput:
+            currentStep_ = ConfigStep::HeadingFixLength;
+            break;
+        case ConfigStep::HeadingFixLength:
             if (baselineCm_ > 0.0f) {
-                currentStep_ = ConfigStep::HeadingFixLength;
+                currentStep_ = ConfigStep::HeadingLength;
             } else {
                 currentStep_ = ConfigStep::SaveConfig;
             }
-            break;
-        case ConfigStep::HeadingFixLength:
-            currentStep_ = ConfigStep::HeadingLength;
             break;
         case ConfigStep::HeadingLength:
             currentStep_ = ConfigStep::SaveConfig;

@@ -96,15 +96,19 @@ Displays a summary of available serial commands.
 === GNSS Compass Serial Commands ===
   status (or gps)       - Live GNSS receiver stream & link diagnostic
   gps probe             - Test bidirectional TX connection to UM982
-  gps config [baseline] - Run automated 5 Hz $KSXT receiver setup
+  gps config [baseline <cm> [tol]]
+                        - Run automated 5 Hz $KSXT receiver setup
   gps send <command>    - Send raw command to UM982 receiver
   gps check (or audit)  - Query receiver running parameters
-  rover [status|start|stop|history|undo|max|clear] - Rover transit tracking
+  rover [status|start|stop|history|undo|max|clear]
+                        - Rover transit tracking
   test (or demo)        - Run visual display self-test demo
   cal [snap|zero|<val>] - View or configure antenna calibration
-  sim [on|off|hdg|pos|grid|rover|status] - GPS simulation commands
+  sim [on|off|hdg|pos|grid|rover|status]
+                        - GPS simulation commands
   exit (or disconnect)  - Terminate wireless BLE connection cleanly
   restart (or reboot)   - Restart the ESP32 controller
+  version (or ver)      - Display firmware build version and compile time
   ble [diag on|off]     - BLE link status / toggle BLE RF diagnostics
   $<NMEA/KSXT sentence> - Inject raw GNSS sentence directly
   help (or ?)           - Show this help menu
@@ -181,8 +185,9 @@ Executes the verified multi-step configuration sequence from [RECEIVER.md](RECEI
 2. `CONFIG SIGNALGROUP 3 6` (GPS + BDS + GLONASS + Galileo multi-frequency tracking)
 3. `UNLOG COM1` (Wipes all legacy and factory default sentences in a single command)
 4. `KSXT com1 0.2` (Enables unified navigation message at 5 Hz)
-5. `SAVECONFIG` (Commits RAM parameters to receiver non-volatile NOR Flash)
-6. Stream verification (Confirms live `$KSXT` stream is active)
+5. `CONFIG HEADING FIXLENGTH` (Constrains heading calculation to a rigid fixed-length baseline for faster RTK lock)
+6. `SAVECONFIG` (Commits RAM parameters to receiver non-volatile NOR Flash)
+7. Stream verification (Confirms live `$KSXT` stream is active)
 
 ```text
 > gps config
@@ -195,8 +200,8 @@ Executes the verified multi-step configuration sequence from [RECEIVER.md](RECEI
 > [!NOTE]
 > **Built-In Flash Wear Protection:** To protect the receiver's NOR Flash from unnecessary write cycles or corrupted parameters, if any step prior to `SAVECONFIG` fails or times out, the sequence safely aborts without sending `SAVECONFIG`.
 
-#### 3. Setup with Fixed Baseline Distance (`gps config baseline <cm> [tol_cm]`)
-If your physical antenna spacing is known (e.g. 101.6 cm / 40 inches center-to-center with a default 2.5 cm tolerance), provide the baseline distance to lock the search constraint:
+#### 3. Setup with Baseline Length Constraint (`gps config baseline <cm> [tol_cm]`)
+Because `CONFIG HEADING FIXLENGTH` is standard, the receiver dynamically tracks fixed-length baseline spacing automatically. If your physical antenna spacing is known (e.g. 101.6 cm / 40 inches center-to-center with a default 2.5 cm tolerance), provide the baseline distance to add the length and tolerance constraint (`CONFIG HEADING LENGTH <cm> <tol_cm>`):
 
 ```text
 > gps config baseline 101.6 2.5

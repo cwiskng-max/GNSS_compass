@@ -571,7 +571,8 @@ void SerialCli::handleGpsCommand(const char *arg, unsigned long nowMs) {
     println("[GPS ERROR] Unknown gps subcommand. Available:");
     println("  gps status            - Live GNSS receiver stream & link diagnostic");
     println("  gps probe             - Test bidirectional TX connection to UM982");
-    println("  gps config [baseline] - Run automated 5 Hz $KSXT receiver setup");
+    println("  gps config [baseline <cm> [tol]]");
+    println("                        - Run automated 5 Hz $KSXT receiver setup");
     println("  gps send <command>    - Send raw command to UM982 receiver");
     println("  gps check (or audit)  - Query receiver running parameters");
 }
@@ -834,13 +835,16 @@ void SerialCli::printHelp() {
     println("=== GNSS Compass Serial Commands ===");
     println("  status (or gps)       - Live GNSS receiver stream & link diagnostic");
     println("  gps probe             - Test bidirectional TX connection to UM982");
-    println("  gps config [baseline] - Run automated 5 Hz $KSXT receiver setup");
+    println("  gps config [baseline <cm> [tol]]");
+    println("                        - Run automated 5 Hz $KSXT receiver setup");
     println("  gps send <command>    - Send raw command to UM982 receiver");
     println("  gps check (or audit)  - Query receiver running parameters");
-    println("  rover [status|start|stop|history|undo|max|clear] - Rover transit tracking");
+    println("  rover [status|start|stop|history|undo|max|clear]");
+    println("                        - Rover transit tracking");
     println("  test (or demo)        - Run visual display self-test demo");
     println("  cal [snap|zero|<val>] - View or configure antenna calibration");
-    println("  sim [on|off|hdg|pos|grid|rover|status] - GPS simulation commands");
+    println("  sim [on|off|hdg|pos|grid|rover|status]");
+    println("                        - GPS simulation commands");
     println("  exit (or disconnect)  - Terminate wireless BLE connection cleanly");
     println("  restart (or reboot)   - Restart the ESP32 controller");
     println("  version (or ver)      - Display firmware build version and compile time");

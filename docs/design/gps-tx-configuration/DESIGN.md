@@ -157,8 +157,8 @@ The pipeline sends the verified command sequence one step at a time, checking fo
 | **2** | `CONFIG SIGNALGROUP 3 6` | Enable multi-frequency constellations (GPS, BDS, GLO, GAL) |
 | **3** | `UNLOG COM1` | Clear all active message streams on COM1 (wipes any legacy/unwanted logs) |
 | **4** | `KSXT com1 0.2` | Output unified `$KSXT` navigation sentence at 5 Hz (0.2s) |
-| **5** | *(Optional)* `CONFIG HEADING FIXLENGTH` | Lock baseline length constraint |
-| **6** | *(Optional)* `CONFIG HEADING LENGTH <cm> <tol>` | Set physical antenna spacing (e.g. `101.6 2.5`) |
+| **5** | `CONFIG HEADING FIXLENGTH` | Constrain heading to rigid fixed baseline (standard for boom-mounted antennas) |
+| **6** | *(Optional)* `CONFIG HEADING LENGTH <cm> <tol>` | Set physical antenna spacing and tolerance (e.g. `101.6 2.5`) |
 | **7** | `SAVECONFIG` | Commit RAM parameters to non-volatile NOR Flash |
 
 > [!TIP]
@@ -189,9 +189,9 @@ sequenceDiagram
         UM-->>Mgr: <OK
         Mgr->>UM: KSXT com1 0.2\r\n
         UM-->>Mgr: <OK
-        opt Fixed baseline provided
-            Mgr->>UM: CONFIG HEADING FIXLENGTH\r\n
-            UM-->>Mgr: <OK
+        Mgr->>UM: CONFIG HEADING FIXLENGTH\r\n
+        UM-->>Mgr: <OK
+        opt Baseline length constraint provided
             Mgr->>UM: CONFIG HEADING LENGTH 101.6 2.5\r\n
             UM-->>Mgr: <OK
         end
