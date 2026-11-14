@@ -388,6 +388,50 @@ void SerialCli::executeCommand(const char *cmdLine, unsigned long nowMs, CliSour
                        cleanCmd[len - 1] == '\r' || cleanCmd[len - 1] == '\n')) {
         cleanCmd[--len] = '\0';
     }
+
+    // Strip speech-to-text (e.g. Gboard) sentence punctuation while preserving
+    // decimal numbers (e.g. 10368.1), standalone '?', hyphens, and raw 'gps send' payloads.
+    if (len > 0 && !startsWithIgnoreCase(cleanCmd, "gps send")) {
+        size_t writeIdx = 0;
+        for (size_t i = 0; i < len; ++i) {
+            char c = cleanCmd[i];
+            bool isPunctSpace = false;
+            if (c == ' ' || c == '\t' || c == ',' || c == '!' || c == ';') {
+                isPunctSpace = true;
+            } else if (c == '.' || c == ':') {
+                bool betweenDigits = (i > 0 && i + 1 < len &&
+                                      std::isdigit(static_cast<unsigned char>(cleanCmd[i - 1])) &&
+                                      std::isdigit(static_cast<unsigned char>(cleanCmd[i + 1])));
+                isPunctSpace = !betweenDigits;
+            } else if (c == '?') {
+                bool standalone = ((i == 0 || cleanCmd[i - 1] == ' ' || cleanCmd[i - 1] == '\t') &&
+                                   (i + 1 == len || cleanCmd[i + 1] == ' ' || cleanCmd[i + 1] == '\t'));
+                isPunctSpace = !standalone;
+            }
+
+            if (isPunctSpace) {
+                if (writeIdx > 0 && cleanCmd[writeIdx - 1] != ' ') {
+                    cleanCmd[writeIdx++] = ' ';
+                }
+            } else {
+                cleanCmd[writeIdx++] = c;
+            }
+        }
+        if (writeIdx > 0 && cleanCmd[writeIdx - 1] == ' ') {
+            writeIdx--;
+        }
+        cleanCmd[writeIdx] = '\0';
+        len = writeIdx;
+
+        // Strip stray trailing "send" from voice keyboard submission (e.g. Gboard),
+        // while preserving "gps send ...".
+        if (len > 5 && !startsWithIgnoreCase(cleanCmd, "gps send") &&
+            equalsIgnoreCase(&cleanCmd[len - 5], " send")) {
+            len -= 5;
+            cleanCmd[len] = '\0';
+        }
+    }
+
     if (len == 0) {
         printPrompt();
         return;

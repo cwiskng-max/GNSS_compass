@@ -4856,6 +4856,70 @@ void test_serial_cli_log_commands() {
     ASSERT_TRUE(cliOutput.find("Contest QSO log cleared (0 contacts).") != std::string::npos);
     ASSERT_TRUE(qsoLog.getQsoCount() == 0);
 
+    // 16. Gboard speech-to-text punctuation resilience
+    cliOutput.clear();
+    cli.executeCommand("log!", 16000);
+    ASSERT_TRUE(cliOutput.find("[QSO] Callsign?") != std::string::npos);
+
+    cliOutput.clear();
+    cli.executeCommand("k6mg 10368.1!", 16100);
+    ASSERT_TRUE(qsoLog.getQsoCount() == 1);
+    ASSERT_TRUE(cliOutput.find("[QSO LOGGED #1] K6MG | 10 GHz (10368.100 MHz)") != std::string::npos);
+
+    cliOutput.clear();
+    cli.executeCommand("log list!", 16200);
+    ASSERT_TRUE(cliOutput.find("K6MG") != std::string::npos);
+
+    cliOutput.clear();
+    cli.executeCommand("log stats?", 16300);
+    ASSERT_TRUE(cliOutput.find("Contest QSO Statistics") != std::string::npos);
+
+    cliOutput.clear();
+    cli.executeCommand("log export. cabrillo", 16400);
+    ASSERT_TRUE(cliOutput.find("START-OF-LOG: 3.0") != std::string::npos);
+    ASSERT_TRUE(cliOutput.find("10G   PH") != std::string::npos);
+
+    cliOutput.clear();
+    cli.executeCommand("log export. cabrillo!", 16450);
+    ASSERT_TRUE(cliOutput.find("START-OF-LOG: 3.0") != std::string::npos);
+
+    cliOutput.clear();
+    cli.executeCommand("log ?", 16500);
+    ASSERT_TRUE(cliOutput.find("Contest QSO Logging Commands") != std::string::npos);
+
+    cliOutput.clear();
+    cli.executeCommand("?", 16550);
+    ASSERT_TRUE(cliOutput.find("GNSS Compass Serial Commands") != std::string::npos);
+
+    cliOutput.clear();
+    cli.executeCommand("log undo.", 16600);
+    ASSERT_TRUE(qsoLog.getQsoCount() == 0);
+    ASSERT_TRUE(cliOutput.find("Removed last entry #1") != std::string::npos);
+
+    // Stray trailing "send" from Gboard voice submission
+    cliOutput.clear();
+    cli.executeCommand("log k6mg send", 16700);
+    ASSERT_TRUE(qsoLog.getQsoCount() == 1);
+    ASSERT_TRUE(cliOutput.find("[QSO LOGGED #1] K6MG") != std::string::npos);
+
+    cliOutput.clear();
+    cli.executeCommand("log export. cabrillo. Send!", 16750);
+    ASSERT_TRUE(cliOutput.find("START-OF-LOG: 3.0") != std::string::npos);
+    ASSERT_TRUE(cliOutput.find("10G   PH") != std::string::npos);
+
+    cliOutput.clear();
+    cli.executeCommand("log list send.", 16800);
+    ASSERT_TRUE(cliOutput.find("K6MG") != std::string::npos);
+
+    cliOutput.clear();
+    cli.executeCommand("log undo send", 16850);
+    ASSERT_TRUE(qsoLog.getQsoCount() == 0);
+
+    // Ensure "gps send" is not stripped
+    cliOutput.clear();
+    cli.executeCommand("gps send", 16900);
+    ASSERT_TRUE(cliOutput.find("[GPS] Cannot send") != std::string::npos);
+
     PASS();
 }
 
