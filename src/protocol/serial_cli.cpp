@@ -640,7 +640,6 @@ void SerialCli::printGpsHelp() {
     println("                        - Run automated 5 Hz $KSXT receiver setup");
     println("  gps send <command>    - Send raw command to UM982 receiver");
     println("  gps check (or audit)  - Query receiver running parameters");
-    println("  gps help (or ?)       - Show this GPS help menu");
 }
 
 void SerialCli::handleGpsCommand(const char *arg, unsigned long nowMs) {
@@ -1563,7 +1562,6 @@ void SerialCli::printCalHelp() {
     println("  cal snap              - Align antenna heading to current target bearing");
     println("  cal zero (or reset)   - Reset calibration offset to 0.0 deg");
     println("  cal [set] <deg>       - Set manual antenna offset in degrees");
-    println("  cal help (or ?)       - Show this calibration help menu");
 }
 
 void SerialCli::handleCalCommand(const char *arg) {
@@ -1620,7 +1618,6 @@ void SerialCli::printSimHelp() {
     println("  sim rover [origin_grid] <dist_km>");
     println("                        - Simulate rover transit displacement");
     println("  sim time <hh:mm>      - Inject simulated UTC time");
-    println("  sim help (or ?)       - Show this simulation help menu");
 }
 
 void SerialCli::handleSimCommand(const char *arg, unsigned long nowMs) {
