@@ -1,33 +1,37 @@
 # Getting the Firmware
 
-To program the GNSS Compass display, you need the compiled firmware binary ([`gps_compass.ino.esp32s3.bin`](https://github.com/cwiskng-max/GNSS_compass/releases/latest/download/gps_compass.ino.esp32s3.bin)). You can obtain this file in one of two ways:
+To program the GNSS Compass display, you need the compiled firmware binary. The project provides two primary packages for different deployment scenarios:
 
-* **[Option A: Download Pre-Compiled Binary (Recommended)](#option-a-download-pre-compiled-binary-recommended)**: Fast and straightforward. Recommended for most users who simply want to flash and run the compass.
-* **[Option B: Compile from Source Code](#option-b-compile-from-source-code)**: For developers who want to inspect the source, modify features, or build locally using `arduino-cli`.
+* **[File A: `gps_compass-factory.bin` (Fresh Install)](#option-a-download-pre-compiled-binary-recommended)**: Complete, all-in-one merged binary (bootloader, 16MB partition table, and application) flashed at address **`0x0`**. Recommended for initial setup on a blank or newly purchased board.
+* **[File B: `gps_compass-update.bin` (Upgrade)](#option-a-download-pre-compiled-binary-recommended)**: Application-only binary flashed at address **`0x100000`**. Upgrades the firmware while **preserving your NVS storage** (all contest QSO logs, antenna calibration offset, and rover transit history remain intact).
 
-Once you have the binary file from either option, proceed to the **[Firmware Installation Guide](INSTALL.md)** to flash it onto your board.
+You can obtain these files in one of two ways:
+* **[Option A: Download Pre-Compiled Binary (Recommended)](#option-a-download-pre-compiled-binary-recommended)**: Fast and straightforward. Recommended for most users.
+* **[Option B: Compile from Source Code](#option-b-compile-from-source-code)**: For developers who want to modify features or build locally using `arduino-cli`.
+
+Once you have your binary, proceed to the **[Firmware Installation Guide](INSTALL.md)** to flash it onto your board.
 
 ---
 
 ## Option A: Download Pre-Compiled Binary (Recommended)
 
 1. Go to the repository's [Releases](https://github.com/cwiskng-max/GNSS_compass/releases) page.
-2. Under the latest release, download the following files:
-   * [**`gps_compass.ino.esp32s3.bin`**](https://github.com/cwiskng-max/GNSS_compass/releases/latest/download/gps_compass.ino.esp32s3.bin) (the compiled application firmware)
-   * [**`gps_compass.ino.partitions.bin`**](https://github.com/cwiskng-max/GNSS_compass/releases/latest/download/gps_compass.ino.partitions.bin) (the 16MB flash partition table)
+2. Under the latest release, download the file matching your needs:
+   * **Fresh Install:** [**`gps_compass-factory.bin`**](https://github.com/cwiskng-max/GNSS_compass/releases/latest/download/gps_compass-factory.bin) (flashed to `0x0`)
+   * **Upgrade:** [**`gps_compass-update.bin`**](https://github.com/cwiskng-max/GNSS_compass/releases/latest/download/gps_compass-update.bin) (flashed to `0x100000`, preserves NVS logs)
    * [**`CHECKSUMS`**](https://github.com/cwiskng-max/GNSS_compass/releases/latest/download/CHECKSUMS) (SHA-256 verification hashes)
 
 3. *(Optional but Recommended)* Verify the downloaded file integrity in your terminal:
    ```bash
    sha256sum -c CHECKSUMS
    ```
-   Confirm the output reports:
+   Confirm the output reports `OK` for your downloaded file:
    ```text
-   gps_compass.ino.esp32s3.bin: OK
-   gps_compass.ino.partitions.bin: OK
+   gps_compass-factory.bin: OK
+   gps_compass-update.bin: OK
    ```
 
-4. **Next Step:** You have your firmware binary. Proceed to the **[Firmware Installation Guide](INSTALL.md)** to flash it.
+4. **Next Step:** Proceed to the **[Firmware Installation Guide](INSTALL.md)** to flash it.
 
 ---
 
@@ -105,40 +109,62 @@ Run the standalone host unit test suite to verify mathematical projections and f
 
 ---
 
-### 5. Compile the Firmware
+### 5. Automated Build & Packaging Script (Recommended)
 
-Arduino CLI requires sketches to reside inside a folder matching the sketch name:
+The repository provides an automated script that compiles the sketch and packages both `gps_compass-factory.bin` and `gps_compass-update.bin`:
 
 ```bash
-mkdir -p build/gps_compass
-cp -r gps_compass.ino partitions.csv src build/gps_compass/
+./build/simple_build.sh
 ```
 
-*(Optional) Set a custom version identifier displayed on the screen footer:*
+The script:
+1. Compiles the sketch targeting the ESP32-S3 with 16MB flash and OPI PSRAM.
+2. Packages `gps_compass-update.bin` for application upgrades at `0x100000`.
+3. Merges the bootloader, custom 16MB partition table, and application into `gps_compass-factory.bin` for fresh installation at `0x0`.
+4. Optionally offers to flash the connected board directly.
+
+---
+
+### 6. Manual Compilation & Export (Alternative)
+
+If you prefer to run the steps manually:
+
 ```bash
-sed -i 's/#define FW_VERSION .*/#define FW_VERSION           "v0.2-custom"/' build/gps_compass/src/config.h
+mkdir -p build/tmp/gps_compass
+cp -r gps_compass.ino partitions.csv src build/tmp/gps_compass/
 ```
 
 Compile and export the binary artifacts:
 ```bash
-arduino-cli compile --fqbn esp32:esp32:esp32s3:FlashSize=16M,PSRAM=opi,CDCOnBoot=cdc --export-binaries build/gps_compass
+arduino-cli compile --fqbn esp32:esp32:esp32s3:FlashSize=16M,PSRAM=opi,CDCOnBoot=cdc --export-binaries build/tmp/gps_compass
 ```
 
 Your compiled application and partition binaries will be located at:
 ```text
-build/gps_compass/build/esp32.esp32.esp32s3/gps_compass.ino.bin
-build/gps_compass/build/esp32.esp32.esp32s3/gps_compass.ino.partitions.bin
+build/tmp/gps_compass/build/esp32.esp32.esp32s3/gps_compass.ino.bin
+build/tmp/gps_compass/build/esp32.esp32.esp32s3/gps_compass.ino.partitions.bin
+build/tmp/gps_compass/build/esp32.esp32.esp32s3/gps_compass.ino.bootloader.bin
 ```
 
-Copy them to the repository root:
+Copy the application update binary to the repository root:
 ```bash
-cp build/gps_compass/build/esp32.esp32.esp32s3/gps_compass.ino.bin ./gps_compass.ino.esp32s3.bin
-cp build/gps_compass/build/esp32.esp32.esp32s3/gps_compass.ino.partitions.bin ./gps_compass.ino.partitions.bin
+cp build/tmp/gps_compass/build/esp32.esp32.esp32s3/gps_compass.ino.bin ./gps_compass-update.bin
+```
+
+Merge into a single factory image at `0x0`:
+```bash
+esptool --chip esp32s3 merge_bin \
+    --flash_mode dio --flash_freq 80m --flash_size 16MB \
+    -o ./gps_compass-factory.bin \
+    0x0 build/tmp/gps_compass/build/esp32.esp32.esp32s3/gps_compass.ino.bootloader.bin \
+    0x8000 build/tmp/gps_compass/build/esp32.esp32.esp32s3/gps_compass.ino.partitions.bin \
+    0x89000 tools/boot_app0.bin \
+    0x100000 build/tmp/gps_compass/build/esp32.esp32.esp32s3/gps_compass.ino.bin
 ```
 
 Clean up temporary build files when done:
 ```bash
-rm -rf build
+rm -rf build/tmp
 ```
 
 ---

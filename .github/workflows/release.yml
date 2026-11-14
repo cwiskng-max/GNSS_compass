@@ -79,8 +79,9 @@ jobs:
           arduino-cli lib install "Adafruit CST8XX Library"
           arduino-cli lib install "Adafruit BusIO"
 
-      - name: Compile Firmware & Inject Version
+      - name: Compile Firmware & Package Release
         run: |
+          pip install esptool
           TAG="${{ inputs.tag_name || github.ref_name }}"
           echo "Building firmware for release: $TAG"
           mkdir -p build/gps_compass
@@ -88,8 +89,24 @@ jobs:
           sed -i "s/#define FW_VERSION .*/#define FW_VERSION           \"$TAG\"/" build/gps_compass/src/config.h
           arduino-cli compile --fqbn esp32:esp32:esp32s3:FlashSize=16M,PSRAM=opi,CDCOnBoot=cdc --export-binaries build/gps_compass
           mkdir -p dist
-          cp build/gps_compass/build/esp32.esp32.esp32s3/gps_compass.ino.bin ./dist/gps_compass.ino.esp32s3.bin
-          cp build/gps_compass/build/esp32.esp32.esp32s3/gps_compass.ino.partitions.bin ./dist/gps_compass.ino.partitions.bin
+
+          BUILD_OUT="build/gps_compass/build/esp32.esp32.esp32s3"
+          cp "$BUILD_OUT/gps_compass.ino.bin" ./dist/gps_compass-update.bin
+
+          # Locate boot_app0.bin
+          BOOT_APP0="tools/boot_app0.bin"
+          if [ ! -f "$BOOT_APP0" ]; then
+            BOOT_APP0=$(find ~/.arduino15 -name "boot_app0.bin" 2>/dev/null | head -n 1)
+          fi
+
+          # Merge factory binary (File A - Fresh Install at 0x0)
+          esptool.py --chip esp32s3 merge_bin \
+            --flash_mode dio --flash_freq 80m --flash_size 16MB \
+            -o ./dist/gps_compass-factory.bin \
+            0x0 "$BUILD_OUT/gps_compass.ino.bootloader.bin" \
+            0x8000 "$BUILD_OUT/gps_compass.ino.partitions.bin" \
+            0x89000 "$BOOT_APP0" \
+            0x100000 "$BUILD_OUT/gps_compass.ino.bin"
 
           # Generate checksums for release assets
           cd dist && sha256sum * > CHECKSUMS && cd ..
@@ -110,10 +127,14 @@ jobs:
             EXTRA_FLAGS+=(--target "${{ github.ref_name }}")
           fi
 
+          ASSETS=(
+            "./dist/gps_compass-factory.bin#Factory Image (Fresh Install at 0x0)"
+            "./dist/gps_compass-update.bin#Update Image (Upgrade at 0x100000)"
+            "./dist/CHECKSUMS#Asset Checksums (SHA-256)"
+          )
+
           gh release create "$TAG" \
-            "./dist/gps_compass.ino.esp32s3.bin#ESP32-S3 Firmware Binary" \
-            "./dist/gps_compass.ino.partitions.bin#ESP32-S3 Partition Table" \
-            "./dist/CHECKSUMS#Asset Checksums" \
+            "${ASSETS[@]}" \
             --title "GNSS Compass Release: $TAG" \
             --generate-notes \
             "${EXTRA_FLAGS[@]}"
