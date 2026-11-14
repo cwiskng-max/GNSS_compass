@@ -136,7 +136,7 @@ cp -r gps_compass.ino partitions.csv src build/tmp/gps_compass/
 
 Compile and export the binary artifacts:
 ```bash
-arduino-cli compile --fqbn esp32:esp32:esp32s3:FlashSize=16M,PSRAM=opi,CDCOnBoot=cdc --export-binaries build/tmp/gps_compass
+arduino-cli compile --fqbn esp32:esp32:esp32s3:FlashSize=16M,PSRAM=opi,CDCOnBoot=cdc --build-property upload.maximum_size=3670016 --export-binaries build/tmp/gps_compass
 ```
 
 Your compiled application and partition binaries will be located at:

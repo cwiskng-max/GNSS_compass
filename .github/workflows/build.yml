@@ -52,7 +52,7 @@ jobs:
             FW_VER="v0.3-${GITHUB_SHA::7}"
           fi
           sed -i "s/#define FW_VERSION .*/#define FW_VERSION           \"$FW_VER\"/" build/gps_compass/src/config.h
-          arduino-cli compile --fqbn esp32:esp32:esp32s3:FlashSize=16M,PSRAM=opi,CDCOnBoot=cdc --export-binaries build/gps_compass
+          arduino-cli compile --fqbn esp32:esp32:esp32s3:FlashSize=16M,PSRAM=opi,CDCOnBoot=cdc --build-property upload.maximum_size=3670016 --export-binaries build/gps_compass
 
           BUILD_OUT="build/gps_compass/build/esp32.esp32.esp32s3"
           cp "$BUILD_OUT/gps_compass.ino.bin" ./gps_compass-update.bin

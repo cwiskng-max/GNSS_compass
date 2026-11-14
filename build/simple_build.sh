@@ -33,8 +33,10 @@ fi
 sed -i "s/#define FW_VERSION .*/#define FW_VERSION           \"v0.3-dev+${GIT_HASH}${DIRTY}\"/" "$SCRATCH_DIR/src/config.h"
 
 # Compile using modern --output-dir (replaces deprecated --export-binaries)
+# Match upload.maximum_size to app0/app1 (0x380000 = 3670016 bytes) in partitions.csv
 arduino-cli compile \
     --fqbn esp32:esp32:esp32s3:FlashSize=16M,PSRAM=opi,CDCOnBoot=cdc \
+    --build-property upload.maximum_size=3670016 \
     --output-dir "$BUILD_DIR" \
     "$SCRATCH_DIR"
 
@@ -103,11 +105,11 @@ if [ -f "$FACTORY_BIN" ] || [ -f "$UPDATE_BIN" ]; then
     echo "=========================================================="
     echo " Build Complete! Firmware Packages Available:"
     echo "=========================================================="
-    if [ -f "$FACTORY_BIN" ]; then
-        echo " [File A - Fresh Install] : $(basename "$FACTORY_BIN")  (Flash at 0x0)"
-    fi
     if [ -f "$UPDATE_BIN" ]; then
-        echo " [File B - Upgrade Only]  : $(basename "$UPDATE_BIN")   (Flash at 0x100000, preserves NVS)"
+        echo " [File A - Upgrade Only]  : $(basename "$UPDATE_BIN")   (Flash at 0x100000, preserves NVS)"
+    fi
+    if [ -f "$FACTORY_BIN" ]; then
+        echo " [File B - Fresh Install] : $(basename "$FACTORY_BIN")  (Flash at 0x0)"
     fi
     echo "=========================================================="
 else
