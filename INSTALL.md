@@ -5,6 +5,9 @@ This guide covers flashing the firmware onto the Elecrow 2.1" ESP32 Rotary Displ
 * **File A: `gps_compass-factory.bin` (Fresh Installation)**: Flashed to offset **`0x0`**. Contains the complete bootloader, custom 16MB partition table, and application. Use this for initial setup on a blank or new board.
 * **File B: `gps_compass-update.bin` (Firmware Upgrade)**: Flashed to offset **`0x100000`**. Updates the application while preserving your non-volatile storage (NVS) data partition (retaining all contest QSO logs, antenna calibration, and rover history).
 
+> [!IMPORTANT]
+> **Upgrading from an older single-`.bin` release?** You **must** perform a one-time flash of **`gps_compass-factory.bin` at `0x0`** instead of `gps_compass-update.bin`. Earlier releases used the default 4MB partition layout (`app0` at `0x10000`), whereas this release uses a custom 16MB layout (`app0` at `0x100000`, 512KB NVS). Because `factory.bin` repartitions flash and resets NVS, note your antenna calibration offset (`status` in the serial CLI) beforehand if needed. All subsequent upgrades can use `gps_compass-update.bin` at `0x100000`.
+
 > [!TIP]
 > If you do not yet have the firmware binaries, see **[Getting the Firmware](FIRMWARE.md)** first.
 

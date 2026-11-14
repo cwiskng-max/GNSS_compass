@@ -5,6 +5,9 @@ To program the GNSS Compass display, you need the compiled firmware binary. The 
 * **[File A: `gps_compass-factory.bin` (Fresh Install)](#option-a-download-pre-compiled-binary-recommended)**: Complete, all-in-one merged binary (bootloader, 16MB partition table, and application) flashed at address **`0x0`**. Recommended for initial setup on a blank or newly purchased board.
 * **[File B: `gps_compass-update.bin` (Upgrade)](#option-a-download-pre-compiled-binary-recommended)**: Application-only binary flashed at address **`0x100000`**. Upgrades the firmware while **preserving your NVS storage** (all contest QSO logs, antenna calibration offset, and rover transit history remain intact).
 
+> [!IMPORTANT]
+> **Upgrading from an older single-`.bin` release?** You **must** download and flash **`gps_compass-factory.bin` at `0x0`** once to install the new 16MB partition table (`app0` moved from `0x10000` to `0x100000` with 512KB NVS). Note your antenna calibration offset (`status` in the serial CLI) beforehand, as this one-time repartition resets NVS. Future upgrades can then use `gps_compass-update.bin`.
+
 You can obtain these files in one of two ways:
 * **[Option A: Download Pre-Compiled Binary (Recommended)](#option-a-download-pre-compiled-binary-recommended)**: Fast and straightforward. Recommended for most users.
 * **[Option B: Compile from Source Code](#option-b-compile-from-source-code)**: For developers who want to modify features or build locally using `arduino-cli`.
