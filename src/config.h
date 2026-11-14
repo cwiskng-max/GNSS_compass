@@ -90,6 +90,14 @@
 #define LOC_X                144
 #define LOC_Y                35
 
+// Bluetooth Status Indicator Icon (Row 1 right flank)
+#define BLE_ICON_X           348   // x of the rune's vertical spine
+#define BLE_ICON_Y           44    // top of the spine
+#define BLE_ICON_H           14    // spine height
+#define BLE_ICON_ARM         4     // width of the right-hand chevrons (drawn at 45 degrees)
+#define BLE_ICON_WING        3     // width of the left-hand wings
+#define BLE_ICON_PAD         2     // extra margin cleared around the glyph
+
 // Row 2: Target Grid
 #define REMSIZE              8
 #define REMSTARTX            80
@@ -277,6 +285,14 @@
 #define LONG_PRESS_MS             1500
 #define ROVER_ALERT_THRESHOLD_KM  16.0
 #define ROVER_WARNING_DURATION_MS 3000
+
+// GNSS Receiver TX Discovery Configuration
+#define GPS_TX_PROBE_TIMEOUT_MS      1000
+#define GPS_TX_PROBE_MAX_RETRIES     2
+
+// GNSS Receiver Configuration Pipeline Timeouts
+#define GPS_CONFIG_STEP_TIMEOUT_MS   1000
+#define GPS_CONFIG_VERIFY_TIMEOUT_MS 1500
 
 // ==============================================================================
 // Character Rolling Helpers (for Target Grid manual editing)

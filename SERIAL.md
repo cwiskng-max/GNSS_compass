@@ -1,10 +1,12 @@
 # ESP32 Serial Interface & CLI Guide
 
-The GNSS Compass firmware features an interactive command-line interface (CLI) accessible over the USB-C serial port. The CLI provides real-time GNSS receiver diagnostics, display self-test triggers, and antenna heading offset calibration stored in non-volatile storage (NVS).
+The GNSS Compass firmware features an interactive command-line interface (CLI) accessible concurrently over both the physical **USB-C serial port** and wireless **Bluetooth Low Energy (BLE UART)**. The CLI provides real-time GNSS receiver diagnostics, display self-test triggers, Rover Mode transit tracking, and antenna heading offset calibration stored in non-volatile storage (NVS).
 
 ---
 
-## 1. Connection Settings
+## 1. Connection Options
+
+### 1.1 Physical USB-C Connection
 
 Connect the ESP32-S3 rotary display to your computer using a USB-C data cable.
 
@@ -17,12 +19,56 @@ Connect the ESP32-S3 rotary display to your computer using a USB-C data cable.
 | **Flow Control** | None | Hardware and software flow control disabled |
 | **Line Endings** | Any (`\r`, `\n`, or `\r\n`) | Firmware handles CR, LF, and CRLF transparently |
 
-### Terminal Emulator Recommendations
+#### Terminal Emulator Recommendations (USB)
 * **Linux / macOS:** `tio /dev/ttyACM0 -b 115200`, `picocom -b 115200 /dev/ttyACM0`, or `minicom -D /dev/ttyACM0 -b 115200`
 * **Windows:** PuTTY, Tera Term, or Arduino Serial Monitor
 * **Cross-Platform:** Visual Studio Code Serial Monitor extension
 
 The CLI includes **local character echoing** and supports **backspace/DEL** editing directly in terminal emulators.
+
+---
+
+### 1.2 Wireless Bluetooth (BLE UART / Nordic NUS)
+
+Because the Elecrow 2.1" display is often mounted on a mast, tripod, or vehicle dash with delicate rear cabling, the firmware provides a wireless Bluetooth interface using the industry-standard **Nordic UART Service (NUS)**.
+
+> [!NOTE]
+> The ESP32-S3 microcontroller utilizes **Bluetooth 5.0 Low Energy (BLE)**. BLE UART requires no pairing PIN, connects in under a second, and works natively across iOS, Android, and desktop browsers.
+
+* **Advertised Device Name:** `GNSS-Compass-xxxxxx` (where `xxxxxx` is the last 6 lowercase hex digits of the Bluetooth MAC address, e.g. `GNSS-Compass-8a4f2b`).
+* **Service UUID:** `6E400001-B5A3-F393-E0A9-E50E24DCCA9E`
+* **RX Characteristic (Write to ESP32):** `6E400002-B5A3-F393-E0A9-E50E24DCCA9E`
+* **TX Characteristic (Notify from ESP32):** `6E400003-B5A3-F393-E0A9-E50E24DCCA9E`
+
+#### Android Mobile Connection
+1. Install **[Serial Bluetooth Terminal](https://play.google.com/store/apps/details?id=de.kai_morich.serial_bluetooth_terminal)** by Kai Morich from Google Play.
+2. Open sidebar -> **Devices** -> **Bluetooth LE** tab -> Scan -> Select `GNSS-Compass-xxxxxx`.
+3. Tap Connect. The terminal connects immediately.
+4. **Recommended Field Macro Buttons:** In the app, long-press the `M1`–`M6` macro buttons along the bottom to configure 1-tap commands:
+   * **M1 (`status`):** `status\n` (Live GNSS receiver stream & lock diagnostics)
+   * **M2 (`rover`):** `rover status\n` (16 km transit displacement & qualification)
+   * **M3 (`cal snap`):** `cal snap\n` (1-touch antenna heading alignment snapshot)
+   * **M4 (`history`):** `rover history\n` (Display visited contest grid roster)
+   * **M5 (`undo`):** `rover undo\n` (Discard accidental stop and re-arm)
+   * **M6 (`exit`):** `disconnect\n` (Cleanly release BLE radio link)
+
+> [!TIP]
+> In *Serial Bluetooth Terminal*, go to **Settings -> Bluetooth LE** and verify that **"Close GATT on disconnect"** is enabled, or simply type `disconnect` in the terminal before switching devices to release the Bluetooth link immediately.
+
+#### iPhone / iPad Connection
+1. Install **[BLE Terminal HM-10](https://apps.apple.com/us/app/ble-terminal-hm-10/id1398703795)** or **[Adafruit Bluefruit Connect](https://apps.apple.com/us/app/adafruit-bluefruit-connect/id830125974)** from the App Store.
+2. Scan and tap `GNSS-Compass-xxxxxx`.
+3. Select **UART** mode. Bidirectional terminal access is active.
+
+#### Laptop / Desktop (Web Bluetooth — Zero Software Installation)
+You can connect directly from **Google Chrome**, **Microsoft Edge**, or **Chromium** on macOS, Linux, Windows, or ChromeOS without installing any desktop software or drivers using the Web Bluetooth API:
+
+1. Open the open-source **[HTML-BLEserial](https://github.com/ednieuw/HTML-BLEserial)** Web Bluetooth terminal by ednieuw:
+   * Clone or download the repository from [GitHub](https://github.com/ednieuw/HTML-BLEserial).
+   * Double-click `BLE_UART_Terminal.html` (or `BLE_UART_Terminal-darktheme.html`) to open it directly in Chrome or Edge (can be run locally from disk or hosted on GitHub Pages).
+2. Click the **CONNECT** button in the webpage.
+3. Select `GNSS-Compass-xxxxxx` from the browser device prompt and click **Pair**.
+4. You now have full bidirectional CLI access (`status`, `rover`, `cal`, `test`, `help`) directly within your browser tab.
 
 ---
 
@@ -48,10 +94,24 @@ Displays a summary of available serial commands.
 > help
 
 === GNSS Compass Serial Commands ===
-  status (or gps)       - Live GNSS receiver stream diagnostic
+  status (or gps)       - Live GNSS receiver stream & link diagnostic
+  gps probe             - Test bidirectional TX connection to UM982
+  gps config [baseline <cm> [tol]]
+                        - Run automated 5 Hz $KSXT receiver setup
+  gps send <command>    - Send raw command to UM982 receiver
+  gps check (or audit)  - Query receiver running parameters
+  rover [status|start|stop|history|undo|max|clear]
+                        - Rover transit tracking
   test (or demo)        - Run visual display self-test demo
   cal [snap|zero|<val>] - View or configure antenna calibration
-  sim [on|off|hdg|pos|grid|rover|status] - GPS simulation commands
+  sim [on|off|hdg|pos|grid|rover|status]
+                        - GPS simulation commands
+  exit (or disconnect)  - Terminate wireless BLE connection cleanly
+  restart (or reboot)   - Restart the ESP32 controller
+  version (or ver)      - Display firmware build version and compile time
+  ble [diag on|off]     - BLE link status / toggle BLE RF diagnostics
+  ble suffix [<val>|reset]
+                        - Configure BLE device name suffix (max 16 chars)
   $<NMEA/KSXT sentence> - Inject raw GNSS sentence directly
   help (or ?)           - Show this help menu
 ====================================
@@ -60,73 +120,195 @@ Displays a summary of available serial commands.
 ---
 
 ### 3.2 GNSS Stream Diagnostics (`status`, `gps`, `diag`, `s`, `g`)
-Inspects the live incoming UART stream from the Unicore UM982 GNSS receiver (`Serial2` / GPIO 44). Outputs byte counters, packet reception rates, fix conditions, and a link health verdict.
+Inspects the live incoming UART stream from the Unicore UM982 GNSS receiver (`Serial2` / GPIO 44). Outputs bidirectional link status, TX discovery capability, configuration health, byte counters, packet reception rates, fix conditions, and a link health verdict.
 
-#### Example: Normal / RTK Fixed Lock
+#### Example: Normal / RTK Fixed Lock with Bidirectional Link
 ```text
 > status
 
-=== GNSS Link Diagnostic Report ===
+========================================
+     GNSS Receiver Stream Diagnosis     
+========================================
+Link Status:    CONNECTED (Bidirectional TX/RX Active)
+TX Capability:  AVAILABLE (UM982 command responses confirmed)
+Config State:   OPTIMAL ($KSXT streaming at 5.0 Hz, legacy unlogged)
 Physical Link:  CONNECTED (Hardware Serial Link Active)
 Total Bytes:    48291 (last byte 12 ms ago)
 
 Message Streams:
-  - $GNGLL (Position):   14 pkts (last 0.8s ago)
-  - $KSXT (Dual-Ant):    28 pkts (last 34 ms ago)
-  - $GNHDT/$THS:         0 pkts
+  - $GNGLL (Position):   0 pkts (never)
+  - $KSXT  (Navigation): 280 pkts (last 0.2s ago)
+  - $HDT   (Heading):    0 pkts (never)
 
-Fix Status:
-  - Time:                23:42 UTC
-  - Position:            LOCKED (Grid: CM87wa92)
-  - Dual-Antenna Heading:RTK FIXED (Pure White - High Precision)
+Data Fix Status:
+  - Coordinates:         37.77490, -122.41940 (Grid: CM87wa92)
+  - Dual-Antenna Heading: RTK FIXED (Pure White - High Precision)
 
 Overall Verdict:        [PASS] FULLY OPERATIONAL (RTK Fixed)
-====================================
+========================================
 ```
 
 #### Diagnostic Verdicts & Troubleshooting
 | Verdict | Cause | Suggested Action |
 | :--- | :--- | :--- |
 | **`[PASS] FULLY OPERATIONAL (RTK Fixed)`** | Normal high-precision dual-antenna RTK heading. | None — operational. |
-| **`[WARN] RTK HEADING FLOAT`** | Carrier phase ambiguity unresolved (obstructed sky view or multipath). | Check for local obstructions or RF reflections near antennas. |
-| **`[WARN] HEADING ACQUIRING`** | Position fix acquired, waiting for dual-antenna baseline carrier lock. | Allow 10–30 seconds with clear view of the sky. |
-| **`[FAIL] NO GNSS DATA`** | No bytes received across UART in > 3000 ms. | 1. Verify 4-pin GX12 cable is plugged in.<br>2. Check 5V power to receiver enclosure.<br>3. Check RX/TX wiring. |
-| **`[FAIL] CORRUPTED DATA STREAM`** | Bytes received, but no valid NMEA/Unicore packets decoded. | Check receiver baud rate (must match 115,200 baud). |
+| **`[PASS - WARN] OPERATIONAL (RTK Float)`** | Carrier phase ambiguity unresolved (obstructed sky view or multipath). | Check for local obstructions or RF reflections near antennas. |
+| **`[WAIT] POSITION LOCKED, WAITING FOR HEADING BASELINE`** | Position fix acquired, waiting for dual-antenna baseline carrier lock. | Allow 10–30 seconds with clear view of the sky. |
+| **`[FAIL] NO GPS DATA STREAM DETECTED`** | No bytes received across UART in > 3000 ms. | 1. Verify GX12 cable is plugged in.<br>2. Check 5V / 12V power to receiver enclosure.<br>3. Check RX pin (GPIO 44) wiring to UM982 TX. |
+| **`[FAIL] FRAMING / BAUD RATE MISMATCH`** | Bytes received, but no valid NMEA/Unicore packets decoded. | Check receiver baud rate (must match 115,200 baud 8N1). |
 
 ---
 
-### 3.3 Visual Display Self-Test (`test`, `demo`, `t`)
-Triggers an automated visual demonstration on the round LCD screen. Runs sequentially through 7 test phases:
+### 3.3 GNSS Transmitter Discovery & Configuration Commands (`gps`)
 
-1. **Test 1: Primary UI Framework** (Grid layout and static elements)
-2. **Test 2: Maidenhead Grid Resolution** (Local & remote grid squares)
-3. **Test 3: Dual-Antenna Bearing Angles** (Cardinal headings $0^\circ \to 90^\circ \to 180^\circ \to 270^\circ$)
-4. **Test 4: ARRL VHF/Microwave Distance** (Geodetic distance calculation)
-5. **Test 5: Live Satellite Clock** (UTC time display)
-6. **Test 6: Bearing Quality & Live Stream** (Color coding check and hardware link test)
-7. **Test 7: Antenna Offset Calibration** (Pill rendering and modal dialog demo)
+When the ESP32 transmitter line (GPIO 43) is wired to the UM982 receiver's COM1 RX line (via a 4-pin GX12 connector or internal jumper), the compass can probe transmitter presence, configure the receiver in-system, and query runtime parameters without disassembling the receiver enclosure or plugging into a computer:
 
-After completion, the self-test prints `Result: PASS` or `Result: FAIL` to the serial console and automatically restores previous live compass operation.
+```mermaid
+flowchart LR
+    ESP_TX["ESP32 GPIO 43 (TX)"] -->|"TX Wire (Line 2)"| UM_RX["UM982 COM1 RX"]
+    UM_TX["UM982 COM1 TX"] -->|"RX Wire (Line 1)"| ESP_RX["ESP32 GPIO 44 (RX)"]
+```
+
+#### 1. Discover TX Wire (`gps probe`)
+The compass automatically discovers TX capability as soon as receiver stream data is detected on boot or upon cable connection. You can also manually trigger a discovery probe at any time:
+
+```text
+> gps probe
+[GPS PROBE] Transmitting 'version' discovery probe on GPIO 43...
+[GPS RX] <OK
+[GPS RX] #VERSIONA,91,GPS,FINE,2320,150123000,0,0,18,0;UM982,R4.10Build11252*9543ab12
+```
+
+If the TX line is disconnected (legacy 3-wire setups), the probe times out safely after 2 retries and marks the link as `Receive-Only Mode`. Transmission-dependent operations are cleanly gated without affecting compass display or heading calculation.
+
+#### 2. Automated In-System Receiver Setup (`gps config`)
+Executes the verified multi-step configuration sequence from [RECEIVER.md](RECEIVER.md):
+1. `MODE ROVER UAV` (Moving baseline / dual-antenna mode)
+2. `CONFIG SIGNALGROUP 3 6` (GPS + BDS + GLONASS + Galileo multi-frequency tracking)
+3. `UNLOG COM1` (Wipes all legacy and factory default sentences in a single command)
+4. `KSXT com1 0.2` (Enables unified navigation message at 5 Hz)
+5. `CONFIG HEADING FIXLENGTH` (Constrains heading calculation to a rigid fixed-length baseline for faster RTK lock)
+6. `SAVECONFIG` (Commits RAM parameters to receiver non-volatile NOR Flash)
+7. Stream verification (Confirms live `$KSXT` stream is active)
+
+```text
+> gps config
+[GPS CONFIG] Initiating configuration pipeline (Standard 5 Hz $KSXT)...
+[GPS CONFIG] Starting receiver configuration...
+[GPS CONFIG] Settings saved. Verifying KSXT 5 Hz stream...
+[GPS CONFIG] Complete! Receiver configured at 5 Hz KSXT.
+```
+
+> [!NOTE]
+> **Built-In Flash Wear Protection:** To protect the receiver's NOR Flash from unnecessary write cycles or corrupted parameters, if any step prior to `SAVECONFIG` fails or times out, the sequence safely aborts without sending `SAVECONFIG`.
+
+#### 3. Setup with Baseline Length Constraint (`gps config baseline <cm> [tol_cm]`)
+Because `CONFIG HEADING FIXLENGTH` is standard, the receiver dynamically tracks fixed-length baseline spacing automatically. If your physical antenna spacing is known (e.g. 101.6 cm / 40 inches center-to-center with a default 2.5 cm tolerance), provide the baseline distance to add the length and tolerance constraint (`CONFIG HEADING LENGTH <cm> <tol_cm>`):
+
+```text
+> gps config baseline 101.6 2.5
+[GPS CONFIG] Initiating configuration pipeline (Baseline: 101.6 cm, Tol: 2.5 cm)...
+[GPS CONFIG] Starting receiver configuration...
+[GPS CONFIG] Settings saved. Verifying KSXT 5 Hz stream...
+[GPS CONFIG] Complete! Receiver configured at 5 Hz KSXT.
+```
+
+#### 4. Audit Running Receiver Parameters (`gps check` or `gps audit`)
+Non-destructively queries the receiver's running settings (`VERSION`, `MODE`, `UNILOGLIST COM1`, and `HEADINGSTATUSA` for baseline constraint) to inspect firmware build, operating mode, active message logs, and configured baseline length/tolerance without writing to NOR Flash. If TX status has not yet been established at the time of query, `gps check` automatically initiates an in-flight probe on GPIO 43 and executes the query sequence as soon as the receiver acknowledges.
+
+Intermediate `$command` echoes are suppressed during the audit, and incoming payloads are formatted into a clean status card:
+
+```text
+> gps check
+[GPS AUDIT] Querying receiver parameters (VERSION, MODE, UNILOGLIST COM1, HEADINGSTATUSA)...
+
+========================================
+     GNSS Receiver Audit Report         
+========================================
+Hardware Model: UM982 (PN: HRPT00-S10C-P)
+Serial Number:  2310415000012-LR23C1261413487
+Firmware:       R4.10Build13495 (2024/04/02)
+Operating Mode: ROVER UAV
+COM1 Output:    KSXT COM1 0.2s (5 Hz)
+Baseline Range: 101.6 cm (± 2.5 cm)  [CONSTRAINED]
+Overall Config: [OK] Optimal for Dual-Antenna Compass
+========================================
+> 
+```
+
+#### 5. Send Raw Receiver Command (`gps send <cmd>`)
+Power-user command allowing transmission of arbitrary Unicore ASCII commands directly to the receiver:
+
+```text
+> gps send uniloglist com1
+[GPS TX] Sent: 'uniloglist com1'
+[GPS RX] < KSXT COM1 0.200000
+[GPS RX] <OK
+```
+
+---
+
+### 3.4 Visual Display Self-Test (`test`, `demo`, `t`)
+Triggers an automated visual demonstration on the round LCD screen. Runs sequentially through 9 test phases:
+
+1. **Test 1: Same Grid Clamp** (ARRL 1.0 km minimum rule)
+2. **Test 2: Under 1,000 km formatting** (~600 km geodetic distance)
+3. **Test 3: Over 1,000 km formatting** (~2,500 km geodetic distance)
+4. **Test 4: Extreme distance (> 10,000 km)** and recovery without ghost characters
+5. **Test 5: Antenna Heading Quality Color States** (White / Yellow / Red)
+6. **Test 6: Live GNSS Receiver Stream Diagnostic** (Direct hardware UART check)
+7. **Test 7: Antenna Calibration Pill & Modal** (Offset fine-tuning & snap demo)
+8. **Test 8: Rover Mode 4-State Qualification Matrix** (Transit, Qualified, Revisit, Lost)
+9. **Test 9: Rover Location History & 1-Touch Undo Modal** (Discard progress demo)
+
+After completion, the self-test prints a complete summary table with individual stage verdicts and an overall pass/fail status, then automatically restores live compass operation.
 
 ```text
 > test
 
-=== Running GNSS Compass Visual Self-Test ===
-  -> Testing Primary UI Layout Framework
-  -> Testing Maidenhead Grid Calculations
-  -> Testing Bearing Needle Color Transitions
-  -> Testing ARRL Contest Distance Computations
-  -> Testing UTC Time Sync Display
-  -> Testing Live GNSS Link & NMEA Parser
+=== Starting Visual Display Self-Test Demo ===
+[Test 1/9] Same Grid (ARRL 1.0 km rule)
+[Test 2/9] Under 1,000 km formatting (~600 km)
+[Test 3/9] Over 1,000 km formatting (~2,500 km)
+[Test 4/9] Extreme distance (> 10,000 km) & Ghost Recovery
+  -> Dropping back to 1.0 km (verifying no ghost characters)
+[Test 5/9] Antenna Heading Quality Color States
+  -> Bearing Color: Pure White (RTK Fixed)
+  -> Bearing Color: Bright Yellow (RTK Float / Degraded)
+  -> Bearing Color: Bright Red (Lost / Stale)
+[Test 6/9] Live GNSS Receiver Stream Diagnostic
+[Test 7/9] Antenna Calibration Pill & Modal Display Demo
+  -> Testing Calibration Pill Display (Uncalibrated: OFF)
   -> Testing Calibration Pill Display (Calibrated: +4.2 deg)
   -> Demonstrating Calibration Modal Dialog
-Result: PASS
+[Test 8/9] Rover Mode 4-State Qualification Matrix (Row 5 Card)
+  -> State A: In Transit (< 16.0 km, Red on White)
+  -> State B: Qualified New Grid (>= 16.0 km, Green on White)
+  -> State C: Qualified Revisited Grid (>= 16.0 km, Blue on White)
+  -> State D: GPS Lost / Stale (Amber status on White)
+[Test 9/9] Rover Contest Location History & 1-Touch Undo Modal
+
+==================================================
+             Visual Self-Test Summary             
+==================================================
+  [1/9] Same Grid (ARRL 1.0 km rule)      : PASS
+  [2/9] Under 1,000 km formatting         : PASS
+  [3/9] Over 1,000 km formatting          : PASS
+  [4/9] Extreme distance (> 10,000 km)    : PASS
+  [5/9] Heading quality color states      : PASS
+  [6/9] Live GNSS stream diagnostic       : PASS
+  [7/9] Antenna calibration pill & modal  : PASS
+  [8/9] Rover Mode 4-state matrix card    : PASS
+  [9/9] Rover history log & undo modal    : PASS
+--------------------------------------------------
+Overall Verdict: ALL 9 TESTS PASSED [PASS]
+==================================================
 === Visual Self-Test Complete (Live state restored) ===
 ```
 
 ---
 
-### 3.4 Antenna Heading Calibration (`cal`)
+### 3.5 Antenna Heading Calibration (`cal`)
 Manages the non-volatile antenna alignment offset in degrees. The offset corrects for mechanical misalignment between the dual-antenna cross-boom and the microwave antenna feedline.
 
 #### Display Current Calibration (`cal`, `cal status`, `cal show`)
@@ -174,7 +356,7 @@ Sets an exact manual offset in degrees. Angles are automatically normalized to $
 
 ---
 
-### 3.5 GPS Data Simulation & Rover Test (`sim` and `$<sentence>`)
+### 3.6 GPS Data Simulation & Rover Test (`sim` and `$<sentence>`)
 
 The simulation interface allows desktop verification of **Rover Mode**, transit displacement tracking (evaluating the **16 km legal rule** and grid boundary crossings), antenna needle motion, and RTK quality states without connecting the physical UM982 receiver or driving outside.
 
@@ -220,6 +402,79 @@ $KSXT,20261106202506.00,-122.12500000,37.02083333,2100.00,145.20,0.00,0.00,0.022
 ```
 
 Injecting raw sentences automatically enables simulation mode (`simModeActive = true`).
+
+---
+
+### 3.7 Clean Wireless Disconnect (`disconnect`, `exit`, `quit`)
+Terminates an active Bluetooth Low Energy session cleanly from the peripheral side:
+
+```text
+> disconnect
+Disconnecting BLE connection...
+```
+
+This makes the ESP32 send a link-layer `LL_TERMINATE_IND`, closing any lingering background OS connection handle, and then restart BLE advertising so other phones, tablets, or browser sessions can connect without needing to toggle Bluetooth. The reply is delivered first: the link is closed once queued output has been sent (at most about 2 seconds later).
+
+---
+
+### 3.8 BLE Configuration & Diagnostics (`ble`)
+
+#### Link Status (`ble` or `ble status`)
+
+```text
+> ble
+[BLE] Device: GNSS-Compass-71c581
+[BLE] Connected: yes | Subscribed: yes | MTU: 512
+[BLE] Advertising: no
+[BLE] TX queue: 0 / 12288 bytes | Dropped: 0 bytes | Send retries: 0
+[BLE] Diagnostics: off
+```
+
+* **Subscribed:** the client has enabled notifications. Output is only sent to a subscribed client.
+* **TX queue:** BLE output is buffered (12 KB) and sent in the background, so long reports never stall the compass. If the queue ever fills, further output is dropped until it drains, and the client sees `[BLE] N bytes of output dropped (send queue full)`. *Dropped* is the running total.
+* **Send retries:** how often the Bluetooth stack was momentarily out of buffers and a packet had to be retried. It is harmless unless it keeps climbing quickly.
+
+#### Customizing the BLE Device Suffix (`ble suffix`)
+By default, the device name is `GNSS-Compass-xxxxxx`, derived from the last 6 characters of the ESP32's Bluetooth MAC address. When operating multiple compasses near each other at a contest summit, you can customize the suffix (up to 16 characters, e.g. your callsign, vehicle, or rover number):
+
+```text
+> ble suffix Rover1
+[BLE] Device name updated to: GNSS-Compass-Rover1
+[BLE] Saved to non-volatile storage.
+[BLE] Note: If your phone still displays the old name, toggle your phone's Bluetooth off and on to clear its scan cache.
+```
+
+* **Query current suffix:** `ble suffix` displays the current name and active suffix.
+* **Reset to default MAC:** `ble suffix reset` (or `ble suffix default`) removes the custom suffix and restores the hardware MAC default.
+* **Length limit:** Maximum 16 characters (to ensure the Complete Local Name fits within the 29-byte BLE scan response payload limit with the fixed `GNSS-Compass-` prefix).
+* **Phone Caching Note:** Mobile operating systems (especially iOS and Android) aggressively cache peripheral names by MAC address. If your phone continues displaying the previous name in its Bluetooth scanner list after changing the suffix, toggle Bluetooth off and on in your phone's quick settings to clear its device scan cache.
+
+#### RF Diagnostics (`ble diag on|off`)
+* `ble diag on|off`: prints RSSI every 3 s, main-loop stall reports, TX power, MTU, connection-parameter and congestion changes on the **USB** serial port. Connects, disconnects (with reason code) and advertising failures are always printed there.
+
+---
+
+### 3.9 System Restart (`restart` or `reboot`)
+Restarts the ESP32-S3 microcontroller via software reset:
+
+```text
+> restart
+[SYSTEM] Restarting ESP32 controller...
+```
+
+Accepts both `restart` and `reboot`. Over physical USB CDC or wireless BLE, the confirmation message is dispatched before triggering software reset via `esp_restart()`.
+
+---
+
+### 3.10 Firmware Version (`version` or `ver`)
+Queries the compiled firmware version, Git commit hash, and build timestamp:
+
+```text
+> ver
+GNSS Compass v0.3-dev+d73f187 (Built Nov 10 2026 17:48:12)
+```
+
+Useful over USB or Bluetooth Serial to instantly confirm which build is flashed to hardware.
 
 ---
 

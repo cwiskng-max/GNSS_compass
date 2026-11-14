@@ -1,6 +1,7 @@
 #include "serial_cli.h"
 #include "../geo/geo_math.h"
 #include "../geo/maidenhead.h"
+#include "text_output.h"
 #include <cstdio>
 #include <cstdarg>
 #include <cstring>
@@ -35,11 +36,13 @@ static bool startsWithIgnoreCase(const char *str, const char *prefix) {
 #endif
 }
 
-SerialCli::SerialCli(GpsManager &gpsManager, Calibration &calibration, GpsSimulator &simulator, RoverLogManager *roverLogManager)
+SerialCli::SerialCli(GpsManager &gpsManager, Calibration &calibration, GpsSimulator &simulator, RoverLogManager *roverLogManager, BleSerialManager *bleManager)
     : gpsManager_(gpsManager),
       calibration_(calibration),
       simulator_(simulator),
       roverLogManager_(roverLogManager),
+      bleManager_(bleManager),
+      activeSource_(CLI_SOURCE_USB),
       navContextFn_(nullptr),
       navContext_(nullptr),
       runTestCb_(nullptr),
@@ -54,16 +57,110 @@ SerialCli::SerialCli(GpsManager &gpsManager, Calibration &calibration, GpsSimula
       roverActionContext_(nullptr),
       outputFn_(nullptr),
       outputContext_(nullptr),
+      restartCb_(nullptr),
+      restartContext_(nullptr),
       pendingRoverClear_(false),
-      inputIndex_(0)
+      pendingAudit_(false),
+      pendingAuditSource_(CLI_SOURCE_USB),
+      pendingConfig_(false),
+      pendingConfigSource_(CLI_SOURCE_USB),
+      pendingConfigBaselineCm_(0.0f),
+      pendingConfigTolCm_(2.5f)
 {
-    inputBuffer_[0] = '\0';
+    registerGpsCallbacks();
+    attachBle();
+}
+
+void SerialCli::registerGpsCallbacks() {
+    gpsManager_.setOnResponse([](const char *resp, void *ctx) {
+        auto *self = static_cast<SerialCli*>(ctx);
+        if (self && !self->gpsManager_.getConfigPipeline().isRunning()) {
+            if (self->auditState_.inProgress && self->handleAuditResponse(resp)) {
+                return;
+            }
+            self->broadcastFormat("[GPS RX] %s\r\n", resp);
+        }
+    }, this);
+
+    gpsManager_.getConfigPipeline().setOnProgress([](ConfigStep, ConfigPipelineState, const char *msg, void *ctx) {
+        auto *self = static_cast<SerialCli*>(ctx);
+        if (self && msg && msg[0] != '\0') {
+            self->broadcastln(msg);
+        }
+    }, this);
+
+    gpsManager_.setOnProbeResult([](GpsTxState state, const char *msg, void *ctx) {
+        auto *self = static_cast<SerialCli*>(ctx);
+        if (!self) return;
+        if (msg && msg[0] != '\0') {
+            self->broadcastln(msg);
+        }
+        if (self->pendingAudit_) {
+            self->pendingAudit_ = false;
+            CliSource prevSource = self->getActiveSource();
+            self->setActiveSource(self->pendingAuditSource_);
+            if (state == GpsTxState::Available) {
+                self->startGpsAudit(0);
+            } else if (state == GpsTxState::Unavailable) {
+                self->println("[GPS] Cannot audit: TX wire not connected (Receive-only mode).");
+                self->printPrompt();
+            }
+            self->setActiveSource(prevSource);
+        }
+        if (self->pendingConfig_) {
+            self->pendingConfig_ = false;
+            CliSource prevSource = self->getActiveSource();
+            self->setActiveSource(self->pendingConfigSource_);
+            if (state == GpsTxState::Available) {
+                if (self->pendingConfigBaselineCm_ > 0.0f) {
+                    self->printFormat("[GPS CONFIG] Initiating configuration pipeline (Baseline: %.1f cm, Tol: %.1f cm)...\r\n",
+                                      self->pendingConfigBaselineCm_, self->pendingConfigTolCm_);
+                } else {
+                    self->println("[GPS CONFIG] Initiating configuration pipeline (Standard 5 Hz $KSXT)...");
+                }
+                self->gpsManager_.startConfiguration(self->pendingConfigBaselineCm_, self->pendingConfigTolCm_, true, 0);
+            } else if (state == GpsTxState::Unavailable) {
+                self->println("[GPS] TX wire not detected. Connect GPIO 43 to UM982 RX to configure.");
+                self->printPrompt();
+            }
+            self->setActiveSource(prevSource);
+        }
+    }, this);
 }
 
 void SerialCli::begin() {
-    inputIndex_ = 0;
-    inputBuffer_[0] = '\0';
+#if defined(ARDUINO)
+    while (Serial.available()) {
+        (void)Serial.read();
+    }
+#endif
+    usbLine_.reset();
+    bleLine_.reset();
     pendingRoverClear_ = false;
+    pendingAudit_ = false;
+    pendingAuditSource_ = CLI_SOURCE_USB;
+    auditState_.inProgress = false;
+    activeSource_ = CLI_SOURCE_USB;
+}
+
+void SerialCli::attachBle() {
+    if (!bleManager_) return;
+    bleManager_->setDataReceivedCallback([](const char *data, size_t len, void *ctx) {
+        static_cast<SerialCli*>(ctx)->handleBleInput(data, len);
+    }, this);
+}
+
+void SerialCli::setBleManager(BleSerialManager *mgr) {
+    bleManager_ = mgr;
+    attachBle();
+}
+
+void SerialCli::handleBleConnectionChanged(bool connected) {
+    (void)connected;
+    // A partial line from the previous session must not prefix the next client's first command,
+    // and replies to later asynchronous output should no longer target the old BLE session.
+    bleLine_.reset();
+    activeSource_ = CLI_SOURCE_USB;
 }
 
 void SerialCli::setOriginGrid(const char *grid) {
@@ -100,59 +197,123 @@ double SerialCli::getRoverDistance() const {
     return getNavContext().roverDistanceMeters;
 }
 
-void SerialCli::print(const char *str) {
-    if (!str) return;
+void SerialCli::consoleWrite(const char *str) {
     if (outputFn_) {
         outputFn_(str, outputContext_);
-    } else {
-#if defined(ARDUINO)
-        Serial.print(str);
-#else
-        std::cout << str;
-#endif
+        return;
     }
+#if defined(ARDUINO)
+    Serial.print(str);
+#else
+    std::cout << str;
+#endif
+}
+
+void SerialCli::print(const char *str) {
+    if (!str) return;
+    if (activeSource_ == CLI_SOURCE_BLE && bleManager_) {
+        bleManager_->print(str);
+    }
+    consoleWrite(str); // USB reply, or mirror of a BLE reply for live monitoring
+}
+
+void SerialCli::printSink(const char *str, void *ctx) {
+    static_cast<SerialCli*>(ctx)->print(str);
 }
 
 void SerialCli::println(const char *str) {
-    print(str);
-    print("\r\n");
+    textout::println(printSink, this, str);
 }
 
 void SerialCli::printFormat(const char *fmt, ...) {
-    char buf[512];
     va_list args;
     va_start(args, fmt);
-    vsnprintf(buf, sizeof(buf), fmt, args);
+    textout::vprintFormat(printSink, this, fmt, args);
     va_end(args);
-    print(buf);
+}
+
+void SerialCli::printPrompt() {
+    print("> ");
+}
+
+void SerialCli::broadcast(const char *str) {
+    if (!str) return;
+    consoleWrite(str);
+    if (bleManager_ && bleManager_->isConnected()) {
+        bleManager_->print(str);
+    }
+}
+
+void SerialCli::broadcastSink(const char *str, void *ctx) {
+    static_cast<SerialCli*>(ctx)->broadcast(str);
+}
+
+void SerialCli::broadcastln(const char *str) {
+    textout::println(broadcastSink, this, str);
+}
+
+void SerialCli::broadcastFormat(const char *fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+    textout::vprintFormat(broadcastSink, this, fmt, args);
+    va_end(args);
+}
+
+void SerialCli::handleBleInput(const char *data, size_t len, unsigned long nowMs) {
+    if (!data || len == 0) return;
+#if defined(ARDUINO)
+    if (!nowMs) nowMs = millis();
+#endif
+    for (size_t i = 0; i < len; ++i) {
+        if (bleLine_.feed(data[i]) == LineBuffer::LineReady) {
+            executeCommand(bleLine_.c_str(), nowMs, CLI_SOURCE_BLE);
+            bleLine_.clear();
+        }
+    }
 }
 
 void SerialCli::update(unsigned long nowMs) {
 #if defined(ARDUINO)
     if (!nowMs) nowMs = millis();
+#endif
+
+    if (bleManager_) {
+        bleManager_->update(nowMs);
+    }
+
+    if (auditState_.inProgress) {
+        // If all 4 responses arrive, isComplete() renders immediately in handleAuditResponse().
+        // If any response is missing or unsupported, wait up to 4000 ms before rendering partial results.
+        if (nowMs - auditState_.startTimeMs >= 4000) {
+            renderAuditReport();
+        }
+    }
+
+#if defined(ARDUINO)
     while (Serial.available()) {
         char c = (char)Serial.read();
-        if (c == '\r' || c == '\n') {
-            if (inputIndex_ > 0) {
-                if (inputBuffer_[0] != '$') {
+        // Raw sentence injection lines ("$...") are not echoed
+        bool echo = usbLine_.empty() ? (c != '$') : (usbLine_.c_str()[0] != '$');
+        switch (usbLine_.feed(c)) {
+            case LineBuffer::Appended:
+                if (echo) Serial.write(c); // Terminal echo
+                break;
+            case LineBuffer::Erased:
+                Serial.print("\b \b");
+                break;
+            case LineBuffer::Cleared:
+                Serial.println("^C");
+                printPrompt();
+                break;
+            case LineBuffer::LineReady:
+                if (usbLine_.c_str()[0] != '$') {
                     Serial.println(); // Terminal newline echo for interactive commands
                 }
-                inputBuffer_[inputIndex_] = '\0';
-                executeCommand(inputBuffer_, nowMs);
-                inputIndex_ = 0;
-            }
-        } else if (c == '\b' || c == 127) { // Backspace or DEL
-            if (inputIndex_ > 0) {
-                inputIndex_--;
-                Serial.print("\b \b");
-            }
-        } else if (inputIndex_ < sizeof(inputBuffer_) - 1) {
-            if (c >= 32 && c <= 126) {
-                inputBuffer_[inputIndex_++] = c;
-                if (inputBuffer_[0] != '$') {
-                    Serial.write(c); // Terminal echo
-                }
-            }
+                executeCommand(usbLine_.c_str(), nowMs, CLI_SOURCE_USB);
+                usbLine_.clear();
+                break;
+            case LineBuffer::Ignored:
+                break;
         }
     }
 #else
@@ -160,23 +321,20 @@ void SerialCli::update(unsigned long nowMs) {
 #endif
 }
 
-void SerialCli::executeCommand(const char *cmdLine, unsigned long nowMs) {
+void SerialCli::executeCommand(const char *cmdLine, unsigned long nowMs, CliSource source) {
+#if defined(ARDUINO)
+    if (!nowMs) nowMs = millis();
+#endif
+    activeSource_ = source;
     if (!cmdLine) return;
-    while (*cmdLine == ' ' || *cmdLine == '\t') cmdLine++;
-    if (*cmdLine == '\0') return;
 
-    if (pendingRoverClear_) {
-        pendingRoverClear_ = false;
-        if (equalsIgnoreCase(cmdLine, "yes") || equalsIgnoreCase(cmdLine, "y") ||
-            equalsIgnoreCase(cmdLine, "confirm")) {
-            doRoverClear();
-            return;
-        }
-        println("[ROVER] Rover clear aborted.");
-        if (equalsIgnoreCase(cmdLine, "no") || equalsIgnoreCase(cmdLine, "n") ||
-            equalsIgnoreCase(cmdLine, "cancel")) {
-            return;
-        }
+    // Skip leading whitespace
+    while (*cmdLine == ' ' || *cmdLine == '\t' || *cmdLine == '\r' || *cmdLine == '\n') {
+        cmdLine++;
+    }
+    if (*cmdLine == '\0') {
+        printPrompt();
+        return;
     }
 
     // Direct sentence injection: e.g. "$KSXT..." or "$GNGLL..."
@@ -192,60 +350,558 @@ void SerialCli::executeCommand(const char *cmdLine, unsigned long nowMs) {
         return;
     }
 
-    if (startsWithIgnoreCase(cmdLine, "rover")) {
-        const char *arg = cmdLine + 5;
+    // Copy to trimmed buffer and strip trailing whitespace
+    char cleanCmd[LineBuffer::kCapacity];
+    size_t len = 0;
+    while (cmdLine[len] && len < sizeof(cleanCmd) - 1) {
+        cleanCmd[len] = cmdLine[len];
+        len++;
+    }
+    cleanCmd[len] = '\0';
+
+    while (len > 0 && (cleanCmd[len - 1] == ' ' || cleanCmd[len - 1] == '\t' ||
+                       cleanCmd[len - 1] == '\r' || cleanCmd[len - 1] == '\n')) {
+        cleanCmd[--len] = '\0';
+    }
+    if (len == 0) {
+        printPrompt();
+        return;
+    }
+
+    if (pendingRoverClear_) {
+        pendingRoverClear_ = false;
+        if (equalsIgnoreCase(cleanCmd, "yes") || equalsIgnoreCase(cleanCmd, "y") ||
+            equalsIgnoreCase(cleanCmd, "confirm")) {
+            doRoverClear();
+        } else {
+            println("[ROVER] Rover clear aborted.");
+        }
+        printPrompt();
+        return;
+    }
+
+    if (startsWithIgnoreCase(cleanCmd, "rover")) {
+        const char *arg = cleanCmd + 5;
         while (*arg == ' ' || *arg == '\t') arg++;
         handleRoverCommand(arg, nowMs);
-        return;
-    }
-
-    if (startsWithIgnoreCase(cmdLine, "sim")) {
-        const char *arg = cmdLine + 3;
+    } else if (startsWithIgnoreCase(cleanCmd, "sim")) {
+        const char *arg = cleanCmd + 3;
         while (*arg == ' ' || *arg == '\t') arg++;
         handleSimCommand(arg, nowMs);
-        return;
-    }
-
-    if (equalsIgnoreCase(cmdLine, "help") || strcmp(cmdLine, "?") == 0) {
+    } else if (equalsIgnoreCase(cleanCmd, "help") || strcmp(cleanCmd, "?") == 0) {
         printHelp();
-        return;
-    }
-
-    if (equalsIgnoreCase(cmdLine, "status") || equalsIgnoreCase(cmdLine, "gps") ||
-        equalsIgnoreCase(cmdLine, "diag")   || equalsIgnoreCase(cmdLine, "s")   ||
-        equalsIgnoreCase(cmdLine, "g")) {
+    } else if (startsWithIgnoreCase(cleanCmd, "gps")) {
+        const char *arg = cleanCmd + 3;
+        while (*arg == ' ' || *arg == '\t') arg++;
+        if (*arg == '\0' || equalsIgnoreCase(arg, "status")) {
+            printGpsStatus(nowMs);
+        } else {
+            handleGpsCommand(arg, nowMs);
+        }
+    } else if (equalsIgnoreCase(cleanCmd, "status") ||
+               equalsIgnoreCase(cleanCmd, "diag")   || equalsIgnoreCase(cleanCmd, "s")   ||
+               equalsIgnoreCase(cleanCmd, "g")) {
         printGpsStatus(nowMs);
-        return;
-    }
-
-    if (equalsIgnoreCase(cmdLine, "test") || equalsIgnoreCase(cmdLine, "demo") ||
-        equalsIgnoreCase(cmdLine, "t")) {
+    } else if (equalsIgnoreCase(cleanCmd, "test") || equalsIgnoreCase(cleanCmd, "demo") ||
+               equalsIgnoreCase(cleanCmd, "t")) {
         if (runTestCb_) {
             runTestCb_(runTestContext_);
         } else {
             println("[CLI] Test runner callback not registered.");
         }
-        return;
-    }
+    } else if (equalsIgnoreCase(cleanCmd, "ble") || startsWithIgnoreCase(cleanCmd, "ble ")) {
+        const char *arg = cleanCmd + 3;
+        while (*arg == ' ' || *arg == '\t') arg++;
+        if (!bleManager_) {
+            println("[BLE] Bluetooth not available");
+        } else if (equalsIgnoreCase(arg, "diag on")) {
+            bleManager_->setDiagEnabled(true);
+            println("[BLE] Diagnostics ON (RSSI every 3 s while connected, main-loop stall reports; USB serial)");
+        } else if (equalsIgnoreCase(arg, "diag off")) {
+            bleManager_->setDiagEnabled(false);
+            println("[BLE] Diagnostics OFF");
+        } else if (startsWithIgnoreCase(arg, "suffix")) {
+            const char *sub = arg + 6;
+            while (*sub == ' ' || *sub == '\t') sub++;
+            if (*sub == '\0') {
+                if (bleManager_->isCustomSuffix()) {
+                    printFormat("[BLE] Device name: %s (Custom suffix: %s)\r\n",
+                                bleManager_->getDeviceName(), bleManager_->getDeviceSuffix());
+                } else {
+                    printFormat("[BLE] Device name: %s (Default MAC suffix: %s)\r\n",
+                                bleManager_->getDeviceName(), bleManager_->getDeviceSuffix());
+                }
+            } else if (equalsIgnoreCase(sub, "reset") || equalsIgnoreCase(sub, "default")) {
+                bleManager_->resetDeviceSuffix(true);
+                printFormat("[BLE] Device name reset to default: %s\r\n", bleManager_->getDeviceName());
+                println("[BLE] Saved to non-volatile storage.");
+                println("[BLE] Note: If your phone still displays the old name, toggle your phone's Bluetooth off and on to clear its scan cache.");
+            } else {
+                size_t len = std::strlen(sub);
+                while (len > 0 && (sub[len - 1] == ' ' || sub[len - 1] == '\t' ||
+                                   sub[len - 1] == '\r' || sub[len - 1] == '\n')) {
+                    len--;
+                }
+                if (len > BleSerialManager::kMaxSuffixLength) {
+                    println("[BLE ERROR] Suffix too long (maximum 16 characters).");
+                    return;
+                }
+                char cleanSuffix[BleSerialManager::kMaxSuffixLength + 1];
+                std::memcpy(cleanSuffix, sub, len);
+                cleanSuffix[len] = '\0';
 
-    if (startsWithIgnoreCase(cmdLine, "cal")) {
-        const char *arg = cmdLine + 3;
+                bool valid = true;
+                for (size_t i = 0; i < len; ++i) {
+                    char c = cleanSuffix[i];
+                    if (c <= 32 || c >= 127) {
+                        valid = false;
+                        break;
+                    }
+                }
+                if (!valid) {
+                    println("[BLE ERROR] Invalid suffix. Use letters, numbers, hyphens or underscores (no spaces).");
+                    return;
+                }
+
+                if (bleManager_->setDeviceSuffix(cleanSuffix, true)) {
+                    printFormat("[BLE] Device name updated to: %s\r\n", bleManager_->getDeviceName());
+                    println("[BLE] Saved to non-volatile storage.");
+                    println("[BLE] Note: If your phone still displays the old name, toggle your phone's Bluetooth off and on to clear its scan cache.");
+                } else {
+                    println("[BLE ERROR] Failed to set device suffix.");
+                }
+            }
+        } else if (arg[0] == '\0' || equalsIgnoreCase(arg, "status")) {
+            printFormat("[BLE] Device: %s\r\n", bleManager_->getDeviceName());
+            printFormat("[BLE] Connected: %s | Subscribed: %s | MTU: %u\r\n",
+                        bleManager_->isConnected() ? "yes" : "no",
+                        bleManager_->isSubscribed() ? "yes" : "no",
+                        (unsigned)bleManager_->getMtu());
+            printFormat("[BLE] Advertising: %s\r\n", bleManager_->isAdvertising() ? "yes" : "no");
+            printFormat("[BLE] TX queue: %u / %u bytes | Dropped: %lu bytes | Send retries: %lu\r\n",
+                        (unsigned)bleManager_->getTxQueued(), (unsigned)bleManager_->getTxCapacity(),
+                        (unsigned long)bleManager_->getTxDroppedBytes(),
+                        (unsigned long)bleManager_->getTxRetries());
+            printFormat("[BLE] Diagnostics: %s\r\n", bleManager_->isDiagEnabled() ? "on" : "off");
+        } else {
+            println("Usage: ble [status] | ble suffix [<val>|reset] | ble diag on|off");
+        }
+    } else if (startsWithIgnoreCase(cleanCmd, "cal")) {
+        const char *arg = cleanCmd + 3;
         while (*arg == ' ' || *arg == '\t') arg++;
         handleCalCommand(arg);
+    } else if (equalsIgnoreCase(cleanCmd, "disconnect") || equalsIgnoreCase(cleanCmd, "exit") ||
+               equalsIgnoreCase(cleanCmd, "quit")) {
+        if (activeSource_ == CLI_SOURCE_BLE && bleManager_) {
+            println("Disconnecting BLE connection...");
+            bleManager_->disconnect();
+        } else {
+            println("[CLI] 'disconnect' applies to active wireless Bluetooth sessions.");
+        }
+    } else if (equalsIgnoreCase(cleanCmd, "ver") || equalsIgnoreCase(cleanCmd, "version")) {
+        printFormat("GNSS Compass %s (Built %s %s)\r\n", FW_VERSION, __DATE__, __TIME__);
+    } else if (equalsIgnoreCase(cleanCmd, "restart") || equalsIgnoreCase(cleanCmd, "reboot")) {
+        println("[SYSTEM] Restarting ESP32 controller...");
+        if (bleManager_) {
+            bleManager_->update(nowMs);
+        }
+        if (restartCb_) {
+            restartCb_(restartContext_);
+        } else {
+#if defined(ARDUINO)
+            delay(100);
+            esp_restart();
+#endif
+        }
+        return;
+    } else {
+        printFormat("Unknown command: '%s'. Type 'help' for available commands.\r\n", cleanCmd);
+    }
+
+    if (!pendingAudit_ && !auditState_.inProgress) {
+        printPrompt();
+    }
+}
+
+void SerialCli::handleGpsCommand(const char *arg, unsigned long nowMs) {
+    if (equalsIgnoreCase(arg, "probe")) {
+        println("[GPS PROBE] Transmitting 'version' discovery probe on GPIO 43...");
+        gpsManager_.probeTx(nowMs);
         return;
     }
 
-    printFormat("Unknown command: '%s'. Type 'help' for available commands.\r\n", cmdLine);
+    if (startsWithIgnoreCase(arg, "config")) {
+        if (gpsManager_.getConfigPipeline().isRunning()) {
+            println("[GPS CONFIG] Configuration pipeline is already running.");
+            return;
+        }
+
+        const char *sub = arg + 6;
+        while (*sub == ' ' || *sub == '\t') sub++;
+
+        float baselineCm = 0.0f;
+        float tolCm = 2.5f;
+
+        if (startsWithIgnoreCase(sub, "baseline")) {
+            sub += 8;
+            while (*sub == ' ' || *sub == '\t') sub++;
+            char *endPtr = nullptr;
+            baselineCm = std::strtof(sub, &endPtr);
+            if (endPtr && *endPtr) {
+                float t = std::strtof(endPtr, nullptr);
+                if (t > 0.0f) tolCm = t;
+            }
+        } else if ((*sub >= '0' && *sub <= '9') || *sub == '.') {
+            char *endPtr = nullptr;
+            baselineCm = std::strtof(sub, &endPtr);
+            if (endPtr && *endPtr) {
+                float t = std::strtof(endPtr, nullptr);
+                if (t > 0.0f) tolCm = t;
+            }
+        }
+
+        if (!gpsManager_.isSendAvailable()) {
+            if (gpsManager_.getTxState() == GpsTxState::Unknown) {
+                println("[GPS CONFIG] Testing TX connection on GPIO 43 before configuration...");
+                pendingConfig_ = true;
+                pendingConfigSource_ = activeSource_;
+                pendingConfigBaselineCm_ = baselineCm;
+                pendingConfigTolCm_ = tolCm;
+                gpsManager_.probeTx(nowMs);
+                return;
+            }
+            println("[GPS] TX wire not detected. Connect GPIO 43 to UM982 RX to configure.");
+            return;
+        }
+
+        if (baselineCm > 0.0f) {
+            printFormat("[GPS CONFIG] Initiating configuration pipeline (Baseline: %.1f cm, Tol: %.1f cm)...\r\n", baselineCm, tolCm);
+        } else {
+            println("[GPS CONFIG] Initiating configuration pipeline (Standard 5 Hz $KSXT)...");
+        }
+        gpsManager_.startConfiguration(baselineCm, tolCm, true, nowMs);
+        return;
+    }
+
+    if (startsWithIgnoreCase(arg, "send")) {
+        if (!gpsManager_.isSendAvailable()) {
+            println("[GPS] Cannot send: TX wire not connected.");
+            return;
+        }
+        const char *cmd = arg + 4;
+        while (*cmd == ' ' || *cmd == '\t') cmd++;
+        if (*cmd == '\0') {
+            println("[GPS ERROR] Usage: gps send <command> (e.g. 'gps send version', 'gps send uniloglist com1')");
+            return;
+        }
+        gpsManager_.sendCommand(cmd);
+        printFormat("[GPS TX] Sent: '%s'\r\n", cmd);
+        return;
+    }
+
+    if (equalsIgnoreCase(arg, "check") || equalsIgnoreCase(arg, "audit")) {
+        if (auditState_.inProgress) {
+            println("[GPS AUDIT] Audit already in progress. Please wait...");
+            return;
+        }
+        if (!gpsManager_.isSendAvailable()) {
+            if (gpsManager_.getTxState() == GpsTxState::Unknown) {
+                println("[GPS AUDIT] Testing TX connection on GPIO 43 before query...");
+                pendingAudit_ = true;
+                pendingAuditSource_ = activeSource_;
+                gpsManager_.probeTx(nowMs);
+                return;
+            }
+            println("[GPS] Cannot audit: TX wire not connected (Receive-only mode).");
+            return;
+        }
+        startGpsAudit(nowMs);
+        return;
+    }
+
+    println("[GPS ERROR] Unknown gps subcommand. Available:");
+    println("  gps status            - Live GNSS receiver stream & link diagnostic");
+    println("  gps probe             - Test bidirectional TX connection to UM982");
+    println("  gps config [baseline <cm> [tol]]");
+    println("                        - Run automated 5 Hz $KSXT receiver setup");
+    println("  gps send <command>    - Send raw command to UM982 receiver");
+    println("  gps check (or audit)  - Query receiver running parameters");
+}
+
+static void extractField(const char *src, int targetIdx, char *dst, size_t dstSize) {
+    if (!src || !dst || dstSize == 0) return;
+    dst[0] = '\0';
+    int idx = 0;
+    const char *p = src;
+    while (*p && idx < targetIdx) {
+        if (*p == ',') idx++;
+        p++;
+    }
+    if (idx != targetIdx) return;
+    size_t i = 0;
+    while (*p && *p != ',' && *p != '*' && *p != '\r' && *p != '\n' && (i + 1) < dstSize) {
+        dst[i++] = *p++;
+    }
+    dst[i] = '\0';
+}
+
+void SerialCli::startGpsAudit(unsigned long nowMs) {
+#if defined(ARDUINO)
+    if (!nowMs) nowMs = millis();
+#endif
+    auditState_.reset(nowMs, activeSource_);
+    println("[GPS AUDIT] Querying receiver parameters (VERSION, MODE, UNILOGLIST COM1, HEADINGSTATUSA)...");
+    gpsManager_.sendCommand("VERSION");
+    gpsManager_.sendCommand("MODE");
+    gpsManager_.sendCommand("UNILOGLIST COM1");
+    gpsManager_.sendCommand("LOG COM1 HEADINGSTATUSA ONCE");
+}
+
+bool SerialCli::handleAuditResponse(const char *resp) {
+    if (!auditState_.inProgress || !resp) return false;
+
+    unsigned long nowMs = 0;
+#if defined(ARDUINO)
+    nowMs = millis();
+#endif
+    if (nowMs > 0) {
+        auditState_.lastRespTimeMs = nowMs;
+    }
+
+    // Suppress command execution echoes (e.g. "$command,version,response: OK*76")
+    if (startsWithIgnoreCase(resp, "$command,") || startsWithIgnoreCase(resp, "$command ")) {
+        return true;
+    }
+
+    // Report error responses
+    if (strstr(resp, "ERROR") != nullptr || strstr(resp, "error") != nullptr) {
+        printFormat("[GPS AUDIT ERROR] %s\r\n", resp);
+        return true;
+    }
+
+    // Parse #VERSION
+    if (startsWithIgnoreCase(resp, "#VERSION")) {
+        const char *semi = strchr(resp, ';');
+        if (semi) {
+            const char *payload = semi + 1;
+            extractField(payload, 0, auditState_.model, sizeof(auditState_.model));
+            extractField(payload, 1, auditState_.fwVersion, sizeof(auditState_.fwVersion));
+            extractField(payload, 2, auditState_.hwPn, sizeof(auditState_.hwPn));
+            extractField(payload, 3, auditState_.serialNum, sizeof(auditState_.serialNum));
+            extractField(payload, 5, auditState_.buildDate, sizeof(auditState_.buildDate));
+        }
+        auditState_.receivedVersion = true;
+        if (auditState_.isComplete()) {
+            renderAuditReport();
+        }
+        return true;
+    }
+
+    // Parse #MODE
+    if (startsWithIgnoreCase(resp, "#MODE")) {
+        const char *semi = strchr(resp, ';');
+        if (semi) {
+            const char *payload = semi + 1;
+            while (*payload == ' ' || *payload == '\t') payload++;
+            if (startsWithIgnoreCase(payload, "MODE ")) {
+                payload += 5;
+            }
+            extractField(payload, 0, auditState_.mode, sizeof(auditState_.mode));
+        }
+        auditState_.receivedMode = true;
+        if (auditState_.isComplete()) {
+            renderAuditReport();
+        }
+        return true;
+    }
+
+    // Parse #UNILOGLIST
+    if (startsWithIgnoreCase(resp, "#UNILOGLIST")) {
+        // Acknowledge header; wait for entries
+        return true;
+    }
+
+    // Parse UNILOGLIST log entries starting with '<'
+    if (resp[0] == '<') {
+        const char *p = resp + 1;
+        while (*p == ' ' || *p == '\t') p++;
+        // Check if digits-only line (e.g. "< 1" or "< \t 1 \r\n")
+        bool isDigitsOnly = true;
+        bool hasDigits = false;
+        const char *temp = p;
+        while (*temp && *temp != '\r' && *temp != '\n') {
+            if (*temp >= '0' && *temp <= '9') {
+                hasDigits = true;
+            } else if (*temp != ' ' && *temp != '\t') {
+                isDigitsOnly = false;
+                break;
+            }
+            temp++;
+        }
+        if (isDigitsOnly && hasDigits) {
+            auditState_.expectedLogs = atoi(p);
+            if (auditState_.expectedLogs == 0) {
+                auditState_.receivedUniloglist = true;
+                if (auditState_.isComplete()) {
+                    renderAuditReport();
+                }
+            }
+            return true;
+        }
+
+        if (!isDigitsOnly && *p != '\0') {
+            char logEntry[64] = {0};
+            if (strstr(p, "KSXT") != nullptr && strstr(p, "0.2") != nullptr) {
+                snprintf(logEntry, sizeof(logEntry), "KSXT COM1 0.2s (5 Hz)");
+            } else if (strstr(p, "KSXT") != nullptr && strstr(p, "0.1") != nullptr) {
+                snprintf(logEntry, sizeof(logEntry), "KSXT COM1 0.1s (10 Hz)");
+            } else if (strstr(p, "KSXT") != nullptr && strstr(p, "1") != nullptr) {
+                snprintf(logEntry, sizeof(logEntry), "KSXT COM1 1s (1 Hz)");
+            } else {
+                size_t len = 0;
+                while (p[len] && p[len] != '\r' && p[len] != '\n' && (len + 1) < sizeof(logEntry)) {
+                    logEntry[len] = p[len];
+                    len++;
+                }
+                while (len > 0 && (logEntry[len - 1] == ' ' || logEntry[len - 1] == '\t')) {
+                    logEntry[--len] = '\0';
+                }
+            }
+
+            if (logEntry[0] != '\0') {
+                if (auditState_.com1Logs[0] != '\0') {
+                    strncat(auditState_.com1Logs, ", ", sizeof(auditState_.com1Logs) - strlen(auditState_.com1Logs) - 1);
+                }
+                strncat(auditState_.com1Logs, logEntry, sizeof(auditState_.com1Logs) - strlen(auditState_.com1Logs) - 1);
+            }
+            auditState_.collectedLogs++;
+            if (auditState_.expectedLogs <= 0 || auditState_.collectedLogs >= auditState_.expectedLogs) {
+                auditState_.receivedUniloglist = true;
+            }
+            if (auditState_.isComplete()) {
+                renderAuditReport();
+            }
+        }
+        return true;
+    }
+
+    // Parse #HEADINGSTATUSA
+    if (startsWithIgnoreCase(resp, "#HEADINGSTATUSA") || startsWithIgnoreCase(resp, "#HEADINGSTATUS")) {
+        const char *semi = strchr(resp, ';');
+        if (semi) {
+            const char *payload = semi + 1;
+            char *endPtr = nullptr;
+            float lengthCm = std::strtof(payload, &endPtr);
+            float tolCm = 0.0f;
+            if (endPtr && *endPtr == ',') {
+                tolCm = std::strtof(endPtr + 1, nullptr);
+            }
+            auditState_.baselineLengthCm = lengthCm;
+            auditState_.baselineTolCm = tolCm;
+            auditState_.hasBaseline = (lengthCm > 0.001f);
+        }
+        auditState_.receivedHeadingStatus = true;
+        if (auditState_.isComplete()) {
+            renderAuditReport();
+        }
+        return true;
+    }
+
+    return false;
+}
+
+void SerialCli::renderAuditReport() {
+    if (!auditState_.inProgress) return;
+    auditState_.inProgress = false;
+
+    CliSource prevSource = activeSource_;
+    activeSource_ = auditState_.source;
+
+    println();
+    println("========================================");
+    println("     GNSS Receiver Audit Report         ");
+    println("========================================");
+    if (auditState_.model[0] != '\0') {
+        if (auditState_.hwPn[0] != '\0') {
+            printFormat("Hardware Model: %s (PN: %s)\r\n", auditState_.model, auditState_.hwPn);
+        } else {
+            printFormat("Hardware Model: %s\r\n", auditState_.model);
+        }
+    } else {
+        println("Hardware Model: Unknown");
+    }
+
+    if (auditState_.serialNum[0] != '\0') {
+        printFormat("Serial Number:  %s\r\n", auditState_.serialNum);
+    }
+
+    if (auditState_.fwVersion[0] != '\0') {
+        if (auditState_.buildDate[0] != '\0') {
+            printFormat("Firmware:       %s (%s)\r\n", auditState_.fwVersion, auditState_.buildDate);
+        } else {
+            printFormat("Firmware:       %s\r\n", auditState_.fwVersion);
+        }
+    } else {
+        println("Firmware:       Unknown");
+    }
+
+    if (auditState_.mode[0] != '\0') {
+        printFormat("Operating Mode: %s\r\n", auditState_.mode);
+    } else {
+        println("Operating Mode: Unknown");
+    }
+
+    if (auditState_.com1Logs[0] != '\0') {
+        printFormat("COM1 Output:    %s\r\n", auditState_.com1Logs);
+    } else {
+        println("COM1 Output:    None / Unknown");
+    }
+
+    if (auditState_.hasBaseline) {
+        printFormat("Baseline Range: %.1f cm (± %.1f cm)  [CONSTRAINED]\r\n",
+                    auditState_.baselineLengthCm, auditState_.baselineTolCm);
+    } else {
+        println("Baseline Range: Unconstrained (Auto)");
+    }
+
+    bool modeOk = (strstr(auditState_.mode, "ROVER") != nullptr);
+    bool logOk = (strstr(auditState_.com1Logs, "KSXT") != nullptr);
+    if (modeOk && logOk) {
+        println("Overall Config: [OK] Optimal for Dual-Antenna Compass");
+    } else if (auditState_.receivedVersion) {
+        println("Overall Config: [WARN] Receiver active; KSXT or ROVER not detected");
+    } else {
+        println("Overall Config: [FAIL] Incomplete response from receiver");
+    }
+
+    println("========================================");
+    println();
+    printPrompt();
+
+    activeSource_ = prevSource;
 }
 
 void SerialCli::printHelp() {
     println();
     println("=== GNSS Compass Serial Commands ===");
-    println("  status (or gps)       - Live GNSS receiver stream diagnostic");
-    println("  rover [status|start|stop|history|undo|max|clear] - Rover transit tracking");
+    println("  status (or gps)       - Live GNSS receiver stream & link diagnostic");
+    println("  gps probe             - Test bidirectional TX connection to UM982");
+    println("  gps config [baseline <cm> [tol]]");
+    println("                        - Run automated 5 Hz $KSXT receiver setup");
+    println("  gps send <command>    - Send raw command to UM982 receiver");
+    println("  gps check (or audit)  - Query receiver running parameters");
+    println("  rover [status|start|stop|history|undo|max|clear]");
+    println("                        - Rover transit tracking");
     println("  test (or demo)        - Run visual display self-test demo");
     println("  cal [snap|zero|<val>] - View or configure antenna calibration");
-    println("  sim [on|off|hdg|pos|grid|rover|status] - GPS simulation commands");
+    println("  sim [on|off|hdg|pos|grid|rover|status]");
+    println("                        - GPS simulation commands");
+    println("  exit (or disconnect)  - Terminate wireless BLE connection cleanly");
+    println("  restart (or reboot)   - Restart the ESP32 controller");
+    println("  version (or ver)      - Display firmware build version and compile time");
+    println("  ble [diag on|off]     - BLE link status / toggle BLE RF diagnostics");
+    println("  ble suffix [<val>|reset]");
+    println("                        - Configure BLE device name suffix (max 16 chars)");
     println("  $<NMEA/KSXT sentence> - Inject raw GNSS sentence directly");
     println("  help (or ?)           - Show this help menu");
     println("====================================");
@@ -267,6 +923,46 @@ void SerialCli::printGpsStatus(unsigned long nowMs) {
         printFormat("Sim Injections: %u pkts (last %lu ms ago)\r\n",
                     simulator_.getPacketCount(),
                     (nowMs - simulator_.getLastInjectionMillis()));
+    }
+
+    // Bidirectional Link & TX Capability Status
+    if (gpsManager_.isSendAvailable()) {
+        println("Link Status:    CONNECTED (Bidirectional TX/RX Active)");
+        println("TX Capability:  AVAILABLE (UM982 command responses confirmed)");
+    } else if (gpsManager_.getTxState() == GpsTxState::Probing) {
+        println("Link Status:    PROBING (Testing TX on GPIO 43)");
+        println("TX Capability:  PROBING (Discovery probe in flight)");
+    } else if (gpsManager_.getTxState() == GpsTxState::Unavailable) {
+        println("Link Status:    CONNECTED (Receive-Only Mode)");
+        println("TX Capability:  UNAVAILABLE (TX wire not detected on GPIO 43)");
+    } else {
+        println("Link Status:    CONNECTED (Receive-Only Mode)");
+        println("TX Capability:  UNKNOWN (Type 'gps probe' to test TX line)");
+    }
+
+    // Receiver Configuration Assessment
+    if (gpsManager_.getKsxtCount() > 0 && (nowMs - gpsManager_.getLastKsxtMillis()) < 3000) {
+        if (gpsManager_.getHdtPacketCount() == 0 && gpsManager_.getGllPacketCount() == 0) {
+            println("Config State:   OPTIMAL ($KSXT streaming at 5.0 Hz, legacy unlogged)");
+        } else {
+            println("Config State:   OPTIMAL ($KSXT active, legacy messages also detected)");
+        }
+    } else if (gpsManager_.getHdtPacketCount() > 0 || gpsManager_.getGllPacketCount() > 0) {
+        println("Config State:   LEGACY COMPATIBLE ($GPHDT/$GNGLL active, upgrade to $KSXT available)");
+    } else if (gpsManager_.getTotalBytesReceived() > 0) {
+        println("Config State:   UNCONFIGURED / FACTORY DEFAULT (No heading sentence detected)");
+    } else {
+        println("Config State:   NO DATA");
+    }
+
+    if (gpsManager_.getConfigPipeline().isRunning()) {
+        printFormat("Config Engine:  RUNNING (Step: %s)\r\n",
+                    GpsConfigPipeline::stepToString(gpsManager_.getConfigPipeline().getCurrentStep()));
+    } else if (gpsManager_.getConfigPipeline().isSuccess()) {
+        println("Config Engine:  SUCCESS (Receiver configured)");
+    } else if (gpsManager_.getConfigPipeline().isFailed()) {
+        printFormat("Config Engine:  FAILED (%s)\r\n",
+                    gpsManager_.getConfigPipeline().getFailureReasonString());
     }
 
     if (v == GPS_LINK_DISCONNECTED) {

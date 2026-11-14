@@ -298,6 +298,33 @@ void DisplayUi::renderUtcTime(int hours, int minutes, bool hasTime) {
     gfx_->print(tbuf);
 }
 
+void DisplayUi::renderBleStatus(bool connected) {
+    if (!gfx_) return;
+    int x = BLE_ICON_X;
+    int y = BLE_ICON_Y;
+    gfx_->fillRect(x - BLE_ICON_WING - BLE_ICON_PAD, y - BLE_ICON_PAD,
+                   BLE_ICON_WING + BLE_ICON_ARM + 1 + 2 * BLE_ICON_PAD,
+                   BLE_ICON_H + 2 * BLE_ICON_PAD, BLACK);
+    if (!connected) return;
+
+    // Bluetooth rune: spine, two right-hand chevrons meeting at mid, two left-hand wings
+    const int top = y;
+    const int upper = y + BLE_ICON_ARM;
+    const int mid = y + BLE_ICON_H / 2;
+    const int lower = y + BLE_ICON_H - BLE_ICON_ARM;
+    const int bottom = y + BLE_ICON_H;
+    const int right = x + BLE_ICON_ARM;
+    const int left = x - BLE_ICON_WING;
+    uint16_t color = CYAN;
+    gfx_->drawFastVLine(x, top, BLE_ICON_H, color);
+    gfx_->drawLine(x, top, right, upper, color);
+    gfx_->drawLine(right, upper, x, mid, color);
+    gfx_->drawLine(x, mid, right, lower, color);
+    gfx_->drawLine(right, lower, x, bottom, color);
+    gfx_->drawLine(x, mid, left, upper, color);
+    gfx_->drawLine(x, mid, left, lower, color);
+}
+
 void DisplayUi::showFooterText(const char *msg, uint16_t color) {
     if (!gfx_ || !msg) return;
     gfx_->fillRect(0, VER_Y, SCREEN_WIDTH, CHAR_H(VER_SZ) + 4, BLACK);
@@ -345,6 +372,7 @@ void DisplayUi::redrawMainScreen(const MainScreenState &s) {
     }
     renderArrlDistance(s.myGrid, s.targetGrid);
     renderUtcTime(s.hours, s.minutes, s.hasTime);
+    renderBleStatus(s.bleConnected);
     showFooterText(FW_VERSION, DIM_GRAY_TEXT);
 }
 #else
@@ -363,6 +391,7 @@ void DisplayUi::renderRoverCardMessage(const char *, uint16_t) {}
 void DisplayUi::clearRoverCard() {}
 void DisplayUi::renderArrlDistance(const char *, const char *) {}
 void DisplayUi::renderUtcTime(int, int, bool) {}
+void DisplayUi::renderBleStatus(bool) {}
 void DisplayUi::showFooterText(const char *, uint16_t) {}
 void DisplayUi::showStatusCard(const char *, uint16_t, uint16_t) {}
 void DisplayUi::redrawMainScreen(const MainScreenState &) {}

@@ -1,5 +1,6 @@
 #include <iostream>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <string>
 #include "../src/types.h"
@@ -19,6 +20,9 @@
 #include "../src/system/board.h"
 #include "../src/system/app_controller.h"
 #include "../src/system/rover_log_manager.h"
+#include "../src/protocol/ble_serial_manager.h"
+#include "../src/protocol/line_buffer.h"
+#include "../src/protocol/text_output.h"
 #include "../src/system/self_test.h"
 
 int tests_run = 0;
@@ -646,6 +650,10 @@ void test_config_constants() {
     ASSERT_TRUE(COLOR_ROVER_QUALIFIED_GREEN == 0x03E0);
     ASSERT_TRUE(COLOR_ROVER_REVISIT_BLUE == 0x011C);
     ASSERT_TRUE(COLOR_ROVER_NOGPS_AMBER == 0xDC00);
+    ASSERT_TRUE(GPS_TX_PROBE_TIMEOUT_MS == 1000);
+    ASSERT_TRUE(GPS_TX_PROBE_MAX_RETRIES == 2);
+    ASSERT_TRUE(GPS_CONFIG_STEP_TIMEOUT_MS == 1000);
+    ASSERT_TRUE(GPS_CONFIG_VERIFY_TIMEOUT_MS == 1500);
 
     // Test grid character rolling macros
     char c = 'A';
@@ -885,6 +893,433 @@ void test_gps_manager() {
     PASS();
 }
 
+void test_gps_tx_discovery() {
+    TEST("GNSS TX discovery probe state machine, retries, and response parsing");
+    GpsManager gm;
+
+    // 1. Initial State
+    ASSERT_TRUE(gm.getTxState() == GpsTxState::Unknown);
+    ASSERT_TRUE(!gm.isSendAvailable());
+    ASSERT_TRUE(gm.getProbeRetries() == 0);
+    ASSERT_TRUE(gm.getLastProbeTime() == 0);
+    ASSERT_STR_EQ(gm.getTxStateString(), "UNKNOWN");
+
+    std::string sentData;
+    gm.setTxHandler([](const uint8_t *data, size_t len, void *ctx) {
+        auto *s = static_cast<std::string*>(ctx);
+        if (s) s->append(reinterpret_cast<const char*>(data), len);
+    }, &sentData);
+
+    // 2. Start Probe
+    gm.probeTx(1000);
+    ASSERT_TRUE(gm.getTxState() == GpsTxState::Probing);
+    ASSERT_TRUE(!gm.isSendAvailable());
+    ASSERT_TRUE(gm.getLastProbeTime() == 1000);
+    ASSERT_TRUE(gm.getProbeRetries() == 0);
+    ASSERT_STR_EQ(gm.getTxStateString(), "PROBING");
+    ASSERT_STR_EQ(sentData.c_str(), "version\r\n");
+
+    // Normal NMEA or non-response streams must not trigger probe acknowledgment
+    gm.feedSentence("$GNGLL,3821.2472,N,11927.4926,W,193000.00,A*3C", 1020);
+    ASSERT_TRUE(gm.getTxState() == GpsTxState::Probing);
+    ASSERT_TRUE(!gm.isSendAvailable());
+
+    // 3. Receive <OK acknowledgment -> Available
+    gm.feedSentence("<OK", 1050);
+    ASSERT_TRUE(gm.getTxState() == GpsTxState::Available);
+    ASSERT_TRUE(gm.isSendAvailable());
+    ASSERT_STR_EQ(gm.getTxStateString(), "AVAILABLE");
+
+    // 4. Manual re-probe from Available
+    sentData.clear();
+    gm.probeTx(2000);
+    ASSERT_TRUE(gm.getTxState() == GpsTxState::Probing);
+    ASSERT_TRUE(!gm.isSendAvailable());
+    ASSERT_TRUE(gm.getLastProbeTime() == 2000);
+    ASSERT_STR_EQ(sentData.c_str(), "version\r\n");
+
+    // Acknowledge with #VERSIONA log
+    gm.feedSentence("#VERSIONA,91,GPS,FINE,2320,150123000,0,0,18,0;UM982,R4.10Build11252*9543ab12", 2100);
+    ASSERT_TRUE(gm.getTxState() == GpsTxState::Available);
+    ASSERT_TRUE(gm.isSendAvailable());
+
+    // 5. Manual re-probe and $command response
+    sentData.clear();
+    gm.probeTx(3000);
+    ASSERT_TRUE(gm.getTxState() == GpsTxState::Probing);
+    gm.feedSentence("$command,version,response: OK*24", 3100);
+    ASSERT_TRUE(gm.getTxState() == GpsTxState::Available);
+    ASSERT_TRUE(gm.isSendAvailable());
+
+    // 6. Byte-by-byte ingestion of acknowledgment (< OK with whitespace)
+    sentData.clear();
+    gm.probeTx(4000);
+    ASSERT_TRUE(gm.getTxState() == GpsTxState::Probing);
+    const char *replyWithSpace = "< OK\r\n";
+    for (size_t i = 0; replyWithSpace[i]; ++i) {
+        gm.feedByte((uint8_t)replyWithSpace[i], 4050);
+    }
+    ASSERT_TRUE(gm.getTxState() == GpsTxState::Available);
+    ASSERT_TRUE(gm.isSendAvailable());
+
+    // 7. Timeout and Retry Sequence to Unavailable
+    struct ProbeCallbackData {
+        GpsTxState state = GpsTxState::Unknown;
+        std::string msg;
+    } probeData;
+
+    gm.setOnProbeResult([](GpsTxState state, const char *msg, void *ctx) {
+        auto *p = static_cast<ProbeCallbackData*>(ctx);
+        if (p) {
+            p->state = state;
+            p->msg = msg ? msg : "";
+        }
+    }, &probeData);
+
+    sentData.clear();
+    gm.probeTx(5000);
+    ASSERT_TRUE(gm.getTxState() == GpsTxState::Probing);
+    ASSERT_TRUE(gm.getProbeRetries() == 0);
+    ASSERT_STR_EQ(sentData.c_str(), "version\r\n");
+
+    // Update before timeout (500 ms elapsed)
+    gm.update(5500);
+    ASSERT_TRUE(gm.getTxState() == GpsTxState::Probing);
+    ASSERT_TRUE(gm.getProbeRetries() == 0);
+
+    // Timeout: Retry 1 at t = 6000 (1000 ms elapsed)
+    gm.update(6000);
+    ASSERT_TRUE(gm.getTxState() == GpsTxState::Probing);
+    ASSERT_TRUE(gm.getProbeRetries() == 1);
+    ASSERT_TRUE(gm.getLastProbeTime() == 6000);
+    ASSERT_STR_EQ(sentData.c_str(), "version\r\nversion\r\n");
+    ASSERT_TRUE(probeData.state == GpsTxState::Probing);
+    ASSERT_TRUE(probeData.msg.find("retrying (attempt 1/2)") != std::string::npos);
+
+    // Before second timeout (500 ms elapsed)
+    gm.update(6500);
+    ASSERT_TRUE(gm.getTxState() == GpsTxState::Probing);
+    ASSERT_TRUE(gm.getProbeRetries() == 1);
+
+    // Timeout: Retry 2 at t = 7000 (1000 ms elapsed)
+    gm.update(7000);
+    ASSERT_TRUE(gm.getTxState() == GpsTxState::Probing);
+    ASSERT_TRUE(gm.getProbeRetries() == 2);
+    ASSERT_TRUE(gm.getLastProbeTime() == 7000);
+    ASSERT_STR_EQ(sentData.c_str(), "version\r\nversion\r\nversion\r\n");
+    ASSERT_TRUE(probeData.state == GpsTxState::Probing);
+    ASSERT_TRUE(probeData.msg.find("retrying (attempt 2/2)") != std::string::npos);
+
+    // Before expiration (500 ms elapsed)
+    gm.update(7500);
+    ASSERT_TRUE(gm.getTxState() == GpsTxState::Probing);
+    ASSERT_TRUE(gm.getProbeRetries() == 2);
+
+    // Timeout: Max retries (2) exceeded at t = 8000 -> Unavailable
+    gm.update(8000);
+    ASSERT_TRUE(gm.getTxState() == GpsTxState::Unavailable);
+    ASSERT_TRUE(!gm.isSendAvailable());
+    ASSERT_STR_EQ(gm.getTxStateString(), "UNAVAILABLE");
+    ASSERT_TRUE(probeData.state == GpsTxState::Unavailable);
+    ASSERT_TRUE(probeData.msg.find("No response from receiver") != std::string::npos);
+    // Ensure no additional probe was sent on transition to Unavailable
+    ASSERT_STR_EQ(sentData.c_str(), "version\r\nversion\r\nversion\r\n");
+
+    // Subsequent updates when Unavailable should not transmit
+    gm.update(9000);
+    ASSERT_TRUE(gm.getTxState() == GpsTxState::Unavailable);
+    ASSERT_STR_EQ(sentData.c_str(), "version\r\nversion\r\nversion\r\n");
+
+    // 8. Manual re-probe from Unavailable
+    sentData.clear();
+    gm.probeTx(10000);
+    ASSERT_TRUE(gm.getTxState() == GpsTxState::Probing);
+    ASSERT_TRUE(gm.getProbeRetries() == 0);
+    ASSERT_TRUE(gm.getLastProbeTime() == 10000);
+    ASSERT_STR_EQ(sentData.c_str(), "version\r\n");
+
+    // 9. Response callback registration
+    std::string lastResponse;
+    gm.setOnResponse([](const char *resp, void *ctx) {
+        auto *s = static_cast<std::string*>(ctx);
+        if (s) *s = resp;
+    }, &lastResponse);
+
+    gm.feedSentence("<OK", 10050);
+    ASSERT_STR_EQ(lastResponse.c_str(), "<OK");
+    ASSERT_TRUE(gm.getTxState() == GpsTxState::Available);
+    ASSERT_TRUE(probeData.state == GpsTxState::Available);
+    ASSERT_TRUE(probeData.msg.find("Receiver acknowledged") != std::string::npos);
+
+    gm.feedSentence("#MODE,ROVER,UAV", 10100);
+    ASSERT_STR_EQ(lastResponse.c_str(), "#MODE,ROVER,UAV");
+
+    // 10. Millis rollover handling
+    gm.probeTx(0xFFFFFFF0UL);
+    ASSERT_TRUE(gm.getTxState() == GpsTxState::Probing);
+    gm.update(1000UL); // 1016 ms elapsed across 0xFFFFFFFF rollover -> retry 1
+    ASSERT_TRUE(gm.getProbeRetries() == 1);
+    ASSERT_TRUE(gm.getTxState() == GpsTxState::Probing);
+
+    // 11. Auto-probe upon initial stream sentence arrival from Unknown state
+    GpsManager gmAuto;
+    std::string autoSentData;
+    gmAuto.setTxHandler([](const uint8_t *data, size_t len, void *ctx) {
+        auto *s = static_cast<std::string*>(ctx);
+        if (s) s->append(reinterpret_cast<const char*>(data), len);
+    }, &autoSentData);
+    ASSERT_TRUE(gmAuto.getTxState() == GpsTxState::Unknown);
+    gmAuto.feedSentence("$GNGLL,3821.2472,N,11927.4926,W,193000.00,A*3C", 100);
+    ASSERT_TRUE(gmAuto.getTxState() == GpsTxState::Probing);
+    ASSERT_STR_EQ(autoSentData.c_str(), "version\r\n");
+
+    // Receiver acknowledges auto-probe
+    gmAuto.feedSentence("<OK", 150);
+    ASSERT_TRUE(gmAuto.getTxState() == GpsTxState::Available);
+
+    // 12. Stream silence timeout (>= 5000 ms) resets state to Unknown, and fresh data re-probes
+    gmAuto.checkStaleness(5151); // 5001 ms elapsed since 150 -> resets to Unknown
+    ASSERT_TRUE(gmAuto.getTxState() == GpsTxState::Unknown);
+    autoSentData.clear();
+    gmAuto.feedSentence("$KSXT,20261110180000.00,119.45,38.35,100.0,0.0,0.0,0.0,0,0,3,10,0*00", 5200);
+    ASSERT_TRUE(gmAuto.getTxState() == GpsTxState::Probing);
+    ASSERT_STR_EQ(autoSentData.c_str(), "version\r\n");
+
+    PASS();
+}
+
+void test_gps_config_pipeline() {
+    TEST("GpsConfigPipeline sequential commands, safeguards, and stream verification");
+    GpsManager gm;
+
+    // Helper lambda to make TX available
+    auto makeTxAvailable = [&gm]() {
+        gm.probeTx(100);
+        gm.feedSentence("<OK", 150);
+        ASSERT_TRUE(gm.isSendAvailable());
+    };
+
+    // 1. TX unavailable rejection guard
+    ASSERT_TRUE(gm.getTxState() == GpsTxState::Unknown);
+    ASSERT_TRUE(!gm.startConfiguration(0.0f, 2.5f, true, 1000));
+    ASSERT_TRUE(gm.getConfigPipeline().isFailed());
+    ASSERT_TRUE(gm.getConfigPipeline().getFailureReason() == ConfigFailureReason::TxNotAvailable);
+    ASSERT_STR_EQ(gm.getConfigPipeline().getFailureReasonString(), "TX_NOT_AVAILABLE");
+
+    // Make TX available
+    makeTxAvailable();
+
+    std::string sentData;
+    gm.setTxHandler([](const uint8_t *data, size_t len, void *ctx) {
+        auto *s = static_cast<std::string*>(ctx);
+        if (s) s->append(reinterpret_cast<const char*>(data), len);
+    }, &sentData);
+
+    // 2. Full successful configuration sequence without baseline constraint
+    sentData.clear();
+    ASSERT_TRUE(gm.startConfiguration(0.0f, 2.5f, true, 1000));
+    auto &pipe = gm.getConfigPipeline();
+    ASSERT_TRUE(pipe.isRunning());
+    ASSERT_TRUE(pipe.getCurrentStep() == ConfigStep::ModeRoverUav);
+    ASSERT_STR_EQ(sentData.c_str(), "MODE ROVER UAV\r\n");
+
+    // Acknowledge step 1 -> Step 2 CONFIG SIGNALGROUP 3 6
+    sentData.clear();
+    gm.feedSentence("<OK", 1050);
+    ASSERT_TRUE(pipe.isRunning());
+    ASSERT_TRUE(pipe.getCurrentStep() == ConfigStep::ConfigSignalGroup);
+    ASSERT_STR_EQ(sentData.c_str(), "CONFIG SIGNALGROUP 3 6\r\n");
+
+    // Acknowledge step 2 -> Step 3 UNLOG COM1
+    sentData.clear();
+    gm.feedSentence("<OK", 1100);
+    ASSERT_TRUE(pipe.isRunning());
+    ASSERT_TRUE(pipe.getCurrentStep() == ConfigStep::UnlogCom1);
+    ASSERT_STR_EQ(sentData.c_str(), "UNLOG COM1\r\n");
+
+    // Acknowledge step 3 -> Step 4 KSXT com1 0.2
+    sentData.clear();
+    gm.feedSentence("<OK", 1150);
+    ASSERT_TRUE(pipe.isRunning());
+    ASSERT_TRUE(pipe.getCurrentStep() == ConfigStep::KsxtOutput);
+    ASSERT_STR_EQ(sentData.c_str(), "KSXT com1 0.2\r\n");
+
+    // Acknowledge step 4 -> Step 5 CONFIG HEADING FIXLENGTH (standard on all builds)
+    sentData.clear();
+    gm.feedSentence("<OK", 1200);
+    ASSERT_TRUE(pipe.isRunning());
+    ASSERT_TRUE(pipe.getCurrentStep() == ConfigStep::HeadingFixLength);
+    ASSERT_STR_EQ(sentData.c_str(), "CONFIG HEADING FIXLENGTH\r\n");
+
+    // Acknowledge step 5 -> Step 6 SAVECONFIG (explicit baseline length skipped when baselineCm == 0)
+    sentData.clear();
+    gm.feedSentence("<OK", 1250);
+    ASSERT_TRUE(pipe.isRunning());
+    ASSERT_TRUE(pipe.getCurrentStep() == ConfigStep::SaveConfig);
+    ASSERT_STR_EQ(sentData.c_str(), "SAVECONFIG\r\n");
+
+    // Acknowledge step 6 -> Step 7 VerifyStream
+    sentData.clear();
+    gm.feedSentence("<OK", 1300);
+    ASSERT_TRUE(pipe.isRunning());
+    ASSERT_TRUE(pipe.getCurrentStep() == ConfigStep::VerifyStream);
+    ASSERT_TRUE(pipe.isWaitingForStream());
+    ASSERT_TRUE(sentData.empty()); // No command sent while waiting for stream
+
+    // Feed a valid $KSXT sentence to complete stream verification
+    char ksxtBuf[256];
+    GpsSimulator::generateKsxt(ksxtBuf, sizeof(ksxtBuf),
+                              "20261109120000.00", 37.7749, -122.4194,
+                              90.0, BEARING_FIXED);
+    gm.feedSentence(ksxtBuf, 1350);
+    ASSERT_TRUE(pipe.isSuccess());
+    ASSERT_TRUE(pipe.getCurrentStep() == ConfigStep::Done);
+    ASSERT_STR_EQ(pipe.getStateString(), "SUCCESS");
+
+    // 3. Full configuration sequence WITH baseline length constraint (e.g. 101.6 cm, tol 2.5 cm)
+    pipe.reset();
+    ASSERT_TRUE(pipe.isIdle());
+    sentData.clear();
+    ASSERT_TRUE(gm.startConfiguration(101.6f, 2.5f, false, 2000)); // verifyStream = false
+    ASSERT_TRUE(pipe.getCurrentStep() == ConfigStep::ModeRoverUav);
+    ASSERT_STR_EQ(sentData.c_str(), "MODE ROVER UAV\r\n");
+
+    sentData.clear();
+    gm.feedSentence("<OK", 2050); // MODE -> SIGNALGROUP
+    ASSERT_TRUE(pipe.getCurrentStep() == ConfigStep::ConfigSignalGroup);
+    ASSERT_STR_EQ(sentData.c_str(), "CONFIG SIGNALGROUP 3 6\r\n");
+
+    sentData.clear();
+    gm.feedSentence("<OK", 2100); // SIGNALGROUP -> UNLOG COM1
+    ASSERT_TRUE(pipe.getCurrentStep() == ConfigStep::UnlogCom1);
+    ASSERT_STR_EQ(sentData.c_str(), "UNLOG COM1\r\n");
+
+    sentData.clear();
+    gm.feedSentence("<OK", 2150); // UNLOG -> KSXT
+    ASSERT_TRUE(pipe.getCurrentStep() == ConfigStep::KsxtOutput);
+    ASSERT_STR_EQ(sentData.c_str(), "KSXT com1 0.2\r\n");
+
+    sentData.clear();
+    gm.feedSentence("<OK", 2200); // KSXT -> CONFIG HEADING FIXLENGTH
+    ASSERT_TRUE(pipe.getCurrentStep() == ConfigStep::HeadingFixLength);
+    ASSERT_STR_EQ(sentData.c_str(), "CONFIG HEADING FIXLENGTH\r\n");
+
+    sentData.clear();
+    gm.feedSentence("<OK", 2250); // FIXLENGTH -> CONFIG HEADING LENGTH 101.6 2.5
+    ASSERT_TRUE(pipe.getCurrentStep() == ConfigStep::HeadingLength);
+    ASSERT_STR_EQ(sentData.c_str(), "CONFIG HEADING LENGTH 101.6 2.5\r\n");
+
+    sentData.clear();
+    gm.feedSentence("<OK", 2300); // LENGTH -> SAVECONFIG
+    ASSERT_TRUE(pipe.getCurrentStep() == ConfigStep::SaveConfig);
+    ASSERT_STR_EQ(sentData.c_str(), "SAVECONFIG\r\n");
+
+    // Acknowledge SAVECONFIG -> with verifyStream = false, finishes immediately!
+    sentData.clear();
+    gm.feedSentence("<OK", 2350);
+    ASSERT_TRUE(pipe.isSuccess());
+    ASSERT_TRUE(pipe.getCurrentStep() == ConfigStep::Done);
+
+    // 4. Flash Write Safeguard: Abort on Command Rejection (SAVECONFIG must NEVER be sent)
+    pipe.reset();
+    sentData.clear();
+    ASSERT_TRUE(gm.startConfiguration(0.0f, 2.5f, false, 3000));
+    ASSERT_TRUE(pipe.getCurrentStep() == ConfigStep::ModeRoverUav);
+    gm.feedSentence("<OK", 3050); // Advance to SIGNALGROUP
+    ASSERT_TRUE(pipe.getCurrentStep() == ConfigStep::ConfigSignalGroup);
+
+    // Receiver rejects command with <ERROR
+    gm.feedSentence("<ERROR: Command syntax invalid", 3100);
+    ASSERT_TRUE(pipe.isFailed());
+    ASSERT_TRUE(pipe.getFailureReason() == ConfigFailureReason::CommandRejected);
+    ASSERT_TRUE(pipe.getFailedStep() == ConfigStep::ConfigSignalGroup);
+    ASSERT_STR_EQ(pipe.getFailureReasonString(), "COMMAND_REJECTED");
+
+    // Critical assertion: SAVECONFIG must NOT appear in sentData!
+    ASSERT_TRUE(sentData.find("SAVECONFIG") == std::string::npos);
+
+    // 5. Flash Write Safeguard: Abort on Step Timeout (SAVECONFIG must NEVER be sent)
+    pipe.reset();
+    sentData.clear();
+    ASSERT_TRUE(gm.startConfiguration(0.0f, 2.5f, false, 4000));
+    ASSERT_TRUE(pipe.getCurrentStep() == ConfigStep::ModeRoverUav);
+    gm.feedSentence("<OK", 4050); // Advance to SIGNALGROUP
+    gm.feedSentence("<OK", 4100); // Advance to UNLOG COM1
+    ASSERT_TRUE(pipe.getCurrentStep() == ConfigStep::UnlogCom1);
+
+    // Time elapses: 500 ms (before timeout) -> still running
+    gm.update(4600);
+    ASSERT_TRUE(pipe.isRunning());
+    ASSERT_TRUE(pipe.getCurrentStep() == ConfigStep::UnlogCom1);
+
+    // Time elapses: 1000 ms elapsed -> Timeout!
+    gm.update(5100);
+    ASSERT_TRUE(pipe.isFailed());
+    ASSERT_TRUE(pipe.getFailureReason() == ConfigFailureReason::StepTimeout);
+    ASSERT_TRUE(pipe.getFailedStep() == ConfigStep::UnlogCom1);
+    ASSERT_STR_EQ(pipe.getFailureReasonString(), "STEP_TIMEOUT");
+
+    // Critical assertion: SAVECONFIG must NOT appear in sentData!
+    ASSERT_TRUE(sentData.find("SAVECONFIG") == std::string::npos);
+
+    // 6. Stream Verification Timeout
+    pipe.reset();
+    sentData.clear();
+    ASSERT_TRUE(gm.startConfiguration(0.0f, 2.5f, true, 6000));
+    gm.feedSentence("<OK", 6050); // MODE
+    gm.feedSentence("<OK", 6100); // SIGNALGROUP
+    gm.feedSentence("<OK", 6150); // UNLOG
+    gm.feedSentence("<OK", 6200); // KSXT
+    gm.feedSentence("<OK", 6250); // FIXLENGTH
+    gm.feedSentence("<OK", 6300); // SAVECONFIG
+    ASSERT_TRUE(pipe.getCurrentStep() == ConfigStep::VerifyStream);
+
+    // Advance time: 1000 ms (< 1500 ms verify timeout) -> still waiting
+    gm.update(7300);
+    ASSERT_TRUE(pipe.isWaitingForStream());
+
+    // Advance time: 1500 ms elapsed -> Stream verification timeout!
+    gm.update(7801);
+    ASSERT_TRUE(pipe.isFailed());
+    ASSERT_TRUE(pipe.getFailureReason() == ConfigFailureReason::StreamVerifyTimeout);
+    ASSERT_STR_EQ(pipe.getFailureReasonString(), "STREAM_VERIFY_TIMEOUT");
+
+    // 7. Pipeline Progress Callback and String Helpers
+    struct ProgressTracker {
+        std::string msg;
+        ConfigStep step = ConfigStep::None;
+    } tracker;
+
+    pipe.reset();
+    pipe.setOnProgress([](ConfigStep step, ConfigPipelineState, const char *msg, void *ctx) {
+        auto *t = static_cast<ProgressTracker*>(ctx);
+        if (t) {
+            if (msg) t->msg = msg;
+            t->step = step;
+        }
+    }, &tracker);
+
+    ASSERT_TRUE(gm.startConfiguration(0.0f, 2.5f, false, 8000));
+    ASSERT_TRUE(tracker.step == ConfigStep::ModeRoverUav);
+    ASSERT_TRUE(!tracker.msg.empty());
+
+    // String helpers coverage
+    ASSERT_STR_EQ(GpsConfigPipeline::stepToString(ConfigStep::ModeRoverUav), "MODE ROVER UAV");
+    ASSERT_STR_EQ(GpsConfigPipeline::stepToString(ConfigStep::ConfigSignalGroup), "CONFIG SIGNALGROUP 3 6");
+    ASSERT_STR_EQ(GpsConfigPipeline::stepToString(ConfigStep::UnlogCom1), "UNLOG COM1");
+    ASSERT_STR_EQ(GpsConfigPipeline::stepToString(ConfigStep::KsxtOutput), "KSXT com1 0.2");
+    ASSERT_STR_EQ(GpsConfigPipeline::stepToString(ConfigStep::HeadingFixLength), "CONFIG HEADING FIXLENGTH");
+    ASSERT_STR_EQ(GpsConfigPipeline::stepToString(ConfigStep::HeadingLength), "CONFIG HEADING LENGTH");
+    ASSERT_STR_EQ(GpsConfigPipeline::stepToString(ConfigStep::SaveConfig), "SAVECONFIG");
+    ASSERT_STR_EQ(GpsConfigPipeline::stepToString(ConfigStep::VerifyStream), "VERIFY STREAM");
+    ASSERT_STR_EQ(GpsConfigPipeline::stepToString(ConfigStep::Done), "DONE");
+    ASSERT_STR_EQ(GpsConfigPipeline::stepToString(ConfigStep::None), "NONE");
+
+    pipe.setOnProgress(nullptr, nullptr);
+
+    PASS();
+}
+
 void test_serial_cli() {
     TEST("SerialCli host USB command execution, reports, and dispatching");
     GpsManager gm;
@@ -962,6 +1397,290 @@ void test_serial_cli() {
 
     cli.executeCommand("sim off");
     ASSERT_TRUE(!sim.isActive());
+
+    // Whitespace trimming tests (leading and trailing spaces, tabs, e.g. 'help ')
+    cliOutput.clear();
+    cli.executeCommand("help   ");
+    ASSERT_TRUE(cliOutput.find("=== GNSS Compass Serial Commands ===") != std::string::npos);
+    ASSERT_TRUE(cliOutput.find("Unknown command") == std::string::npos);
+    cliOutput.clear();
+
+    cli.executeCommand("   status  ");
+    ASSERT_TRUE(cliOutput.find("GNSS Receiver Stream Diagnosis") != std::string::npos);
+    ASSERT_TRUE(cliOutput.find("Unknown command") == std::string::npos);
+    cliOutput.clear();
+
+    cli.executeCommand("  cal zero  ");
+    ASSERT_NEAR(cal.getOffset(), 0.0f, 1e-4);
+    ASSERT_TRUE(cliOutput.find("[CAL] Offset reset to 0.0 deg") != std::string::npos);
+    cliOutput.clear();
+
+    // Prompt '> ' tests
+    cliOutput.clear();
+    cli.executeCommand(""); // Empty Enter
+    ASSERT_STR_EQ(cliOutput.c_str(), "> ");
+    cliOutput.clear();
+
+    cli.executeCommand("   "); // Spaces only Enter
+    ASSERT_STR_EQ(cliOutput.c_str(), "> ");
+    cliOutput.clear();
+
+    cli.printPrompt();
+    ASSERT_STR_EQ(cliOutput.c_str(), "> ");
+    cliOutput.clear();
+
+    // Sentence injection must NOT emit prompt
+    cli.executeCommand("$GNGLL,3821.2472,N,11927.4926,W,193000.00,A*3C");
+    ASSERT_TRUE(cliOutput.find("> ") == std::string::npos);
+    cliOutput.clear();
+
+    // Restart / reboot command tests
+    bool restartCalled = false;
+    cli.setRestartCallback([](void *ctx) {
+        *static_cast<bool*>(ctx) = true;
+    }, &restartCalled);
+
+    cliOutput.clear();
+    cli.executeCommand("restart");
+    ASSERT_TRUE(restartCalled);
+    ASSERT_TRUE(cliOutput.find("[SYSTEM] Restarting ESP32 controller...") != std::string::npos);
+
+    restartCalled = false;
+    cliOutput.clear();
+    cli.executeCommand("reboot");
+    ASSERT_TRUE(restartCalled);
+    ASSERT_TRUE(cliOutput.find("[SYSTEM] Restarting ESP32 controller...") != std::string::npos);
+    cliOutput.clear();
+
+    PASS();
+}
+
+void test_serial_cli_gps_commands() {
+    TEST("SerialCli GPS commands: probe, config, send, check, and status reporting");
+    GpsManager gm;
+    Calibration cal;
+    GpsSimulator sim;
+    BleSerialManager ble;
+    SerialCli cli(gm, cal, sim, nullptr, &ble);
+    cli.begin();
+
+    std::string cliOutput;
+    cli.setOutputHandler([](const char *str, void *ctx) {
+        static_cast<std::string*>(ctx)->append(str);
+    }, &cliOutput);
+
+    std::string sentUartData;
+    gm.setTxHandler([](const uint8_t *data, size_t len, void *ctx) {
+        static_cast<std::string*>(ctx)->append(reinterpret_cast<const char*>(data), len);
+    }, &sentUartData);
+
+    // 1. Initial 'status' report with Receive-Only / Untested link
+    cli.executeCommand("status", 1000);
+    ASSERT_TRUE(cliOutput.find("GNSS Receiver Stream Diagnosis") != std::string::npos);
+    ASSERT_TRUE(cliOutput.find("Link Status:    CONNECTED (Receive-Only Mode)") != std::string::npos);
+    ASSERT_TRUE(cliOutput.find("TX Capability:  UNKNOWN") != std::string::npos);
+    ASSERT_TRUE(cliOutput.find("Config State:   NO DATA") != std::string::npos);
+    cliOutput.clear();
+
+    // 2. 'gps probe' execution
+    sentUartData.clear();
+    cli.executeCommand("gps probe", 1100);
+    ASSERT_TRUE(cliOutput.find("[GPS PROBE] Transmitting 'version'") != std::string::npos);
+    ASSERT_TRUE(gm.getTxState() == GpsTxState::Probing);
+    ASSERT_STR_EQ(sentUartData.c_str(), "version\r\n");
+    cliOutput.clear();
+
+    // 3. 'gps send' when TX is unavailable / probing (not yet confirmed)
+    cli.executeCommand("gps send version");
+    ASSERT_TRUE(cliOutput.find("[GPS] Cannot send: TX wire not connected.") != std::string::npos);
+    cliOutput.clear();
+
+    // 4. 'gps config' when TX is unavailable
+    cli.executeCommand("gps config");
+    ASSERT_TRUE(cliOutput.find("[GPS] TX wire not detected.") != std::string::npos);
+    cliOutput.clear();
+
+    // 5. 'gps check' when TX is unavailable
+    cli.executeCommand("gps check");
+    ASSERT_TRUE(cliOutput.find("[GPS] Cannot audit: TX wire not connected") != std::string::npos);
+    cliOutput.clear();
+
+    // Confirm TX by feeding <OK response
+    gm.feedSentence("<OK", 1200);
+    ASSERT_TRUE(gm.isSendAvailable());
+    ASSERT_TRUE(cliOutput.find("Receiver acknowledged!") != std::string::npos);
+    cliOutput.clear();
+
+    // 6. Enhanced 'status' report when Bidirectional TX is confirmed
+    cli.executeCommand("gps status", 1300);
+    ASSERT_TRUE(cliOutput.find("Link Status:    CONNECTED (Bidirectional TX/RX Active)") != std::string::npos);
+    ASSERT_TRUE(cliOutput.find("TX Capability:  AVAILABLE") != std::string::npos);
+    cliOutput.clear();
+
+    // 7. 'gps send <command>' when TX is available
+    sentUartData.clear();
+    cli.executeCommand("gps send uniloglist com1");
+    ASSERT_TRUE(cliOutput.find("[GPS TX] Sent: 'uniloglist com1'") != std::string::npos);
+    ASSERT_STR_EQ(sentUartData.c_str(), "uniloglist com1\r\n");
+    cliOutput.clear();
+
+    // Verify response echoes to CLI via [GPS RX]
+    gm.feedSentence("<OK", 1400);
+    ASSERT_TRUE(cliOutput.find("[GPS RX] <OK") != std::string::npos);
+    cliOutput.clear();
+
+    // Empty send usage check
+    cli.executeCommand("gps send");
+    ASSERT_TRUE(cliOutput.find("[GPS ERROR] Usage: gps send") != std::string::npos);
+    cliOutput.clear();
+
+    // 8. 'gps check' / 'gps audit' query commands & structured report parsing
+    sentUartData.clear();
+    cli.executeCommand("gps check");
+    ASSERT_TRUE(cliOutput.find("[GPS AUDIT] Querying receiver parameters") != std::string::npos);
+    ASSERT_TRUE(sentUartData.find("VERSION\r\n") != std::string::npos);
+    ASSERT_TRUE(sentUartData.find("MODE\r\n") != std::string::npos);
+    ASSERT_TRUE(sentUartData.find("UNILOGLIST COM1\r\n") != std::string::npos);
+    ASSERT_TRUE(sentUartData.find("LOG COM1 HEADINGSTATUSA ONCE\r\n") != std::string::npos);
+    cliOutput.clear();
+
+    // Feed Unicore UM982 response lines including $command echoes
+    gm.feedSentence("$command,version,response: OK*76");
+    gm.feedSentence("#VERSION,98,GPS,UNKNOWN,1,14.733,30,0,0,18;UM982,R4.10Build13495,HRPT00-S10C-P,2310415000012-LR23C1261413487,ff2ab7d1d50ed90e,2024/04/02*d5252814");
+    gm.feedSentence("$command,mode,response: OK*27");
+    gm.feedSentence("#MODE,98,GPS,UNKNOWN,1,14.733,30,0,0,18;MODE ROVER UAV,*384fe96e");
+    gm.feedSentence("$command,uniloglist com1,response: OK*3c");
+    gm.feedSentence("#UNILOGLIST,98,GPS,UNKNOWN,1,14.733,30,0,0,18;");
+    gm.feedSentence("< 1");
+    gm.feedSentence("< KSXT COM1 0.2 ");
+    gm.feedSentence("$command,log com1 headingstatusa once,response: OK*47");
+    gm.feedSentence("#HEADINGSTATUSA,98,GPS,UNKNOWN,1,14.733,30,0,0,18;101.6000,2.5000,0.0000,0.0000,0.0000,0.0000*0cf05c74");
+
+    // $command echoes must be suppressed during audit
+    ASSERT_TRUE(cliOutput.find("$command") == std::string::npos);
+    // Structured audit report card must be rendered
+    ASSERT_TRUE(cliOutput.find("GNSS Receiver Audit Report") != std::string::npos);
+    ASSERT_TRUE(cliOutput.find("Hardware Model: UM982 (PN: HRPT00-S10C-P)") != std::string::npos);
+    ASSERT_TRUE(cliOutput.find("Serial Number:  2310415000012-LR23C1261413487") != std::string::npos);
+    ASSERT_TRUE(cliOutput.find("Firmware:       R4.10Build13495 (2024/04/02)") != std::string::npos);
+    ASSERT_TRUE(cliOutput.find("Operating Mode: ROVER UAV") != std::string::npos);
+    ASSERT_TRUE(cliOutput.find("COM1 Output:    KSXT COM1 0.2s (5 Hz)") != std::string::npos);
+    ASSERT_TRUE(cliOutput.find("Baseline Range: 101.6 cm (± 2.5 cm)  [CONSTRAINED]") != std::string::npos);
+    ASSERT_TRUE(cliOutput.find("Overall Config: [OK] Optimal for Dual-Antenna Compass") != std::string::npos);
+    cliOutput.clear();
+
+    // 9. 'gps config' execution and progress mirroring
+    sentUartData.clear();
+    cli.executeCommand("gps config", 2000);
+    ASSERT_TRUE(cliOutput.find("[GPS CONFIG] Initiating configuration pipeline") != std::string::npos);
+    ASSERT_TRUE(cliOutput.find("[GPS CONFIG] Starting receiver configuration...") != std::string::npos);
+    ASSERT_TRUE(gm.getConfigPipeline().isRunning());
+    cliOutput.clear();
+
+    // Advance pipeline step-by-step and verify CLI output
+    gm.feedSentence("<OK", 2050); // MODE -> SIGNALGROUP
+    gm.feedSentence("<OK", 2100); // SIGNALGROUP -> UNLOG
+    gm.feedSentence("<OK", 2150); // UNLOG -> KSXT
+    gm.feedSentence("<OK", 2200); // KSXT -> FIXLENGTH
+    gm.feedSentence("<OK", 2250); // FIXLENGTH -> SAVECONFIG
+    gm.feedSentence("<OK", 2300); // SAVECONFIG -> VerifyStream
+    ASSERT_TRUE(cliOutput.find("[GPS CONFIG] Settings saved. Verifying KSXT 5 Hz stream...") != std::string::npos);
+    cliOutput.clear();
+
+    // Complete stream verification
+    char ksxtSentence[256];
+    GpsSimulator::generateKsxt(ksxtSentence, sizeof(ksxtSentence),
+                              "20261109120000.00", 37.7749, -122.4194,
+                              90.0, BEARING_FIXED);
+    gm.feedSentence(ksxtSentence, 2350);
+    ASSERT_TRUE(cliOutput.find("[GPS CONFIG] Complete! Receiver configured at 5 Hz KSXT.") != std::string::npos);
+    cliOutput.clear();
+
+    // 10. 'gps config baseline 101.6 2.5' syntax
+    gm.getConfigPipeline().reset();
+    cli.executeCommand("gps config baseline 101.6 2.5", 3000);
+    ASSERT_TRUE(cliOutput.find("Baseline: 101.6 cm, Tol: 2.5 cm") != std::string::npos);
+    ASSERT_NEAR(gm.getConfigPipeline().getBaselineCm(), 101.6f, 1e-4);
+    ASSERT_NEAR(gm.getConfigPipeline().getToleranceCm(), 2.5f, 1e-4);
+    cliOutput.clear();
+
+    // 11. BLE Wireless transport execution
+    cli.setOutputHandler(nullptr, nullptr);
+    ble.setConnected(true);
+    ble.setSubscribed(true);
+    ble.clearTxBuffer();
+    ble.simulateRx("gps probe\r\n", 11);
+    ASSERT_TRUE(cli.getActiveSource() == CLI_SOURCE_BLE);
+    ASSERT_TRUE(ble.getTxBuffer().find("[GPS PROBE] Transmitting 'version'") != std::string::npos);
+
+    // 12. 'ble' status, suffix configuration, and diagnostics toggle over BLE transport
+    ble.clearTxBuffer();
+    ble.simulateRx("ble suffix\r\n", 12);
+    ASSERT_TRUE(ble.getTxBuffer().find("Device name: GNSS-Compass-test") != std::string::npos);
+    ble.clearTxBuffer();
+
+    ble.simulateRx("ble suffix Rover-42\r\n", 21);
+    ASSERT_TRUE(ble.getTxBuffer().find("Device name updated to: GNSS-Compass-Rover-42") != std::string::npos);
+    ASSERT_TRUE(ble.getTxBuffer().find("Saved to non-volatile storage") != std::string::npos);
+    ASSERT_TRUE(ble.getTxBuffer().find("scan cache") != std::string::npos);
+    ble.clearTxBuffer();
+
+    ble.simulateRx("ble suffix reset\r\n", 18);
+    ASSERT_TRUE(ble.getTxBuffer().find("Device name reset to default: GNSS-Compass-test") != std::string::npos);
+    ble.clearTxBuffer();
+
+    ble.simulateRx("ble suffix 12345678901234567\r\n", 29);
+    ASSERT_TRUE(ble.getTxBuffer().find("Suffix too long") != std::string::npos);
+    ble.clearTxBuffer();
+
+    ble.simulateRx("ble suffix bad name\r\n", 21);
+    ASSERT_TRUE(ble.getTxBuffer().find("Invalid suffix") != std::string::npos);
+    ble.clearTxBuffer();
+
+    ble.simulateRx("ble diag on\r\n", 13);
+    ASSERT_TRUE(ble.isDiagEnabled());
+    ASSERT_TRUE(ble.getTxBuffer().find("Diagnostics ON") != std::string::npos);
+    ble.clearTxBuffer();
+    ble.simulateRx("ble\r\n", 5);
+    ASSERT_TRUE(ble.getTxBuffer().find("Connected: yes") != std::string::npos);
+    ASSERT_TRUE(ble.getTxBuffer().find("Diagnostics: on") != std::string::npos);
+    ASSERT_TRUE(ble.getTxBuffer().find("TX queue:") != std::string::npos);
+    ble.simulateRx("ble diag off\r\n", 14);
+    ASSERT_TRUE(!ble.isDiagEnabled());
+
+    // 13. 'gps check' on-demand probe when TX state is Unknown
+    GpsManager gmCheck;
+    Calibration calCheck;
+    GpsSimulator simCheck;
+    SerialCli cliCheck(gmCheck, calCheck, simCheck);
+    cliCheck.begin();
+
+    std::string checkOutput;
+    cliCheck.setOutputHandler([](const char *str, void *ctx) {
+        static_cast<std::string*>(ctx)->append(str);
+    }, &checkOutput);
+
+    std::string checkSentUart;
+    gmCheck.setTxHandler([](const uint8_t *data, size_t len, void *ctx) {
+        static_cast<std::string*>(ctx)->append(reinterpret_cast<const char*>(data), len);
+    }, &checkSentUart);
+
+    ASSERT_TRUE(gmCheck.getTxState() == GpsTxState::Unknown);
+    cliCheck.executeCommand("gps check", 500);
+    ASSERT_TRUE(checkOutput.find("[GPS AUDIT] Testing TX connection on GPIO 43 before query...") != std::string::npos);
+    ASSERT_TRUE(gmCheck.getTxState() == GpsTxState::Probing);
+    ASSERT_STR_EQ(checkSentUart.c_str(), "version\r\n");
+
+    // Receiver acknowledges: audit queries must execute automatically
+    checkSentUart.clear();
+    gmCheck.feedSentence("<OK", 550);
+    ASSERT_TRUE(gmCheck.isSendAvailable());
+    ASSERT_TRUE(checkOutput.find("Receiver acknowledged!") != std::string::npos);
+    ASSERT_TRUE(checkOutput.find("[GPS AUDIT] Querying receiver parameters") != std::string::npos);
+    ASSERT_TRUE(checkSentUart.find("VERSION\r\n") != std::string::npos);
+    ASSERT_TRUE(checkSentUart.find("MODE\r\n") != std::string::npos);
+    ASSERT_TRUE(checkSentUart.find("UNILOGLIST COM1\r\n") != std::string::npos);
+    ASSERT_TRUE(checkSentUart.find("LOG COM1 HEADINGSTATUSA ONCE\r\n") != std::string::npos);
 
     PASS();
 }
@@ -2762,6 +3481,455 @@ void test_legacy_nmea_end_to_end() {
     PASS();
 }
 
+void test_ble_serial_manager() {
+    TEST("BleSerialManager lifecycle, callbacks, and TX buffering");
+
+    BleSerialManager ble;
+    ASSERT_TRUE(!ble.isConnected());
+    ASSERT_TRUE(!ble.isSubscribed());
+    ble.begin("Compass-Test");
+    ASSERT_STR_EQ(ble.getDeviceName(), "Compass-Test");
+    ASSERT_TRUE(ble.isAdvertising());
+
+    bool connState = false;
+    int connCalls = 0;
+    struct ConnCapture { bool *state; int *calls; } capture{&connState, &connCalls};
+    ble.setConnectionCallback([](bool connected, void *ctx) {
+        auto *c = static_cast<ConnCapture*>(ctx);
+        *c->state = connected;
+        (*c->calls)++;
+    }, &capture);
+
+    ble.setConnected(true);
+    ASSERT_TRUE(ble.isConnected());
+    ASSERT_TRUE(!ble.isAdvertising());
+    ASSERT_TRUE(connState == true);
+    ASSERT_TRUE(connCalls == 1);
+
+    // Connected but not yet subscribed (client still discovering services): output is dropped
+    ASSERT_TRUE(!ble.isSubscribed());
+    ble.println("too early");
+    ble.update(0);
+    ASSERT_TRUE(ble.getTxBuffer().empty());
+    ASSERT_TRUE(ble.getTxQueued() == 0);
+
+    ble.setSubscribed(true);
+    ASSERT_TRUE(ble.isSubscribed());
+
+    // Output is queued and only sent from update()
+    ble.print("Hello ");
+    ble.println("BLE");
+    ASSERT_TRUE(ble.getTxBuffer().empty());
+    ASSERT_TRUE(ble.getTxQueued() == 11);
+    ble.update(0);
+    ASSERT_STR_EQ(ble.getTxBuffer().c_str(), "Hello BLE\r\n");
+    ASSERT_TRUE(ble.getTxQueued() == 0);
+
+    ble.clearTxBuffer();
+    ble.printFormat("Value: %d", 42);
+    ble.update(0);
+    ASSERT_STR_EQ(ble.getTxBuffer().c_str(), "Value: 42");
+
+    // Long formatted output is not truncated
+    ble.clearTxBuffer();
+    std::string longArg(700, 'x');
+    ble.printFormat("<%s>", longArg.c_str());
+    ble.flushTx();  // 702 bytes at 20 bytes per notification takes several updates
+    ASSERT_TRUE(ble.getTxBuffer() == "<" + longArg + ">");
+
+    std::string receivedData;
+    ble.setDataReceivedCallback([](const char *data, size_t len, void *ctx) {
+        static_cast<std::string*>(ctx)->append(data, len);
+    }, &receivedData);
+
+    ble.simulateRx("status\n", 7);
+    ASSERT_STR_EQ(receivedData.c_str(), "status\n");
+
+    // RX bytes left over from a previous session are discarded on reconnect
+    receivedData.clear();
+    ble.setDataReceivedCallback(nullptr, nullptr);
+    ble.handleRxData("stale", 5);          // arrives, but is not drained before the link drops
+    ble.handleDisconnect();
+    ble.handleConnect(1);
+    ble.handleRxData("fresh\n", 6);
+    ble.setDataReceivedCallback([](const char *data, size_t len, void *ctx) {
+        static_cast<std::string*>(ctx)->append(data, len);
+    }, &receivedData);
+    connCalls = 0;
+    ble.update(0);
+    ASSERT_STR_EQ(receivedData.c_str(), "fresh\n");
+    // Disconnect + reconnect between two updates yields one state-based callback
+    ASSERT_TRUE(connCalls == 1);
+    ASSERT_TRUE(connState == true);
+
+    ble.setConnected(false);
+    ASSERT_TRUE(!ble.isConnected());
+    ASSERT_TRUE(!ble.isSubscribed());
+    ASSERT_TRUE(connState == false);
+
+    // disconnect() waits for queued output to be sent before dropping the link
+    ble.setConnected(true);
+    ble.setSubscribed(true);
+    ble.clearTxBuffer();
+    ble.println("bye");
+    ble.disconnect();
+    ble.print("after disconnect request");  // ignored once a disconnect is pending
+    ble.update(1000);
+    ASSERT_STR_EQ(ble.getTxBuffer().c_str(), "bye\r\n");
+    ASSERT_TRUE(ble.isConnected());          // grace period for the last notification
+    ble.update(1200);
+    ASSERT_TRUE(!ble.isConnected());
+
+    // RF diagnostics flag defaults off and toggles
+    ASSERT_TRUE(!ble.isDiagEnabled());
+    ble.setDiagEnabled(true);
+    ASSERT_TRUE(ble.isDiagEnabled());
+    ble.setDiagEnabled(false);
+    ASSERT_TRUE(!ble.isDiagEnabled());
+
+    // Suffix configuration & persistence
+    BleSerialManager::resetHostStorage();
+    BleSerialManager bleSuff;
+    bleSuff.begin();
+    ASSERT_STR_EQ(bleSuff.getDeviceName(), "GNSS-Compass-test");
+    ASSERT_STR_EQ(bleSuff.getDeviceSuffix(), "test");
+    ASSERT_TRUE(!bleSuff.isCustomSuffix());
+
+    // Validation: too long (> 16 chars)
+    ASSERT_TRUE(!bleSuff.setDeviceSuffix("12345678901234567"));
+    // Validation: contains spaces
+    ASSERT_TRUE(!bleSuff.setDeviceSuffix("bad suffix"));
+    // Validation: empty
+    ASSERT_TRUE(!bleSuff.setDeviceSuffix("   "));
+
+    // Valid suffix
+    ASSERT_TRUE(bleSuff.setDeviceSuffix("Rover-99"));
+    ASSERT_STR_EQ(bleSuff.getDeviceName(), "GNSS-Compass-Rover-99");
+    ASSERT_STR_EQ(bleSuff.getDeviceSuffix(), "Rover-99");
+    ASSERT_TRUE(bleSuff.isCustomSuffix());
+
+    // Persistence across instances
+    BleSerialManager bleSuff2;
+    bleSuff2.begin();
+    ASSERT_STR_EQ(bleSuff2.getDeviceName(), "GNSS-Compass-Rover-99");
+    ASSERT_STR_EQ(bleSuff2.getDeviceSuffix(), "Rover-99");
+    ASSERT_TRUE(bleSuff2.isCustomSuffix());
+
+    // Reset back to default
+    ASSERT_TRUE(bleSuff2.resetDeviceSuffix());
+    ASSERT_STR_EQ(bleSuff2.getDeviceName(), "GNSS-Compass-test");
+    ASSERT_STR_EQ(bleSuff2.getDeviceSuffix(), "test");
+    ASSERT_TRUE(!bleSuff2.isCustomSuffix());
+
+    BleSerialManager::resetHostStorage();
+
+    PASS();
+}
+
+void test_ble_tx_queue() {
+    TEST("BleSerialManager TX queue: MTU chunking, backoff, congestion, overflow, disconnect");
+
+    BleSerialManager ble;
+    ble.begin("Queue-Test");
+    ble.setConnected(true);
+    ble.setSubscribed(true);
+
+    // Default MTU 23 -> 20-byte notifications
+    std::string payload;
+    for (int i = 0; i < 100; ++i) payload += static_cast<char>('A' + (i % 26));
+    ble.print(payload.c_str());
+    ble.update(0);
+    ASSERT_TRUE(ble.getTxBuffer() == payload);
+    ASSERT_TRUE(ble.getNotifyCount() == 5);
+    ASSERT_TRUE(ble.getMaxNotifySize() == 20);
+
+    // Negotiated MTU is reported right away and caps notifications at 244 bytes
+    ble.setMtu(512);
+    ASSERT_TRUE(ble.getMtu() == 512);
+    ble.clearTxBuffer();
+    std::string big(1000, 'm');
+    ble.print(big.c_str());
+    ble.update(0);
+    ASSERT_TRUE(ble.getTxBuffer() == big);
+    ASSERT_TRUE(ble.getMaxNotifySize() == 244);
+
+    // A rejected send backs off and retries the same chunk later, without losing data
+    ble.clearTxBuffer();
+    ble.failNextSends(1);
+    ble.print("retry me");
+    ble.update(100);
+    ASSERT_TRUE(ble.getTxBuffer().empty());
+    ASSERT_TRUE(ble.getTxRetries() == 1);
+    ble.update(105);                         // still inside the backoff window
+    ASSERT_TRUE(ble.getTxBuffer().empty());
+    ble.update(130);
+    ASSERT_STR_EQ(ble.getTxBuffer().c_str(), "retry me");
+
+    // Congestion pauses sending until the stack clears it
+    ble.clearTxBuffer();
+    ble.setCongested(true);
+    ble.print("held");
+    ble.update(200);
+    ASSERT_TRUE(ble.getTxBuffer().empty());
+    ble.setCongested(false);
+    ble.update(210);
+    ASSERT_STR_EQ(ble.getTxBuffer().c_str(), "held");
+
+    // A ~100-line dump fits in the queue and drains over several updates
+    ble.clearTxBuffer();
+    std::string dump;
+    char line[96];
+    for (int i = 0; i < 100; ++i) {
+        std::snprintf(line, sizeof(line), "%3d | FN31pr | 2026-11-10 12:00 | 123.4 km | qualified stop", i);
+        ble.println(line);
+        dump += line;
+        dump += "\r\n";
+    }
+    ASSERT_TRUE(dump.size() > 6000);
+    ASSERT_TRUE(ble.getTxDroppedBytes() == 0);
+    ASSERT_TRUE(ble.getTxQueued() == dump.size());
+    for (int i = 0; i < 20 && ble.getTxQueued() > 0; ++i) ble.update(300 + i);
+    ASSERT_TRUE(ble.getTxBuffer() == dump);
+
+    // Overflow: writes are dropped until the queue drains, then one notice is sent
+    ble.clearTxBuffer();
+    std::string block(5000, 'q');
+    ble.print(block.c_str());
+    ble.print(block.c_str());
+    ble.print(block.c_str());   // does not fit (15000 > 12288)
+    ble.print("x");             // dropped too: queue has not drained yet
+    ASSERT_TRUE(ble.getTxDroppedBytes() == 5001);
+    for (int i = 0; i < 30; ++i) ble.update(400 + i);
+    ASSERT_TRUE(ble.getTxBuffer().find(block + block) == 0);
+    ASSERT_TRUE(ble.getTxBuffer().find("5001 bytes of output dropped") != std::string::npos);
+    ASSERT_TRUE(ble.getTxQueued() == 0);
+    ble.clearTxBuffer();
+    ble.print("ok");
+    ble.update(500);
+    ASSERT_STR_EQ(ble.getTxBuffer().c_str(), "ok");
+
+    // Queued output is discarded when the link drops
+    ble.clearTxBuffer();
+    ble.setCongested(true);
+    ble.print("never sent");
+    ble.setConnected(false);
+    ASSERT_TRUE(ble.getTxQueued() == 0);
+    ble.setConnected(true);
+    ble.setSubscribed(true);
+    ble.update(600);
+    ASSERT_TRUE(ble.getTxBuffer().empty());
+
+    PASS();
+}
+
+void test_ble_diagnostics_and_text_helpers() {
+    TEST("BleDiagnostics event log policy, LineBuffer editing, and textout helpers");
+
+    BleDiagnostics diag;
+    std::string log;
+    diag.setLogSink([](const char *line, void *ctx) {
+        static_cast<std::string*>(ctx)->append(line);
+    }, &log);
+
+    // Disconnects are always logged; MTU only with diagnostics enabled
+    const uint8_t bda[6] = {0xaa, 0xbb, 0xcc, 0x01, 0x02, 0x03};
+    diag.push(BleDiagnostics::EVT_DISCONNECT, 0, 0, 0x13, 0, 0, bda);
+    diag.push(BleDiagnostics::EVT_MTU, 0, 0, 247);
+    diag.update(1000, nullptr);
+    ASSERT_TRUE(log.find("DISCONNECT") != std::string::npos);
+    ASSERT_TRUE(log.find("reason=0x13 (remote user terminated (clean))") != std::string::npos);
+    ASSERT_TRUE(log.find("aa:bb:cc:01:02:03") != std::string::npos);
+    ASSERT_TRUE(log.find("MTU") == std::string::npos);
+
+    log.clear();
+    diag.setEnabled(true);
+    diag.push(BleDiagnostics::EVT_MTU, 0, 0, 247);
+    diag.update(2000, nullptr);
+    ASSERT_TRUE(log.find("mtu=247") != std::string::npos);
+
+    // Queue overflow is counted and reported, never blocks
+    log.clear();
+    for (int i = 0; i < 30; ++i) diag.push(BleDiagnostics::EVT_ADV_REQUEST, 0);
+    diag.update(2100, nullptr);
+    ASSERT_TRUE(log.find("diagnostic events dropped") != std::string::npos);
+
+    // LineBuffer: printable filter, backspace, line completion
+    LineBuffer lb;
+    ASSERT_TRUE(lb.feed('\n') == LineBuffer::Ignored);
+    ASSERT_TRUE(lb.feed('a') == LineBuffer::Appended);
+    ASSERT_TRUE(lb.feed('x') == LineBuffer::Appended);
+    ASSERT_TRUE(lb.feed('\b') == LineBuffer::Erased);
+    ASSERT_TRUE(lb.feed('\x01') == LineBuffer::Ignored);
+    ASSERT_TRUE(lb.feed('b') == LineBuffer::Appended);
+    ASSERT_TRUE(lb.feed('\r') == LineBuffer::LineReady);
+    ASSERT_STR_EQ(lb.c_str(), "ab");
+    lb.clear();
+    ASSERT_TRUE(lb.empty());
+    // Bare Enter (\r) on empty buffer returns LineReady, and trailing \n is ignored
+    ASSERT_TRUE(lb.feed('\r') == LineBuffer::LineReady);
+    ASSERT_STR_EQ(lb.c_str(), "");
+    lb.clear();
+    ASSERT_TRUE(lb.feed('\n') == LineBuffer::Ignored);
+
+    for (int i = 0; i < 300; ++i) lb.feed('z');
+    ASSERT_TRUE(lb.length() == LineBuffer::kCapacity - 1);
+
+    // Ctrl+C (3) and Ctrl+U (21) clear the line
+    lb.reset();
+    lb.feed('r');
+    lb.feed('e');
+    lb.feed('t');
+    ASSERT_TRUE(lb.feed(3) == LineBuffer::Cleared); // Ctrl+C
+    ASSERT_TRUE(lb.empty());
+    lb.feed('r');
+    lb.feed('e');
+    ASSERT_TRUE(lb.feed(21) == LineBuffer::Cleared); // Ctrl+U
+    ASSERT_TRUE(lb.empty());
+
+    // textout::println delivers text and CRLF in one sink call, even for long lines
+    struct Capture { std::string text; int calls = 0; } cap;
+    auto sink = [](const char *s, void *ctx) {
+        auto *c = static_cast<Capture*>(ctx);
+        c->text += s;
+        c->calls++;
+    };
+    textout::println(sink, &cap, "hello");
+    ASSERT_STR_EQ(cap.text.c_str(), "hello\r\n");
+    ASSERT_TRUE(cap.calls == 1);
+    cap = Capture();
+    std::string longLine(1000, 'L');
+    textout::println(sink, &cap, longLine.c_str());
+    ASSERT_TRUE(cap.text == longLine + "\r\n");
+    ASSERT_TRUE(cap.calls == 1);
+
+    PASS();
+}
+
+void test_serial_cli_dual_transport() {
+    TEST("SerialCli dual-transport isolation, BLE command routing, and broadcast");
+
+    GpsManager gps;
+    Calibration cal;
+    GpsSimulator sim;
+    RoverLogManager mgr;
+    BleSerialManager ble;
+    SerialCli cli(gps, cal, sim, &mgr, &ble);
+
+    cli.begin();
+    ble.setConnected(true);
+    ble.setSubscribed(true);
+
+    // 1. Verify BLE execution of 'status'
+    ble.clearTxBuffer();
+    ble.simulateRx("status\r\n", 8);
+    ASSERT_TRUE(cli.getActiveSource() == CLI_SOURCE_BLE);
+    ASSERT_TRUE(ble.getTxBuffer().find("GNSS Receiver Stream Diagnosis") != std::string::npos);
+
+    // 1b. Verify bare Enter over BLE emits prompt
+    ble.clearTxBuffer();
+    ble.simulateRx("\r\n", 2);
+    ASSERT_STR_EQ(ble.getTxBuffer().c_str(), "> ");
+
+    // 2. Verify independent line buffering: partial keystrokes on BLE and USB do not collide
+    ble.clearTxBuffer();
+    cli.handleBleInput("ro", 2); // Partial command on BLE
+    // Meanwhile, execute a command from USB directly
+    std::string usbOutput;
+    cli.setOutputHandler([](const char *s, void *ctx) {
+        static_cast<std::string*>(ctx)->append(s);
+    }, &usbOutput);
+    cli.executeCommand("cal", 0, CLI_SOURCE_USB);
+    ASSERT_TRUE(cli.getActiveSource() == CLI_SOURCE_USB);
+    ASSERT_TRUE(usbOutput.find("Antenna Calibration Status") != std::string::npos);
+
+    // Now complete the BLE command "ver status\r\n"
+    cli.setOutputHandler(nullptr); // restore default output routing
+    cli.handleBleInput("ver status\r\n", 12);
+    ASSERT_TRUE(cli.getActiveSource() == CLI_SOURCE_BLE);
+    ble.flushTx();
+    ASSERT_TRUE(ble.getTxBuffer().find("Rover Transit Status") != std::string::npos);
+
+    // 3. Verify broadcast reaches both USB and BLE
+    ble.clearTxBuffer();
+    std::string broadcastCapture;
+    cli.setOutputHandler([](const char *s, void *ctx) {
+        static_cast<std::string*>(ctx)->append(s);
+    }, &broadcastCapture);
+    cli.broadcastln("SYSTEM BOOT COMPLETED");
+    ASSERT_TRUE(broadcastCapture.find("SYSTEM BOOT COMPLETED\r\n") != std::string::npos);
+    ble.flushTx();
+    ASSERT_TRUE(ble.getTxBuffer().find("SYSTEM BOOT COMPLETED\r\n") != std::string::npos);
+
+    // 4. Verify 'disconnect' command terminates BLE connection
+    cli.setOutputHandler(nullptr);
+    ble.clearTxBuffer();
+    cli.executeCommand("disconnect", 0, CLI_SOURCE_BLE);
+    ble.update(1000);  // sends the reply, then waits briefly before dropping the link
+    ASSERT_TRUE(ble.getTxBuffer().find("Disconnecting BLE connection...") != std::string::npos);
+    ble.update(1200);
+    ASSERT_TRUE(!ble.isConnected());
+
+    // 5. Output handler replaces the USB console for replies too, while BLE still gets them
+    ble.setConnected(true);
+    ble.setSubscribed(true);
+    ble.clearTxBuffer();
+    std::string mirror;
+    cli.setOutputHandler([](const char *s, void *ctx) {
+        static_cast<std::string*>(ctx)->append(s);
+    }, &mirror);
+    ble.simulateRx("cal\r\n", 5);
+    ASSERT_TRUE(ble.getTxBuffer().find("Antenna Calibration Status") != std::string::npos);
+    ASSERT_TRUE(mirror.find("Antenna Calibration Status") != std::string::npos);
+    cli.setOutputHandler(nullptr);
+
+    PASS();
+}
+
+void test_app_controller_ble_integration() {
+    TEST("AppController BLE lifecycle and UI connection state");
+
+    Board board;
+    DisplayUi display;
+    InputManager input;
+    GpsManager gps;
+    Calibration cal;
+    GpsSimulator sim;
+    BleSerialManager ble;
+    SerialCli cli(gps, cal, sim, nullptr, &ble);
+    AppController app(board, display, input, gps, cal, sim, cli, nullptr, &ble);
+
+    app.begin();
+    ASSERT_TRUE(app.getBleManager() == &ble);
+
+    // Verify initial disconnected state
+    ASSERT_TRUE(!ble.isConnected());
+    ASSERT_TRUE(!app.isBleConnected());
+
+    // Connect BLE
+    ble.setConnected(true);
+    ASSERT_TRUE(ble.isConnected());
+    ASSERT_TRUE(app.isBleConnected());
+
+    // A BLE command makes BLE the reply target; a partial line is left pending
+    ble.setSubscribed(true);
+    ble.simulateRx("cal\r\nro", 7);
+    ASSERT_TRUE(cli.getActiveSource() == CLI_SOURCE_BLE);
+
+    // Disconnect BLE: replies go back to USB and the partial line is discarded
+    ble.setConnected(false);
+    ASSERT_TRUE(!ble.isConnected());
+    ASSERT_TRUE(!app.isBleConnected());
+    ASSERT_TRUE(cli.getActiveSource() == CLI_SOURCE_USB);
+
+    ble.setConnected(true);
+    ble.setSubscribed(true);
+    ble.clearTxBuffer();
+    ble.simulateRx("ver status\r\n", 12);  // would be "rover status" if "ro" had survived
+    ASSERT_TRUE(ble.getTxBuffer().find("Unknown command: 'ver status'") != std::string::npos);
+
+    PASS();
+}
+
 int main() {
     std::cout << "========================================" << std::endl;
     std::cout << "  GNSS Compass Unit Test Suite" << std::endl;
@@ -2788,7 +3956,10 @@ int main() {
     test_calibration_class();
     test_gps_simulator();
     test_gps_manager();
+    test_gps_tx_discovery();
+    test_gps_config_pipeline();
     test_serial_cli();
+    test_serial_cli_gps_commands();
     test_input_manager_hit_testing();
     test_input_manager_gestures();
     test_ui_formatters_and_modal_geometry();
@@ -2809,6 +3980,11 @@ int main() {
     test_serial_cli_rover_commands();
     test_rover_simulation_scenarios_e2e();
     test_legacy_nmea_end_to_end();
+    test_ble_serial_manager();
+    test_ble_tx_queue();
+    test_ble_diagnostics_and_text_helpers();
+    test_serial_cli_dual_transport();
+    test_app_controller_ble_integration();
 
     std::cout << "========================================" << std::endl;
     std::cout << "  All " << tests_passed << " / " << tests_run << " tests PASSED successfully!" << std::endl;

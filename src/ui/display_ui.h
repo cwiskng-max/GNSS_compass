@@ -36,6 +36,7 @@ struct MainScreenState {
     int hours = 0;
     int minutes = 0;
     bool hasTime = false;
+    bool bleConnected = false;
 };
 
 class DisplayUi {
@@ -58,6 +59,7 @@ public:
     void clearRoverCard();
     void renderArrlDistance(const char *myGrid, const char *targetGrid);
     void renderUtcTime(int hours, int minutes, bool hasTime);
+    void renderBleStatus(bool connected);
     void showFooterText(const char *msg, uint16_t color = 0x7BEF);
     void showStatusCard(const char *msg, uint16_t bgColor, uint16_t fgColor);
 

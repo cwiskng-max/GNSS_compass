@@ -36,3 +36,37 @@ While mechanical assembly is straightforward and intuitive, keep in mind this pr
 * **Antenna Mount Clamp Fit:** Due to slight manufacturing tolerances, the linked 25mm motor mount bracket (Item 13) may not clamp down completely tight onto the 25mm carbon fiber tube out of the box.
   * **Shim method:** Wrap a strip of aluminum foil 3 to 4 times around the pole where the bracket mounts, then tighten the clamp over it.
   * **Sanding method:** Alternatively, sand or file down the mating gap surfaces of the C-shaped clamp so the halves close together more tightly (only about 1 mm of material needs to be removed).
+
+---
+
+## 3. GX12 Interconnect Pinout (Display ↔ Receiver)
+
+The display (ESP32-S3) and the receiver (UM982) are connected by the 4-conductor cable (Item 9) terminated in GX12 4-pin aviation connectors (Item 8). Following this pinout is recommended — if builds share it, displays and receivers can be swapped and shared between them.
+
+### Pin Assignment
+
+Signal names are given from the **ESP32 (display) perspective**: **TX** is the ESP32 transmit line, which goes to the UM982 **RX** input; **RX** is the ESP32 receive line, fed by the UM982 **TX** output.
+
+| GX12 Pin | Signal | ESP32-S3 (Display) | UM982 (Receiver) | Notes |
+| :---: | :--- | :--- | :--- | :--- |
+| **1** | **GND** | GND | GND | Common ground. |
+| **2** | **TX** | GPIO 43 (`TXD2`) — transmit | COM1 **RX** | Commands / configuration from ESP32 to receiver (`gps config`). |
+| **3** | **RX** | GPIO 44 (`RXD2`) — receive | COM1 **TX** | `$KSXT` / NMEA data stream from receiver to ESP32 (115200 baud). |
+| **4** | **5V** | 5V | 5V | Regulated 5 V supply. |
+
+### Connector Face Layout
+
+Connector at the end of the cable attached to the ESP32, **viewed looking into the mating face** (the pin side that plugs into the chassis socket). When soldering from the rear (solder-cup side), the layout is mirrored left-to-right — Pin 1 and Pin 4 swap sides, as do Pin 2 and Pin 3.
+
+```text
+            [ Top Notch ]
+          /               \
+        (1)               (4)      ← Pin 1 (GND) & Pin 4 (5V) at outer extremes
+         \   (2)     (3)   /       ← Pin 2 (TX)  & Pin 3 (RX) inside the arc
+          \_______________/
+```
+
+* **Pin 1 (GND)** and **Pin 4 (5V)** sit at the outer ends of the arc, on either side of the keying notch.
+* **Pin 2 (TX)** and **Pin 3 (RX)** sit on the inner part of the arc, below the outer pins.
+
+> **Tip:** Before connecting a display to a receiver for the first time, verify with a multimeter that 5 V appears between pins 4 and 1, and that pins 2 and 3 are not swapped — a TX/RX swap will not damage the hardware, but the display will receive no GNSS data and `gps config` will fail.

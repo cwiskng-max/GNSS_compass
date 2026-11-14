@@ -15,6 +15,7 @@
 #include "calibration.h"
 #include "../gnss/simulator.h"
 #include "../protocol/serial_cli.h"
+#include "../protocol/ble_serial_manager.h"
 #include "rover_log_manager.h"
 #include "../ui/rover_card.h"
 #include "../ui/rover_history_modal.h"
@@ -44,7 +45,8 @@ public:
                   Calibration &calibration,
                   GpsSimulator &gpsSimulator,
                   SerialCli &serialCli,
-                  RoverLogManager *roverLogManager = nullptr);
+                  RoverLogManager *roverLogManager = nullptr,
+                  BleSerialManager *bleManager = nullptr);
 
     void begin();
     void update(unsigned long nowMs = 0);
@@ -120,6 +122,12 @@ public:
     Calibration& getCalibration() { return calibration_; }
     GpsSimulator& getGpsSimulator() { return gpsSimulator_; }
     SerialCli& getSerialCli() { return serialCli_; }
+    // BLE accessors used by the unit tests to check wiring and UI connection state
+    BleSerialManager* getBleManager() const { return bleManager_; }
+    bool isBleConnected() const { return bleConnected_; }
+
+    // Invoked (on the main loop) by BleSerialManager's connection callback
+    void handleBleConnectionChanged(bool connected);
 
 private:
     Board &board_;
@@ -129,9 +137,10 @@ private:
     Calibration &calibration_;
     GpsSimulator &gpsSimulator_;
     SerialCli &serialCli_;
-
     RoverLogManager roverLogManagerOwned_;
     RoverLogManager *roverLogManagerRef_;
+    BleSerialManager *bleManager_;
+    bool bleConnected_;
 
     GridEditor gridEditor_;
 

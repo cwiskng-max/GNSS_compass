@@ -1,6 +1,7 @@
 #include "gps_manager.h"
 #include "../protocol/nmea_parser.h"
 #include <cmath>
+#include <cstdio>
 
 GpsManager::GpsManager()
     : hasHeading_(false),
@@ -19,6 +20,10 @@ GpsManager::GpsManager()
       hdtPacketCount_(0),
       lastHdtMillis_(0),
       lineIndex_(0),
+      txState_(GpsTxState::Unknown),
+      lastProbeTime_(0),
+      probeRetries_(0),
+      configPipeline_(*this),
       simulator_(nullptr),
       onHeadingUpdated_(nullptr),
       headingContext_(nullptr),
@@ -27,7 +32,11 @@ GpsManager::GpsManager()
       onTimeUpdated_(nullptr),
       timeContext_(nullptr),
       onRawSentence_(nullptr),
-      sentenceContext_(nullptr)
+      sentenceContext_(nullptr),
+      onResponse_(nullptr),
+      responseContext_(nullptr),
+      onProbeResult_(nullptr),
+      probeResultContext_(nullptr)
 #if defined(ARDUINO)
       , serialPort_(2)
 #endif
@@ -52,12 +61,75 @@ void GpsManager::checkStaleness(unsigned long nowMs) {
             }
         }
     }
+
+    // Stream disconnection / cable unplugged detection:
+    // If we previously confirmed TX state but have been silent for >= 5000ms,
+    // reset TX state to Unknown so that reconnecting or hot-plugging the
+    // receiver triggers a fresh discovery probe.
+    if ((txState_ == GpsTxState::Available || txState_ == GpsTxState::Unavailable) &&
+        lastByteMillis_ > 0 && (nowMs - lastByteMillis_) >= 5000) {
+        txState_ = GpsTxState::Unknown;
+        probeRetries_ = 0;
+    }
+}
+
+void GpsManager::checkTxProbe(unsigned long nowMs) {
+    if (txState_ != GpsTxState::Probing) {
+        return;
+    }
+    if ((nowMs - lastProbeTime_) >= GPS_TX_PROBE_TIMEOUT_MS) {
+        if (probeRetries_ < GPS_TX_PROBE_MAX_RETRIES) {
+            probeRetries_++;
+            lastProbeTime_ = nowMs;
+            if (onProbeResult_) {
+                char msg[96];
+                std::snprintf(msg, sizeof(msg),
+                              "[GPS PROBE] Probe timed out, retrying (attempt %u/%u)...",
+                              probeRetries_, GPS_TX_PROBE_MAX_RETRIES);
+                onProbeResult_(GpsTxState::Probing, msg, probeResultContext_);
+            }
+            sendCommand("version");
+        } else {
+            txState_ = GpsTxState::Unavailable;
+            if (onProbeResult_) {
+                onProbeResult_(GpsTxState::Unavailable,
+                               "[GPS PROBE] No response from receiver. TX line unavailable (Receive-only mode).",
+                               probeResultContext_);
+            }
+        }
+    }
+}
+
+void GpsManager::probeTx(unsigned long nowMs) {
+#if defined(ARDUINO)
+    if (!nowMs) nowMs = millis();
+#endif
+    txState_ = GpsTxState::Probing;
+    probeRetries_ = 0;
+    lastProbeTime_ = nowMs;
+    sendCommand("version");
+}
+
+const char* GpsManager::getTxStateString() const {
+    switch (txState_) {
+        case GpsTxState::Unknown: return "UNKNOWN";
+        case GpsTxState::Probing: return "PROBING";
+        case GpsTxState::Available: return "AVAILABLE";
+        case GpsTxState::Unavailable: return "UNAVAILABLE";
+        default: return "UNKNOWN";
+    }
+}
+
+bool GpsManager::startConfiguration(float baselineCm, float tolCm, bool verifyStream, unsigned long nowMs) {
+    return configPipeline_.start(baselineCm, tolCm, verifyStream, nowMs);
 }
 
 void GpsManager::update(unsigned long nowMs) {
 #if defined(ARDUINO)
     if (!nowMs) nowMs = millis();
     checkStaleness(nowMs);
+    checkTxProbe(nowMs);
+    configPipeline_.update(nowMs);
 
     if (serialPort_.available()) {
         if (simulator_ && simulator_->isActive()) {
@@ -75,7 +147,11 @@ void GpsManager::update(unsigned long nowMs) {
         }
     }
 #else
-    if (nowMs) checkStaleness(nowMs);
+    if (nowMs) {
+        checkStaleness(nowMs);
+        checkTxProbe(nowMs);
+        configPipeline_.update(nowMs);
+    }
 #endif
 }
 
@@ -193,6 +269,56 @@ GpsLinkVerdict GpsManager::evaluateStreamHealth(unsigned long nowMs) const {
 }
 
 void GpsManager::processSentence(char *sentence, unsigned long nowMs) {
+    if (!sentence) return;
+
+    // Check for command responses and receiver ASCII logs
+    const char *p = sentence;
+    while (*p == ' ' || *p == '\t') {
+        p++;
+    }
+
+    bool isResponse = false;
+    bool isProbeAck = false;
+
+    if (*p == '<') {
+        isResponse = true;
+        if (strncasecmp(p, "<OK", 3) == 0 || strncasecmp(p, "< OK", 4) == 0) {
+            isProbeAck = true;
+        }
+    } else if (*p == '#') {
+        isResponse = true;
+        if (strncasecmp(p, "#VERSION", 8) == 0) {
+            isProbeAck = true;
+        }
+    } else if (strncasecmp(p, "$command", 8) == 0) {
+        isResponse = true;
+        isProbeAck = true;
+    }
+
+    if (isProbeAck && (txState_ == GpsTxState::Probing || txState_ == GpsTxState::Unknown)) {
+        txState_ = GpsTxState::Available;
+        if (onProbeResult_) {
+            onProbeResult_(GpsTxState::Available,
+                           "[GPS PROBE] Receiver acknowledged! Bidirectional TX link active on GPIO 43.",
+                           probeResultContext_);
+        }
+    }
+
+    if (isResponse) {
+        if (configPipeline_.isRunning()) {
+            configPipeline_.handleResponse(p, nowMs);
+        }
+        if (onResponse_) {
+            onResponse_(p, responseContext_);
+        }
+        return;
+    }
+
+    // Auto-probe TX presence when receiver data stream is first detected
+    if (txState_ == GpsTxState::Unknown && !(simulator_ && simulator_->isActive())) {
+        probeTx(nowMs);
+    }
+
     float newHeading = 0.0f;
     BearingQuality newQuality = BEARING_LOST;
 
@@ -232,6 +358,10 @@ void GpsManager::processSentence(char *sentence, unsigned long nowMs) {
 
     // Extract Time and Position from $KSXT (5 Hz)
     if (strncmp(sentence, "$KSXT", 5) == 0) {
+        if (configPipeline_.isWaitingForStream()) {
+            configPipeline_.handleKsxtReceived();
+        }
+
         uint32_t ksxtEpoch = 0;
         if (parseKsxtEpochTime(sentence, ksxtEpoch)) {
             setEpochTime(ksxtEpoch);
