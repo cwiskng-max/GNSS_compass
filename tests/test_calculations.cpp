@@ -4953,6 +4953,43 @@ void test_serial_cli_log_commands() {
     cli.executeCommand("gps send", 16900);
     ASSERT_TRUE(cliOutput.find("[GPS] Cannot send") != std::string::npos);
 
+    // 17. log mycall [<call>|reset] & voice variants (my call, callsign)
+    cliOutput.clear();
+    cli.executeCommand("log mycall", 17000);
+    ASSERT_TRUE(cliOutput.find("Current station callsign: N0CALL") != std::string::npos);
+
+    cliOutput.clear();
+    cli.executeCommand("log my call whiskey six oscar papa stroke rover", 17100);
+    ASSERT_TRUE(cliOutput.find("Station callsign set to W6OP/R") != std::string::npos);
+    ASSERT_STR_EQ(qsoLog.getMyCall().c_str(), "W6OP/R");
+    ASSERT_STR_EQ(QsoLogManager::getHostStorageMyCall().c_str(), "W6OP/R");
+
+    // Also verify "log callsign" voice variant
+    cliOutput.clear();
+    cli.executeCommand("log callsign k6mg", 17150);
+    ASSERT_TRUE(cliOutput.find("Station callsign set to K6MG") != std::string::npos);
+    cli.executeCommand("log my callsign W6OP/R", 17175);
+    ASSERT_STR_EQ(qsoLog.getMyCall().c_str(), "W6OP/R");
+
+    // Verify Cabrillo export uses configured station callsign
+    cli.executeCommand("log k6mg 10", 17200);
+    cliOutput.clear();
+    cli.executeCommand("log export cabrillo", 17300);
+    ASSERT_TRUE(cliOutput.find("CALLSIGN: W6OP/R") != std::string::npos);
+    ASSERT_TRUE(cliOutput.find("W6OP/R") != std::string::npos);
+    ASSERT_TRUE(cliOutput.find("N0CALL") == std::string::npos);
+
+    // Verify NVS reload restores station callsign
+    QsoLogManager reloadedLog;
+    reloadedLog.begin();
+    ASSERT_STR_EQ(reloadedLog.getMyCall().c_str(), "W6OP/R");
+
+    // Reset station callsign
+    cliOutput.clear();
+    cli.executeCommand("log mycall reset", 17400);
+    ASSERT_TRUE(cliOutput.find("Station callsign reset to N0CALL") != std::string::npos);
+    ASSERT_STR_EQ(qsoLog.getMyCall().c_str(), "N0CALL");
+
     PASS();
 }
 

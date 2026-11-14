@@ -240,6 +240,7 @@
 #define QSO_CFG_NAMESPACE            "qso_cfg"
 #define QSO_CFG_KEY_MAX_QSOS         "max_qsos"
 #define QSO_CFG_KEY_DEFAULT_BAND     "def_band"
+#define QSO_CFG_KEY_MY_CALL          "my_call"
 #define QSO_LOG_NAMESPACE            "qso_log"
 #define QSO_LOG_KEY_COUNT            "count"
 
@@ -247,6 +248,7 @@
 #define MIN_QSOS                     10
 #define ABS_MAX_QSOS                 1000
 #define DEFAULT_QSO_BAND             "10 GHz"
+#define DEFAULT_QSO_MY_CALL          "N0CALL"
 
 // QSO Pop-Up Card Modal Dialog Geometry
 #define QSO_MODAL_X                  40

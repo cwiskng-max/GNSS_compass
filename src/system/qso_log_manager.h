@@ -51,8 +51,12 @@ public:
     std::string getDefaultBand() const { return defaultBand_; }
     void setDefaultBand(const std::string &band, bool persist = true);
 
+    // Station callsign for Cabrillo export (persisted under "qso_cfg", key "my_call")
+    std::string getMyCall() const { return myCall_; }
+    void setMyCall(const std::string &call, bool persist = true);
+
     // Export & formatting functions
-    std::string formatCabrillo(const std::string &myCall = "NOCALL",
+    std::string formatCabrillo(const std::string &myCall = "",
                                const std::string &contest = "ARRL-10-GHZ") const;
     std::string formatAdif(const std::string &programId = "GNSS Compass") const;
     std::string formatCsv() const;
@@ -69,12 +73,14 @@ public:
     static size_t getHostStorageCount();
     static size_t getHostStorageMaxQsos();
     static std::string getHostStorageDefaultBand();
+    static std::string getHostStorageMyCall();
 #endif
 
 private:
     std::vector<QsoEntry> qsos_;
     size_t maxQsos_;
     std::string defaultBand_;
+    std::string myCall_;
 
 #if !defined(ARDUINO)
     static std::vector<QsoEntry> s_hostNvsQsos;
@@ -82,6 +88,8 @@ private:
     static bool s_hostNvsMaxQsosStored;
     static std::string s_hostNvsDefaultBand;
     static bool s_hostNvsDefaultBandStored;
+    static std::string s_hostNvsMyCall;
+    static bool s_hostNvsMyCallStored;
 #endif
 };
 

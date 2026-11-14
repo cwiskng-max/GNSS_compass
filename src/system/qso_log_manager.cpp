@@ -15,6 +15,8 @@ size_t QsoLogManager::s_hostNvsMaxQsos = DEFAULT_MAX_QSOS;
 bool QsoLogManager::s_hostNvsMaxQsosStored = false;
 std::string QsoLogManager::s_hostNvsDefaultBand = DEFAULT_QSO_BAND;
 bool QsoLogManager::s_hostNvsDefaultBandStored = false;
+std::string QsoLogManager::s_hostNvsMyCall = DEFAULT_QSO_MY_CALL;
+bool QsoLogManager::s_hostNvsMyCallStored = false;
 #endif
 
 namespace {
@@ -47,7 +49,7 @@ void epochToDateTime(uint32_t ts, int &year, int &month, int &day, int &hour, in
 } // anonymous namespace
 
 QsoLogManager::QsoLogManager()
-    : maxQsos_(DEFAULT_MAX_QSOS), defaultBand_(DEFAULT_QSO_BAND) {}
+    : maxQsos_(DEFAULT_MAX_QSOS), defaultBand_(DEFAULT_QSO_BAND), myCall_(DEFAULT_QSO_MY_CALL) {}
 
 void QsoLogManager::begin() {
     loadFromNvs();
@@ -101,6 +103,27 @@ void QsoLogManager::setDefaultBand(const std::string &band, bool persist) {
 #else
         s_hostNvsDefaultBand = defaultBand_;
         s_hostNvsDefaultBandStored = true;
+#endif
+    }
+}
+
+void QsoLogManager::setMyCall(const std::string &call, bool persist) {
+    std::string clean = call.empty() ? DEFAULT_QSO_MY_CALL : call;
+    if (clean.size() > 15) {
+        clean.resize(15);
+    }
+    myCall_ = clean;
+
+    if (persist) {
+#if defined(ARDUINO)
+        Preferences cfgPrefs;
+        if (cfgPrefs.begin(QSO_CFG_NAMESPACE, false)) {
+            cfgPrefs.putString(QSO_CFG_KEY_MY_CALL, myCall_.c_str());
+            cfgPrefs.end();
+        }
+#else
+        s_hostNvsMyCall = myCall_;
+        s_hostNvsMyCallStored = true;
 #endif
     }
 }
@@ -222,10 +245,13 @@ void QsoLogManager::loadFromNvs() {
         maxQsos_ = clampMaxQsos(storedMax);
         String defB = cfgPrefs.getString(QSO_CFG_KEY_DEFAULT_BAND, DEFAULT_QSO_BAND);
         defaultBand_ = defB.c_str();
+        String storedCall = cfgPrefs.getString(QSO_CFG_KEY_MY_CALL, DEFAULT_QSO_MY_CALL);
+        myCall_ = storedCall.length() > 0 ? storedCall.c_str() : DEFAULT_QSO_MY_CALL;
         cfgPrefs.end();
     } else {
         maxQsos_ = DEFAULT_MAX_QSOS;
         defaultBand_ = DEFAULT_QSO_BAND;
+        myCall_ = DEFAULT_QSO_MY_CALL;
     }
 
     qsos_.clear();
@@ -260,6 +286,12 @@ void QsoLogManager::loadFromNvs() {
         defaultBand_ = s_hostNvsDefaultBand;
     } else {
         defaultBand_ = DEFAULT_QSO_BAND;
+    }
+
+    if (s_hostNvsMyCallStored) {
+        myCall_ = s_hostNvsMyCall;
+    } else {
+        myCall_ = DEFAULT_QSO_MY_CALL;
     }
 
     qsos_.clear();
@@ -310,6 +342,8 @@ void QsoLogManager::resetHostStorage() {
     s_hostNvsMaxQsosStored = false;
     s_hostNvsDefaultBand = DEFAULT_QSO_BAND;
     s_hostNvsDefaultBandStored = false;
+    s_hostNvsMyCall = DEFAULT_QSO_MY_CALL;
+    s_hostNvsMyCallStored = false;
 }
 
 size_t QsoLogManager::getHostStorageCount() {
@@ -323,15 +357,22 @@ size_t QsoLogManager::getHostStorageMaxQsos() {
 std::string QsoLogManager::getHostStorageDefaultBand() {
     return s_hostNvsDefaultBand;
 }
+
+std::string QsoLogManager::getHostStorageMyCall() {
+    return s_hostNvsMyCall;
+}
 #endif
 
 std::string QsoLogManager::formatCabrillo(const std::string &myCall,
                                          const std::string &contest) const {
+    const std::string effectiveCall = myCall.empty()
+        ? (myCall_.empty() ? std::string(DEFAULT_QSO_MY_CALL) : myCall_)
+        : myCall;
     std::string out;
     out += "START-OF-LOG: 3.0\r\n";
     out += "CREATED-BY: GNSS Compass\r\n";
     out += "CONTEST: " + (contest.empty() ? "ARRL-10-GHZ" : contest) + "\r\n";
-    out += "CALLSIGN: " + (myCall.empty() ? "NOCALL" : myCall) + "\r\n";
+    out += "CALLSIGN: " + effectiveCall + "\r\n";
 
     for (const auto &qso : qsos_) {
         int y, m, d, hh, mm, ss;
@@ -349,7 +390,7 @@ std::string QsoLogManager::formatCabrillo(const std::string &myCall,
         char line[256];
         snprintf(line, sizeof(line), "QSO: %-5s PH %04d-%02d-%02d %02d%02d %-10s %-6s %-10s %-6s\r\n",
                  cabBand.c_str(), y, m, d, hh, mm,
-                 myCall.empty() ? "NOCALL" : myCall.c_str(),
+                 effectiveCall.c_str(),
                  myGrid6,
                  qso.callsign,
                  hisGrid6);

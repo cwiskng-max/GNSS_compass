@@ -129,17 +129,17 @@ Displays a summary of available serial commands.
 | Command | Subcommands / Arguments | Transport | Description |
 | :--- | :--- | :--- | :--- |
 | **`status`** *(or `gps`)* | None | USB, BLE | Live GNSS receiver stream & link diagnostic, RTK fix health |
-| **`gps`** | `probe` \| `config` \| `check` \| `send <cmd>` | USB, BLE | UM982 receiver setup, TX line discovery, in-system config |
-| **`rover`** | `status` \| `start` \| `stop` \| `history` \| `undo` \| `max` \| `clear` | USB, BLE | Rover transit tracking (16 km displacement rule & qualification) |
+| **`gps`** | `probe` \| `config` \| `check` \| `send <cmd>` \| `help` | USB, BLE | UM982 receiver setup, TX line discovery, in-system config |
+| **`rover`** | `status` \| `start` \| `stop` \| `history` \| `undo` \| `max` \| `clear` \| `help` | USB, BLE | Rover transit tracking (16 km displacement rule & qualification) |
 | **`target`** | `<grid>` *(supports NATO phonetics)* | USB, BLE | Remote target Maidenhead grid locator setting & bearing recalculation |
 | **`log`** | `<call> [band/freq]` *(supports NATO phonetics)* | USB, BLE | Voice-friendly contest QSO logging (10 GHz default, phonetics & band auto-mapping) |
 | **`log`** | `undo` \| `delete <#>` \| `clear` | USB, BLE | Contest QSO log editing, deletion, and rollback |
-| **`log`** | `list` *(or `show`)* \| `stats` | USB, BLE | Formatted ASCII log table and contest statistics (DX, bands, grids) |
+| **`log`** | `list` *(or `show`)* \| `stats` \| `help` | USB, BLE | Formatted ASCII log table, contest statistics (DX, bands, grids), and log help |
 | **`log`** | `export <cabrillo\|adif\|csv>` | USB, BLE | Stream contest log export in ARRL Cabrillo 3.0, ADIF, or CSV |
-| **`log`** | `default band <band>` \| `max <#>` | USB, BLE | Set contest default band and NVS QSO storage capacity (10–1000) |
-| **`cal`** | `snap` \| `zero` \| `[set] <deg>` | USB, BLE | Antenna heading offset calibration |
+| **`log`** | `mycall [<call>\|reset]` \| `default band <band>` \| `max <#>` | USB, BLE | Set Cabrillo station callsign, default band, and NVS QSO storage capacity (10–1000) |
+| **`cal`** | `snap` \| `zero` \| `[set] <deg>` \| `help` | USB, BLE | Antenna heading offset calibration |
 | **`test`** *(or `demo`)* | None | USB, BLE | 9-stage visual display self-test demo |
-| **`sim`** | `on` \| `off` \| `hdg` \| `pos` \| `grid` \| `rover` \| `status` | USB, BLE | GPS simulation mode and synthetic sentence injection |
+| **`sim`** | `on` \| `off` \| `hdg` \| `pos` \| `grid` \| `rover` \| `status` \| `help` | USB, BLE | GPS simulation mode and synthetic sentence injection |
 | **`ble`** | `status` \| `suffix [<val>\|reset]` \| `diag on\|off` | USB, BLE | Bluetooth Low Energy diagnostics and device name customization |
 | **`exit`** *(or `disconnect`)*| None | BLE | Clean wireless disconnect from the ESP32 side |
 | **`restart`** *(or `reboot`)* | None | USB, BLE | Restart the ESP32 microcontroller |
@@ -729,8 +729,20 @@ Streams the contest log in standard formats over serial for easy saving to disk 
   2,1762904100,K6MG,24 GHz,24192.100,CM87wa,CM88qk,118.2,342.0
   ```
 
-#### 3.12.7 Configuring Default Band & Storage Capacity
+#### 3.12.7 Configuring Station Callsign, Default Band & Storage Capacity
 
+* **Station Callsign (`log mycall [<call>|reset]`, or voice `log my call` / `log callsign`):**
+  Sets your own callsign for the `CALLSIGN:` header and operator column in ARRL Cabrillo 3.0 exports (defaults to `N0CALL` until configured). Supports plain text or NATO phonetics and is saved permanently to NVS:
+  ```text
+  > log mycall W6OP/R
+  [QSO LOG] Station callsign set to W6OP/R (saved to NVS).
+  ```
+  Query or reset to `N0CALL`:
+  ```text
+  > log mycall
+  [QSO LOG] Current station callsign: W6OP/R
+  [QSO LOG] Usage: log mycall <callsign|reset> (e.g. 'log mycall K6MG/R' or 'log my call kilo six mike golf')
+  ```
 * **Default Band (`log default band <band>`):**
   Configures which band is logged when omitted in voice dictation. Saved permanently to NVS:
   ```text

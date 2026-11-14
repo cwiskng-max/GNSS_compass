@@ -1108,6 +1108,13 @@ void SerialCli::handleLogCommand(const char *arg, unsigned long nowMs) {
         handleLogDefault(arg);
         return;
     }
+    if (equalsIgnoreCase(arg, "mycall") || startsWithIgnoreCase(arg, "mycall ") ||
+        equalsIgnoreCase(arg, "my call") || startsWithIgnoreCase(arg, "my call ") ||
+        equalsIgnoreCase(arg, "my callsign") || startsWithIgnoreCase(arg, "my callsign ") ||
+        equalsIgnoreCase(arg, "callsign") || startsWithIgnoreCase(arg, "callsign ")) {
+        handleLogCall(arg);
+        return;
+    }
     if (startsWithIgnoreCase(arg, "max") || startsWithIgnoreCase(arg, "capacity")) {
         const char *p = arg + (startsWithIgnoreCase(arg, "max") ? 3 : 8);
         while (*p == ' ' || *p == '\t') p++;
@@ -1331,6 +1338,46 @@ void SerialCli::handleLogDefault(const char *arg) {
     printFormat("[QSO LOG] Default band set to %s.\r\n", bnd.c_str());
 }
 
+void SerialCli::handleLogCall(const char *arg) {
+    while (*arg == ' ' || *arg == '\t') arg++;
+    if (startsWithIgnoreCase(arg, "my callsign")) {
+        arg += 11;
+    } else if (startsWithIgnoreCase(arg, "callsign")) {
+        arg += 8;
+    } else if (startsWithIgnoreCase(arg, "my call")) {
+        arg += 7;
+    } else if (startsWithIgnoreCase(arg, "mycall")) {
+        arg += 6;
+    }
+    while (*arg == ' ' || *arg == '\t') arg++;
+
+    if (!*arg) {
+        std::string cur = qsoLogManager_ ? qsoLogManager_->getMyCall() : DEFAULT_QSO_MY_CALL;
+        printFormat("[QSO LOG] Current station callsign: %s\r\n", cur.c_str());
+        println("[QSO LOG] Usage: log mycall <callsign|reset> (e.g. 'log mycall K6MG/R' or 'log my call kilo six mike golf')");
+        return;
+    }
+
+    if (equalsIgnoreCase(arg, "reset") || equalsIgnoreCase(arg, "default") || equalsIgnoreCase(arg, "clear")) {
+        if (qsoLogManager_) {
+            qsoLogManager_->setMyCall(DEFAULT_QSO_MY_CALL);
+        }
+        printFormat("[QSO LOG] Station callsign reset to %s.\r\n", DEFAULT_QSO_MY_CALL);
+        return;
+    }
+
+    std::string normalized = VoiceQsoParser::normalizeVoiceInput(arg);
+    if (normalized.empty() || normalized.size() > 15) {
+        printFormat("[QSO ERROR] Invalid station callsign '%s'.\r\n", arg);
+        return;
+    }
+
+    if (qsoLogManager_) {
+        qsoLogManager_->setMyCall(normalized);
+    }
+    printFormat("[QSO LOG] Station callsign set to %s (saved to NVS).\r\n", normalized.c_str());
+}
+
 void SerialCli::printLogHelp() {
     println();
     println("=== Contest QSO Logging Commands ===");
@@ -1343,6 +1390,7 @@ void SerialCli::printLogHelp() {
     println("  log list (or show)       - Display formatted ASCII table of logged QSOs");
     println("  log stats                - Show contest statistics (QSOs, DX, bands, grids)");
     println("  log export <cab|adif|csv>- Stream contest log export");
+    println("  log mycall [<call>|reset]- Configure station callsign for Cabrillo export");
     println("  log default band <band>  - Configure default band in NVS (default: 10 GHz)");
     println("  log max <#>              - Configure maximum QSO storage capacity (10-1000)");
 }

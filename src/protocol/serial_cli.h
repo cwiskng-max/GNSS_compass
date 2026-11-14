@@ -175,6 +175,7 @@ public:
     void handleLogStats();
     void handleLogExport(const char *arg);
     void handleLogDefault(const char *arg);
+    void handleLogCall(const char *arg);
     void printLogHelp();
     void printGpsHelp();
     void printSimHelp();
