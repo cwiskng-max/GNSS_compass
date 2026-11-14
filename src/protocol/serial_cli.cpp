@@ -631,7 +631,24 @@ void SerialCli::executeCommand(const char *cmdLine, unsigned long nowMs, CliSour
     }
 }
 
+void SerialCli::printGpsHelp() {
+    println();
+    println("=== GPS Receiver Commands ===");
+    println("  gps status            - Live GNSS receiver stream & link diagnostic");
+    println("  gps probe             - Test bidirectional TX connection to UM982");
+    println("  gps config [baseline <cm> [tol]]");
+    println("                        - Run automated 5 Hz $KSXT receiver setup");
+    println("  gps send <command>    - Send raw command to UM982 receiver");
+    println("  gps check (or audit)  - Query receiver running parameters");
+    println("  gps help (or ?)       - Show this GPS help menu");
+}
+
 void SerialCli::handleGpsCommand(const char *arg, unsigned long nowMs) {
+    if (equalsIgnoreCase(arg, "help") || strcmp(arg, "?") == 0) {
+        printGpsHelp();
+        return;
+    }
+
     if (equalsIgnoreCase(arg, "probe")) {
         println("[GPS PROBE] Transmitting 'version' discovery probe on GPIO 43...");
         gpsManager_.probeTx(nowMs);
@@ -727,13 +744,8 @@ void SerialCli::handleGpsCommand(const char *arg, unsigned long nowMs) {
         return;
     }
 
-    println("[GPS ERROR] Unknown gps subcommand. Available:");
-    println("  gps status            - Live GNSS receiver stream & link diagnostic");
-    println("  gps probe             - Test bidirectional TX connection to UM982");
-    println("  gps config [baseline <cm> [tol]]");
-    println("                        - Run automated 5 Hz $KSXT receiver setup");
-    println("  gps send <command>    - Send raw command to UM982 receiver");
-    println("  gps check (or audit)  - Query receiver running parameters");
+    println("[GPS ERROR] Unknown gps subcommand.");
+    printGpsHelp();
 }
 
 static void extractField(const char *src, int targetIdx, char *dst, size_t dstSize) {
@@ -1544,7 +1556,22 @@ void SerialCli::printSimulationStatus(unsigned long nowMs) {
     println();
 }
 
+void SerialCli::printCalHelp() {
+    println();
+    println("=== Antenna Calibration Commands ===");
+    println("  cal [status|show]     - Display current calibration offset & heading");
+    println("  cal snap              - Align antenna heading to current target bearing");
+    println("  cal zero (or reset)   - Reset calibration offset to 0.0 deg");
+    println("  cal [set] <deg>       - Set manual antenna offset in degrees");
+    println("  cal help (or ?)       - Show this calibration help menu");
+}
+
 void SerialCli::handleCalCommand(const char *arg) {
+    if (arg && (equalsIgnoreCase(arg, "help") || strcmp(arg, "?") == 0)) {
+        printCalHelp();
+        return;
+    }
+
     if (!arg || *arg == '\0' || equalsIgnoreCase(arg, "status") || equalsIgnoreCase(arg, "show")) {
         printCalibrationStatus();
         return;
@@ -1581,7 +1608,27 @@ void SerialCli::handleCalCommand(const char *arg) {
     printFormat("[CAL] Offset set to %+5.1f deg\r\n", calibration_.getOffset());
 }
 
+void SerialCli::printSimHelp() {
+    println();
+    println("=== GPS Simulation Commands ===");
+    println("  sim on / sim off      - Enable or disable simulation mode");
+    println("  sim status            - Show simulation state & injected values");
+    println("  sim hdg <deg> [fixed|float|lost]");
+    println("                        - Inject simulated heading & quality");
+    println("  sim pos <lat> <lon>   - Inject simulated latitude & longitude");
+    println("  sim grid <grid>       - Inject simulated Maidenhead grid (4/6/8-char)");
+    println("  sim rover [origin_grid] <dist_km>");
+    println("                        - Simulate rover transit displacement");
+    println("  sim time <hh:mm>      - Inject simulated UTC time");
+    println("  sim help (or ?)       - Show this simulation help menu");
+}
+
 void SerialCli::handleSimCommand(const char *arg, unsigned long nowMs) {
+    if (arg && (equalsIgnoreCase(arg, "help") || strcmp(arg, "?") == 0)) {
+        printSimHelp();
+        return;
+    }
+
     if (!arg || *arg == '\0' || equalsIgnoreCase(arg, "status")) {
         printSimulationStatus(nowMs);
         return;
@@ -1713,14 +1760,8 @@ void SerialCli::handleSimCommand(const char *arg, unsigned long nowMs) {
         return;
     }
 
-    println("[SIM ERROR] Unknown sim command. Available:");
-    println("  sim on / sim off");
-    println("  sim status");
-    println("  sim hdg <deg> [fixed|float|lost]");
-    println("  sim pos <lat> <lon>");
-    println("  sim grid <grid>");
-    println("  sim rover [origin_grid] <dist_km>");
-    println("  sim time <hh:mm>");
+    println("[SIM ERROR] Unknown sim command.");
+    printSimHelp();
 }
 
 void SerialCli::handleRoverCommand(const char *arg, unsigned long nowMs) {

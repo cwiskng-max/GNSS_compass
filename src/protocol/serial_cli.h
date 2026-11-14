@@ -176,6 +176,9 @@ public:
     void handleLogExport(const char *arg);
     void handleLogDefault(const char *arg);
     void printLogHelp();
+    void printGpsHelp();
+    void printSimHelp();
+    void printCalHelp();
 
     // Receiver audit query & parsing
     struct GpsAuditState {

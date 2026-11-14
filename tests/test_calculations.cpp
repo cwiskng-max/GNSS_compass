@@ -1413,6 +1413,39 @@ void test_serial_cli() {
     ASSERT_TRUE(cliOutput.find("Unknown command") == std::string::npos);
     cliOutput.clear();
 
+    // Help subcommands for gps, sim, cal (non-destructive)
+    cli.executeCommand("gps help");
+    ASSERT_TRUE(cliOutput.find("=== GPS Receiver Commands ===") != std::string::npos);
+    ASSERT_TRUE(cliOutput.find("[GPS ERROR]") == std::string::npos);
+    cliOutput.clear();
+
+    cli.executeCommand("gps ?");
+    ASSERT_TRUE(cliOutput.find("=== GPS Receiver Commands ===") != std::string::npos);
+    cliOutput.clear();
+
+    cli.executeCommand("sim help");
+    ASSERT_TRUE(cliOutput.find("=== GPS Simulation Commands ===") != std::string::npos);
+    ASSERT_TRUE(cliOutput.find("[SIM ERROR]") == std::string::npos);
+    ASSERT_TRUE(!sim.isActive()); // sim help must not enable simulation mode
+    cliOutput.clear();
+
+    cli.executeCommand("sim ?");
+    ASSERT_TRUE(cliOutput.find("=== GPS Simulation Commands ===") != std::string::npos);
+    ASSERT_TRUE(!sim.isActive());
+    cliOutput.clear();
+
+    cli.executeCommand("cal set 3.0");
+    cliOutput.clear();
+    cli.executeCommand("cal help");
+    ASSERT_TRUE(cliOutput.find("=== Antenna Calibration Commands ===") != std::string::npos);
+    ASSERT_NEAR(cal.getOffset(), 3.0f, 1e-4); // cal help must not overwrite offset
+    cliOutput.clear();
+
+    cli.executeCommand("cal ?");
+    ASSERT_TRUE(cliOutput.find("=== Antenna Calibration Commands ===") != std::string::npos);
+    ASSERT_NEAR(cal.getOffset(), 3.0f, 1e-4);
+    cliOutput.clear();
+
     cli.executeCommand("  cal zero  ");
     ASSERT_NEAR(cal.getOffset(), 0.0f, 1e-4);
     ASSERT_TRUE(cliOutput.find("[CAL] Offset reset to 0.0 deg") != std::string::npos);
