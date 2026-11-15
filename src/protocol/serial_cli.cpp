@@ -68,9 +68,14 @@ SerialCli::SerialCli(GpsManager &gpsManager, Calibration &calibration, GpsSimula
       restartCb_(nullptr),
       restartContext_(nullptr),
       pendingRoverClear_(false),
+      pendingRoverClearSource_(CLI_SOURCE_USB),
       pendingQsoClear_(false),
+      pendingQsoClearSource_(CLI_SOURCE_USB),
       pendingQsoInput_(false),
       pendingQsoSource_(CLI_SOURCE_USB),
+      pendingExportFormat_(ExportFormat::None),
+      pendingExportIndex_(0),
+      pendingExportSource_(CLI_SOURCE_USB),
       pendingAudit_(false),
       pendingAuditSource_(CLI_SOURCE_USB),
       pendingConfig_(false),
@@ -148,8 +153,15 @@ void SerialCli::begin() {
     usbLine_.reset();
     bleLine_.reset();
     pendingRoverClear_ = false;
+    pendingRoverClearSource_ = CLI_SOURCE_USB;
     pendingQsoClear_ = false;
+    pendingQsoClearSource_ = CLI_SOURCE_USB;
     pendingQsoInput_ = false;
+    pendingQsoSource_ = CLI_SOURCE_USB;
+    pendingExportFormat_ = ExportFormat::None;
+    pendingExportIndex_ = 0;
+    pendingExportSource_ = CLI_SOURCE_USB;
+    pendingExportCall_.clear();
     pendingAudit_ = false;
     pendingAuditSource_ = CLI_SOURCE_USB;
     auditState_.inProgress = false;
@@ -175,6 +187,15 @@ void SerialCli::handleBleConnectionChanged(bool connected) {
     bleLine_.reset();
     if (pendingQsoInput_ && pendingQsoSource_ == CLI_SOURCE_BLE) {
         pendingQsoInput_ = false;
+    }
+    if (pendingRoverClear_ && pendingRoverClearSource_ == CLI_SOURCE_BLE) {
+        pendingRoverClear_ = false;
+    }
+    if (pendingQsoClear_ && pendingQsoClearSource_ == CLI_SOURCE_BLE) {
+        pendingQsoClear_ = false;
+    }
+    if (pendingExportFormat_ != ExportFormat::None && pendingExportSource_ == CLI_SOURCE_BLE) {
+        pendingExportFormat_ = ExportFormat::None;
     }
     activeSource_ = CLI_SOURCE_USB;
 }
@@ -304,6 +325,10 @@ void SerialCli::update(unsigned long nowMs) {
 
     if (bleManager_) {
         bleManager_->update(nowMs);
+    }
+
+    if (pendingExportFormat_ != ExportFormat::None) {
+        servicePendingExport(true);
     }
 
     if (auditState_.inProgress) {
@@ -437,7 +462,7 @@ void SerialCli::executeCommand(const char *cmdLine, unsigned long nowMs, CliSour
         return;
     }
 
-    if (pendingRoverClear_) {
+    if (pendingRoverClear_ && activeSource_ == pendingRoverClearSource_) {
         pendingRoverClear_ = false;
         if (equalsIgnoreCase(cleanCmd, "yes") || equalsIgnoreCase(cleanCmd, "y") ||
             equalsIgnoreCase(cleanCmd, "confirm")) {
@@ -449,7 +474,7 @@ void SerialCli::executeCommand(const char *cmdLine, unsigned long nowMs, CliSour
         return;
     }
 
-    if (pendingQsoClear_) {
+    if (pendingQsoClear_ && activeSource_ == pendingQsoClearSource_) {
         pendingQsoClear_ = false;
         if (equalsIgnoreCase(cleanCmd, "yes") || equalsIgnoreCase(cleanCmd, "y") ||
             equalsIgnoreCase(cleanCmd, "confirm")) {
@@ -461,19 +486,24 @@ void SerialCli::executeCommand(const char *cmdLine, unsigned long nowMs, CliSour
         return;
     }
 
-    if (pendingQsoInput_) {
+    if (pendingQsoInput_ && activeSource_ == pendingQsoSource_) {
         pendingQsoInput_ = false;
         if (equalsIgnoreCase(cleanCmd, "cancel")) {
             println("[QSO] Cancelled.");
             printPrompt();
             return;
         }
-        if (!startsWithIgnoreCase(cleanCmd, "help") && !startsWithIgnoreCase(cleanCmd, "status") &&
+        if (!startsWithIgnoreCase(cleanCmd, "help") && strcmp(cleanCmd, "?") != 0 &&
+            !startsWithIgnoreCase(cleanCmd, "status") && !equalsIgnoreCase(cleanCmd, "s") &&
+            !equalsIgnoreCase(cleanCmd, "g") && !equalsIgnoreCase(cleanCmd, "t") &&
+            !startsWithIgnoreCase(cleanCmd, "diag") && !startsWithIgnoreCase(cleanCmd, "demo") &&
             !startsWithIgnoreCase(cleanCmd, "rover") && !startsWithIgnoreCase(cleanCmd, "target") &&
             !startsWithIgnoreCase(cleanCmd, "gps") && !startsWithIgnoreCase(cleanCmd, "sim") &&
             !startsWithIgnoreCase(cleanCmd, "cal") && !startsWithIgnoreCase(cleanCmd, "test") &&
             !startsWithIgnoreCase(cleanCmd, "ble") && !startsWithIgnoreCase(cleanCmd, "ver") &&
-            !startsWithIgnoreCase(cleanCmd, "log")) {
+            !startsWithIgnoreCase(cleanCmd, "log") && !equalsIgnoreCase(cleanCmd, "restart") &&
+            !equalsIgnoreCase(cleanCmd, "reboot") && !equalsIgnoreCase(cleanCmd, "exit") &&
+            !equalsIgnoreCase(cleanCmd, "quit") && !equalsIgnoreCase(cleanCmd, "disconnect")) {
             handleLogCommand(cleanCmd, nowMs);
             printPrompt();
             return;
@@ -626,7 +656,7 @@ void SerialCli::executeCommand(const char *cmdLine, unsigned long nowMs, CliSour
         printFormat("Unknown command: '%s'. Type 'help' for available commands.\r\n", cleanCmd);
     }
 
-    if (!pendingAudit_ && !auditState_.inProgress) {
+    if (!pendingAudit_ && !auditState_.inProgress && pendingExportFormat_ == ExportFormat::None) {
         printPrompt();
     }
 }
@@ -1250,6 +1280,7 @@ void SerialCli::handleLogClear(const char *arg) {
     }
 
     pendingQsoClear_ = true;
+    pendingQsoClearSource_ = activeSource_;
     println("[QSO LOG] WARNING: This will permanently erase all contest QSO history!");
     println("[QSO LOG] Type 'log clear confirm' (or 'yes') to proceed, or 'no' to abort.");
 }
@@ -1261,13 +1292,125 @@ void SerialCli::doLogClear() {
     println("[QSO LOG] Contest QSO log cleared (0 contacts).");
 }
 
+void SerialCli::startStreamingExport(ExportFormat fmt) {
+    if (!qsoLogManager_) return;
+
+    pendingExportFormat_ = fmt;
+    pendingExportIndex_ = 0;
+    pendingExportSource_ = activeSource_;
+    pendingExportCall_ = qsoLogManager_->getEffectiveMyCall();
+
+    switch (fmt) {
+        case ExportFormat::List:
+            print(QsoLogManager::formatListHeader().c_str());
+            break;
+        case ExportFormat::Cabrillo:
+            print(QsoLogManager::formatCabrilloHeader(pendingExportCall_).c_str());
+            break;
+        case ExportFormat::Adif:
+            print(QsoLogManager::formatAdifHeader().c_str());
+            break;
+        case ExportFormat::Csv:
+            print(QsoLogManager::formatCsvHeader().c_str());
+            break;
+        default:
+            pendingExportFormat_ = ExportFormat::None;
+            return;
+    }
+
+    if (qsoLogManager_->isEmpty()) {
+        if (fmt == ExportFormat::List) {
+            print("  (No QSOs logged)\r\n");
+            print(QsoLogManager::formatListFooter().c_str());
+        } else if (fmt == ExportFormat::Cabrillo) {
+            print(QsoLogManager::formatCabrilloFooter().c_str());
+        }
+        pendingExportFormat_ = ExportFormat::None;
+        return;
+    }
+
+    servicePendingExport();
+}
+
+void SerialCli::servicePendingExport(bool fromUpdate) {
+    if (pendingExportFormat_ == ExportFormat::None || !qsoLogManager_) {
+        pendingExportFormat_ = ExportFormat::None;
+        return;
+    }
+
+    CliSource prevSource = activeSource_;
+    activeSource_ = pendingExportSource_;
+
+    const bool throttledBle = (pendingExportSource_ == CLI_SOURCE_BLE && bleManager_ != nullptr);
+    if (throttledBle && (!bleManager_->isConnected() || !bleManager_->isSubscribed())) {
+        pendingExportFormat_ = ExportFormat::None;
+        activeSource_ = prevSource;
+        return;
+    }
+
+    const size_t total = qsoLogManager_->getQsoCount();
+    while (pendingExportIndex_ < total) {
+        if (throttledBle) {
+            size_t avail = bleManager_->getTxCapacity() - bleManager_->getTxQueued();
+            if (avail < 512) {
+                activeSource_ = prevSource;
+                return;
+            }
+        }
+
+        const QsoEntry *qso = qsoLogManager_->getQso(pendingExportIndex_);
+        if (qso) {
+            std::string row;
+            switch (pendingExportFormat_) {
+                case ExportFormat::List:
+                    row = QsoLogManager::formatListRow(pendingExportIndex_ + 1, *qso);
+                    break;
+                case ExportFormat::Cabrillo:
+                    row = QsoLogManager::formatCabrilloRow(*qso, pendingExportCall_);
+                    break;
+                case ExportFormat::Adif:
+                    row = QsoLogManager::formatAdifRow(*qso);
+                    break;
+                case ExportFormat::Csv:
+                    row = QsoLogManager::formatCsvRow(*qso);
+                    break;
+                default:
+                    break;
+            }
+            if (!row.empty()) {
+                print(row.c_str());
+            }
+        }
+        pendingExportIndex_++;
+    }
+
+    if (throttledBle) {
+        size_t avail = bleManager_->getTxCapacity() - bleManager_->getTxQueued();
+        if (avail < 128) {
+            activeSource_ = prevSource;
+            return;
+        }
+    }
+
+    if (pendingExportFormat_ == ExportFormat::List) {
+        print(QsoLogManager::formatListFooter().c_str());
+    } else if (pendingExportFormat_ == ExportFormat::Cabrillo) {
+        print(QsoLogManager::formatCabrilloFooter().c_str());
+    }
+
+    pendingExportFormat_ = ExportFormat::None;
+    if (fromUpdate) {
+        printPrompt();
+    }
+    activeSource_ = prevSource;
+}
+
 void SerialCli::handleLogList() {
     if (!qsoLogManager_ || qsoLogManager_->isEmpty()) {
         println("[QSO LOG] Log is empty (0 contacts).");
         return;
     }
-    std::string listStr = qsoLogManager_->formatList();
-    print(listStr.c_str());
+    startStreamingExport(ExportFormat::List);
 }
 
 void SerialCli::handleLogStats() {
@@ -1294,14 +1437,11 @@ void SerialCli::handleLogExport(const char *arg) {
         return;
     }
     if (startsWithIgnoreCase(arg, "cabrillo") || startsWithIgnoreCase(arg, "cab")) {
-        std::string cab = qsoLogManager_->formatCabrillo();
-        print(cab.c_str());
+        startStreamingExport(ExportFormat::Cabrillo);
     } else if (startsWithIgnoreCase(arg, "adif") || startsWithIgnoreCase(arg, "adi")) {
-        std::string adif = qsoLogManager_->formatAdif();
-        print(adif.c_str());
+        startStreamingExport(ExportFormat::Adif);
     } else if (startsWithIgnoreCase(arg, "csv")) {
-        std::string csv = qsoLogManager_->formatCsv();
-        print(csv.c_str());
+        startStreamingExport(ExportFormat::Csv);
     } else {
         printFormat("[QSO ERROR] Unknown export format '%s'. Usage: log export <cabrillo|adif|csv>\r\n", arg);
     }
@@ -1990,6 +2130,7 @@ void SerialCli::handleRoverClear(const char *arg) {
     }
 
     pendingRoverClear_ = true;
+    pendingRoverClearSource_ = activeSource_;
     println("[ROVER] WARNING: This will permanently erase all contest location history!");
     println("[ROVER] Type 'rover clear confirm' (or 'yes') to proceed, or 'no' to abort.");
 }

@@ -772,6 +772,51 @@ bool VoiceQsoParser::parseQso(const std::string &input,
         return false;
     }
 
+    // Convert spoken tens/teens (e.g. "ten", "twenty four", "forty seven", "seventy six")
+    // and unit words ("gigahertz", "megahertz") BEFORE band scanning so spoken bands
+    // like "log k6mg twenty four" or "log k6mg ten" are recognized as bands rather than callsigns.
+    std::vector<std::string> numNormalized;
+    numNormalized.reserve(words.size());
+    for (size_t i = 0; i < words.size(); ++i) {
+        std::string low = toLower(words[i]);
+        if (low == "gigahertz") {
+            numNormalized.push_back("ghz");
+            continue;
+        }
+        if (low == "megahertz") {
+            numNormalized.push_back("mhz");
+            continue;
+        }
+        char tenDigit = spokenTensToDigit(low);
+        if (tenDigit != '\0') {
+            std::string num(1, tenDigit);
+            if (i + 1 < words.size()) {
+                std::string nextLow = toLower(words[i + 1]);
+                char unitDigit = spokenDigitToChar(nextLow);
+                if (unitDigit != '\0' && unitDigit != '0') {
+                    num.push_back(unitDigit);
+                    i++;
+                } else if (words[i + 1].size() == 1 && words[i + 1][0] >= '1' && words[i + 1][0] <= '9') {
+                    num.push_back(words[i + 1][0]);
+                    i++;
+                } else {
+                    num.push_back('0');
+                }
+            } else {
+                num.push_back('0');
+            }
+            numNormalized.push_back(num);
+            continue;
+        }
+        const char *teenStr = spokenTeenToString(low);
+        if (teenStr != nullptr) {
+            numNormalized.push_back(teenStr);
+            continue;
+        }
+        numNormalized.push_back(words[i]);
+    }
+    words = std::move(numNormalized);
+
     // Split speech-to-text glued tokens where trailing characters represent a band
     // (e.g. Gboard generating "k6 ml24" -> "k6", "ml", "24" or "k6ml24" -> "k6ml", "24").
     // In international amateur radio regulations (ITU RR Article 19.68), callsigns
@@ -836,10 +881,25 @@ bool VoiceQsoParser::parseQso(const std::string &input,
                 i++;
                 continue;
             }
-            if (nextLow == "ghz" || nextLow == "g" || nextLow == "mhz" || nextLow == "m") {
+            if ((nextLow == "ghz" || nextLow == "mhz") && !words[i].empty() &&
+                std::isdigit(static_cast<unsigned char>(words[i][0]))) {
                 combinedWords.push_back(words[i] + nextLow);
                 i++;
                 continue;
+            }
+            if ((nextLow == "meter" || nextLow == "meters") && (words[i] == "2" || words[i] == "6")) {
+                combinedWords.push_back(words[i] + "m");
+                i++;
+                continue;
+            }
+            if (nextLow == "g") {
+                std::string db, dc, da;
+                uint32_t df = 0;
+                if (parseBandOrFreq(words[i], db, df, dc, da)) {
+                    combinedWords.push_back(words[i] + nextLow);
+                    i++;
+                    continue;
+                }
             }
         }
         combinedWords.push_back(words[i]);
@@ -849,7 +909,17 @@ bool VoiceQsoParser::parseQso(const std::string &input,
     bool bandFound = false;
     std::vector<std::string> remainingWords;
     for (const auto &word : combinedWords) {
-        if (!bandFound && parseBandOrFreq(word, out.band, out.freq_khz, out.cabrillo_band, out.adif_band)) {
+        std::string bnd, cab, adif;
+        uint32_t freq = 0;
+        if (parseBandOrFreq(word, bnd, freq, cab, adif)) {
+            if (bandFound) {
+                out.error_message = "Ambiguous multiple bands/frequencies";
+                return false;
+            }
+            out.band = bnd;
+            out.freq_khz = freq;
+            out.cabrillo_band = cab;
+            out.adif_band = adif;
             bandFound = true;
         } else {
             remainingWords.push_back(word);
@@ -936,11 +1006,11 @@ bool VoiceQsoParser::parseQso(const std::string &input,
         }
     }
 
-    // Clean up consecutive slashes
+    // Clean up leading/consecutive/trailing slashes
     std::string cleanCall;
     cleanCall.reserve(callsign.size());
     for (char c : callsign) {
-        if (c == '/' && !cleanCall.empty() && cleanCall.back() == '/') {
+        if (c == '/' && (cleanCall.empty() || cleanCall.back() == '/')) {
             continue;
         }
         cleanCall.push_back(c);
@@ -949,23 +1019,23 @@ bool VoiceQsoParser::parseQso(const std::string &input,
         cleanCall.pop_back();
     }
 
-    // Validate callsign structure: length between 3 and 11, has letter, has digit
+    // Validate callsign structure: length between 3 and 11, at least 2 letters, at least 1 digit
     if (cleanCall.size() < 3 || cleanCall.size() > 11) {
         out.error_message = "Invalid callsign length: " + cleanCall;
         return false;
     }
 
-    bool hasLetter = false;
-    bool hasDigit = false;
+    size_t letterCount = 0;
+    size_t digitCount = 0;
     bool validChars = true;
 
     for (char c : cleanCall) {
-        if (isalpha((unsigned char)c)) hasLetter = true;
-        else if (isdigit((unsigned char)c)) hasDigit = true;
+        if (isalpha((unsigned char)c)) letterCount++;
+        else if (isdigit((unsigned char)c)) digitCount++;
         else if (c != '/') validChars = false;
     }
 
-    if (!hasLetter || !hasDigit || !validChars) {
+    if (letterCount < 2 || digitCount < 1 || !validChars) {
         out.error_message = "Invalid callsign: " + cleanCall;
         return false;
     }

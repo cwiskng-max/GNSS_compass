@@ -290,9 +290,25 @@ private:
     void *restartContext_;
 
     bool pendingRoverClear_;
+    CliSource pendingRoverClearSource_;
     bool pendingQsoClear_;
+    CliSource pendingQsoClearSource_;
     bool pendingQsoInput_;
     CliSource pendingQsoSource_;
+
+    enum class ExportFormat : uint8_t {
+        None = 0,
+        List,
+        Cabrillo,
+        Adif,
+        Csv
+    };
+    ExportFormat pendingExportFormat_;
+    size_t pendingExportIndex_;
+    CliSource pendingExportSource_;
+    std::string pendingExportCall_;
+    void startStreamingExport(ExportFormat fmt);
+    void servicePendingExport(bool fromUpdate = false);
     bool pendingAudit_;
     CliSource pendingAuditSource_;
     bool pendingConfig_;

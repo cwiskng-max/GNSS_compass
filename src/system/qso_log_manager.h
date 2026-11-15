@@ -56,12 +56,26 @@ public:
     void setMyCall(const std::string &call, bool persist = true);
 
     // Export & formatting functions
+    std::string getEffectiveMyCall(const std::string &myCall = "") const;
     std::string formatCabrillo(const std::string &myCall = "",
                                const std::string &contest = "ARRL-10-GHZ") const;
     std::string formatAdif(const std::string &programId = "GNSS Compass") const;
     std::string formatCsv() const;
     std::string formatStats() const;
     std::string formatList() const;
+
+    // Row-by-row streaming formatters (avoid large allocations and BLE TX overflow)
+    static std::string formatCabrilloHeader(const std::string &effectiveCall,
+                                            const std::string &contest = "ARRL-10-GHZ");
+    static std::string formatCabrilloRow(const QsoEntry &qso, const std::string &effectiveCall);
+    static std::string formatCabrilloFooter();
+    static std::string formatAdifHeader(const std::string &programId = "GNSS Compass");
+    static std::string formatAdifRow(const QsoEntry &qso);
+    static std::string formatCsvHeader();
+    static std::string formatCsvRow(const QsoEntry &qso);
+    static std::string formatListHeader();
+    static std::string formatListRow(size_t index1Based, const QsoEntry &qso);
+    static std::string formatListFooter();
 
     // Direct NVS storage operations
     void loadFromNvs();
@@ -79,6 +93,7 @@ public:
 private:
     std::vector<QsoEntry> qsos_;
     size_t maxQsos_;
+    size_t nvsHead_;
     std::string defaultBand_;
     std::string myCall_;
 

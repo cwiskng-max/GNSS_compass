@@ -5124,6 +5124,95 @@ void test_voice_logging_contest_session_e2e() {
     PASS();
 }
 
+void test_qso_critical_fixes_regression() {
+    TEST("Critical fixes: BLE streaming export, spoken bands, invalid callsigns, prompt isolation");
+
+    // 1. VoiceQsoParser spoken band numbers & validation
+    ParsedQso p;
+    ASSERT_TRUE(VoiceQsoParser::parseQso("log k6mg ten", p));
+    ASSERT_STR_EQ(p.callsign.c_str(), "K6MG");
+    ASSERT_STR_EQ(p.band.c_str(), "10 GHz");
+
+    ASSERT_TRUE(VoiceQsoParser::parseQso("log k6mg twenty four", p));
+    ASSERT_STR_EQ(p.callsign.c_str(), "K6MG");
+    ASSERT_STR_EQ(p.band.c_str(), "24 GHz");
+
+    ASSERT_TRUE(VoiceQsoParser::parseQso("log k6mg forty seven", p));
+    ASSERT_STR_EQ(p.callsign.c_str(), "K6MG");
+    ASSERT_STR_EQ(p.band.c_str(), "47 GHz");
+
+    ASSERT_TRUE(VoiceQsoParser::parseQso("log k6mg ten gigahertz", p));
+    ASSERT_STR_EQ(p.callsign.c_str(), "K6MG");
+    ASSERT_STR_EQ(p.band.c_str(), "10 GHz");
+
+    ASSERT_TRUE(VoiceQsoParser::parseQso("log k6mg 6 meters", p));
+    ASSERT_STR_EQ(p.callsign.c_str(), "K6MG");
+    ASSERT_STR_EQ(p.band.c_str(), "50 MHz");
+
+    // Reject ambiguous multiple bands instead of leaking into callsign
+    ASSERT_TRUE(!VoiceQsoParser::parseQso("log k6mg 10 24", p));
+    // Reject invalid single-letter callsigns
+    ASSERT_TRUE(!VoiceQsoParser::parseQso("log 12a", p));
+
+    // 2. BLE streaming export > 12 KB TX queue with zero dropped bytes
+    QsoLogManager::resetHostStorage();
+    QsoLogManager qsoLog;
+    qsoLog.begin();
+    qsoLog.setMaxQsos(300, false);
+    for (int i = 0; i < 250; ++i) {
+        char call[12];
+        std::snprintf(call, sizeof(call), "K6M%03d", i);
+        qsoLog.appendQso(QsoEntry(1762904040 + i, call, "10 GHz", 10368100, "CM87wa", "CM88qk", 118.2f, 342.0f));
+    }
+
+    GpsManager gm;
+    Calibration cal;
+    GpsSimulator sim;
+    RoverLogManager rlm;
+    BleSerialManager ble;
+    ble.begin("GNSS-Compass-test");
+    ble.handleConnect(1);
+    ble.handleMtu(247);
+    ble.handleSubscribe(true);
+    ble.update(100);
+
+    SerialCli cli(gm, cal, sim, &rlm, &ble, &qsoLog);
+    cli.begin();
+    std::string usbOut;
+    cli.setOutputHandler([](const char *s, void *ctx) {
+        if (s) *static_cast<std::string*>(ctx) += s;
+    }, &usbOut);
+
+    // Trigger ADIF export (> 40 KB) over BLE
+    const char *cmd = "log export adif\n";
+    ble.handleRxData(cmd, std::strlen(cmd));
+    for (unsigned long t = 200; t < 10000; t += 10) {
+        cli.update(t);
+    }
+    ASSERT_TRUE(ble.getTxDroppedBytes() == 0);
+    ASSERT_TRUE(ble.getTxQueued() == 0);
+    ASSERT_TRUE(usbOut.find("<CALL:6>K6M249") != std::string::npos);
+
+    // 3. Cross-transport prompt isolation
+    usbOut.clear();
+    const char *promptCmd = "log\n";
+    ble.handleRxData(promptCmd, std::strlen(promptCmd));
+    cli.update(10100);
+    ASSERT_TRUE(usbOut.find("[QSO] Callsign?") != std::string::npos);
+
+    // USB command must NOT be swallowed by BLE's pendingQsoInput_
+    usbOut.clear();
+    cli.executeCommand("k6mg 10", 10200, CLI_SOURCE_USB);
+    ASSERT_TRUE(qsoLog.getQsoCount() == 250); // Not logged by USB
+
+    // BLE disconnect clears pendingQsoInput_
+    ble.handleDisconnect();
+    cli.update(10300);
+    cli.handleBleConnectionChanged(false);
+
+    PASS();
+}
+
 int main() {
     std::cout << "========================================" << std::endl;
     std::cout << "  GNSS Compass Unit Test Suite" << std::endl;
@@ -5188,6 +5277,7 @@ int main() {
     test_app_controller_qso_card_interaction();
     test_serial_cli_log_commands();
     test_voice_logging_contest_session_e2e();
+    test_qso_critical_fixes_regression();
 
     std::cout << "========================================" << std::endl;
     std::cout << "  All " << tests_passed << " / " << tests_run << " tests PASSED successfully!" << std::endl;

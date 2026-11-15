@@ -21,6 +21,50 @@ bool QsoLogManager::s_hostNvsMyCallStored = false;
 
 namespace {
 
+#if defined(ARDUINO)
+constexpr uint32_t kNvsQsoMagic = 0x51534F31u; // "QSO1"
+constexpr uint16_t kNvsQsoVersion = 1;
+constexpr const char *kNvsKeyHead = "head";
+
+uint16_t crc16Ccitt(const uint8_t *data, size_t len) {
+    uint16_t crc = 0xFFFF;
+    for (size_t i = 0; i < len; ++i) {
+        crc ^= static_cast<uint16_t>(data[i]) << 8;
+        for (int b = 0; b < 8; ++b) {
+            crc = (crc & 0x8000) ? static_cast<uint16_t>((crc << 1) ^ 0x1021)
+                                 : static_cast<uint16_t>(crc << 1);
+        }
+    }
+    return crc;
+}
+
+#pragma pack(push, 1)
+struct NvsQsoRecord {
+    uint32_t magic;
+    uint16_t version;
+    uint16_t crc16;
+    QsoEntry entry;
+};
+#pragma pack(pop)
+
+NvsQsoRecord makeNvsRecord(const QsoEntry &qso) {
+    NvsQsoRecord rec;
+    rec.magic = kNvsQsoMagic;
+    rec.version = kNvsQsoVersion;
+    rec.entry = qso;
+    rec.crc16 = crc16Ccitt(reinterpret_cast<const uint8_t *>(&rec.entry), sizeof(QsoEntry));
+    return rec;
+}
+
+bool validateNvsRecord(const NvsQsoRecord &rec) {
+    if (rec.magic != kNvsQsoMagic || rec.version != kNvsQsoVersion) {
+        return false;
+    }
+    uint16_t expected = crc16Ccitt(reinterpret_cast<const uint8_t *>(&rec.entry), sizeof(QsoEntry));
+    return rec.crc16 == expected;
+}
+#endif
+
 void epochToDateTime(uint32_t ts, int &year, int &month, int &day, int &hour, int &minute, int &second) {
     if (ts >= 86400 * 365) {
         time_t t = static_cast<time_t>(ts);
@@ -49,7 +93,7 @@ void epochToDateTime(uint32_t ts, int &year, int &month, int &day, int &hour, in
 } // anonymous namespace
 
 QsoLogManager::QsoLogManager()
-    : maxQsos_(DEFAULT_MAX_QSOS), defaultBand_(DEFAULT_QSO_BAND), myCall_(DEFAULT_QSO_MY_CALL) {}
+    : maxQsos_(DEFAULT_MAX_QSOS), nvsHead_(0), defaultBand_(DEFAULT_QSO_BAND), myCall_(DEFAULT_QSO_MY_CALL) {}
 
 void QsoLogManager::begin() {
     loadFromNvs();
@@ -62,6 +106,7 @@ size_t QsoLogManager::clampMaxQsos(size_t val) {
 }
 
 void QsoLogManager::setMaxQsos(size_t maxQsos, bool persist) {
+    size_t oldMax = maxQsos_;
     maxQsos_ = clampMaxQsos(maxQsos);
 
     bool truncated = false;
@@ -84,7 +129,7 @@ void QsoLogManager::setMaxQsos(size_t maxQsos, bool persist) {
 #endif
     }
 
-    if (truncated) {
+    if (truncated || (maxQsos_ != oldMax && nvsHead_ != 0)) {
         saveToNvs();
     }
 }
@@ -134,18 +179,38 @@ bool QsoLogManager::appendQso(const QsoEntry &qso) {
     }
 
     if (qsos_.size() >= maxQsos_) {
-        // Discard oldest QSO to preserve ring buffer capacity (FIFO rollover)
+        // Discard oldest QSO to preserve ring buffer capacity (O(1) FIFO rollover in NVS)
         qsos_.erase(qsos_.begin());
         qsos_.push_back(qso);
-        saveToNvs();
+#if defined(ARDUINO)
+        Preferences logPrefs;
+        if (logPrefs.begin(QSO_LOG_NAMESPACE, false)) {
+            char key[16];
+            size_t slot = nvsHead_ % maxQsos_;
+            snprintf(key, sizeof(key), "q%u", (unsigned int)slot);
+            NvsQsoRecord rec = makeNvsRecord(qsos_.back());
+            logPrefs.putBytes(key, &rec, sizeof(rec));
+            nvsHead_ = (slot + 1) % maxQsos_;
+            logPrefs.putUShort(kNvsKeyHead, (uint16_t)nvsHead_);
+            logPrefs.putUShort(QSO_LOG_KEY_COUNT, (uint16_t)qsos_.size());
+            logPrefs.end();
+        }
+#else
+        if (!s_hostNvsQsos.empty()) {
+            s_hostNvsQsos.erase(s_hostNvsQsos.begin());
+        }
+        s_hostNvsQsos.push_back(qso);
+#endif
     } else {
         qsos_.push_back(qso);
 #if defined(ARDUINO)
         Preferences logPrefs;
         if (logPrefs.begin(QSO_LOG_NAMESPACE, false)) {
             char key[16];
-            snprintf(key, sizeof(key), "q%u", (unsigned int)(qsos_.size() - 1));
-            logPrefs.putBytes(key, &qsos_.back(), sizeof(QsoEntry));
+            size_t slot = (nvsHead_ + qsos_.size() - 1) % maxQsos_;
+            snprintf(key, sizeof(key), "q%u", (unsigned int)slot);
+            NvsQsoRecord rec = makeNvsRecord(qsos_.back());
+            logPrefs.putBytes(key, &rec, sizeof(rec));
             logPrefs.putUShort(QSO_LOG_KEY_COUNT, (uint16_t)qsos_.size());
             logPrefs.end();
         }
@@ -161,16 +226,14 @@ bool QsoLogManager::popLastQso() {
         return false;
     }
 
-#if defined(ARDUINO)
-    size_t removedIndex = qsos_.size() - 1;
-#endif
     qsos_.pop_back();
 
 #if defined(ARDUINO)
     Preferences logPrefs;
     if (logPrefs.begin(QSO_LOG_NAMESPACE, false)) {
         char key[16];
-        snprintf(key, sizeof(key), "q%u", (unsigned int)removedIndex);
+        size_t removedSlot = (nvsHead_ + qsos_.size()) % maxQsos_;
+        snprintf(key, sizeof(key), "q%u", (unsigned int)removedSlot);
         logPrefs.remove(key);
         logPrefs.putUShort(QSO_LOG_KEY_COUNT, (uint16_t)qsos_.size());
         logPrefs.end();
@@ -191,22 +254,48 @@ bool QsoLogManager::deleteQsoByIndex(size_t index) {
     size_t vectorIndex = index - 1;
     qsos_.erase(qsos_.begin() + vectorIndex);
 
-#if !defined(ARDUINO)
+#if defined(ARDUINO)
+    Preferences logPrefs;
+    if (logPrefs.begin(QSO_LOG_NAMESPACE, false)) {
+        char key[16];
+        if (vectorIndex == 0) {
+            // O(1) delete of oldest entry by advancing ring head
+            snprintf(key, sizeof(key), "q%u", (unsigned int)(nvsHead_ % maxQsos_));
+            logPrefs.remove(key);
+            nvsHead_ = (nvsHead_ + 1) % maxQsos_;
+            logPrefs.putUShort(kNvsKeyHead, (uint16_t)nvsHead_);
+        } else {
+            // Shift only trailing elements [vectorIndex .. size-1]
+            for (size_t i = vectorIndex; i < qsos_.size(); ++i) {
+                size_t slot = (nvsHead_ + i) % maxQsos_;
+                snprintf(key, sizeof(key), "q%u", (unsigned int)slot);
+                NvsQsoRecord rec = makeNvsRecord(qsos_[i]);
+                logPrefs.putBytes(key, &rec, sizeof(rec));
+            }
+            size_t tailSlot = (nvsHead_ + qsos_.size()) % maxQsos_;
+            snprintf(key, sizeof(key), "q%u", (unsigned int)tailSlot);
+            logPrefs.remove(key);
+        }
+        logPrefs.putUShort(QSO_LOG_KEY_COUNT, (uint16_t)qsos_.size());
+        logPrefs.end();
+    }
+#else
     if (vectorIndex < s_hostNvsQsos.size()) {
         s_hostNvsQsos.erase(s_hostNvsQsos.begin() + vectorIndex);
     }
 #endif
 
-    saveToNvs();
     return true;
 }
 
 void QsoLogManager::clearLog() {
     qsos_.clear();
+    nvsHead_ = 0;
 #if defined(ARDUINO)
     Preferences logPrefs;
     if (logPrefs.begin(QSO_LOG_NAMESPACE, false)) {
         logPrefs.clear();
+        logPrefs.putUShort(kNvsKeyHead, 0);
         logPrefs.putUShort(QSO_LOG_KEY_COUNT, 0);
         logPrefs.end();
     }
@@ -255,22 +344,35 @@ void QsoLogManager::loadFromNvs() {
     }
 
     qsos_.clear();
+    nvsHead_ = 0;
     Preferences logPrefs;
     if (logPrefs.begin(QSO_LOG_NAMESPACE, true)) {
         uint16_t count = logPrefs.getUShort(QSO_LOG_KEY_COUNT, 0);
+        uint16_t head = logPrefs.getUShort(kNvsKeyHead, 0);
+        if (maxQsos_ > 0) {
+            nvsHead_ = head % maxQsos_;
+        }
         if (count > maxQsos_) {
             count = (uint16_t)maxQsos_;
         }
         qsos_.reserve(count);
         for (uint16_t i = 0; i < count; ++i) {
             char key[16];
-            snprintf(key, sizeof(key), "q%u", (unsigned int)i);
-            QsoEntry q;
-            size_t bytesRead = logPrefs.getBytes(key, &q, sizeof(QsoEntry));
-            if (bytesRead == sizeof(QsoEntry)) {
+            size_t slot = (nvsHead_ + i) % maxQsos_;
+            snprintf(key, sizeof(key), "q%u", (unsigned int)slot);
+            uint8_t rawBuf[sizeof(NvsQsoRecord)];
+            size_t bytesRead = logPrefs.getBytes(key, rawBuf, sizeof(rawBuf));
+            if (bytesRead == sizeof(NvsQsoRecord)) {
+                NvsQsoRecord rec;
+                std::memcpy(&rec, rawBuf, sizeof(rec));
+                if (validateNvsRecord(rec)) {
+                    qsos_.push_back(rec.entry);
+                }
+            } else if (bytesRead == sizeof(QsoEntry)) {
+                // Legacy unversioned record fallback
+                QsoEntry q;
+                std::memcpy(&q, rawBuf, sizeof(QsoEntry));
                 qsos_.push_back(q);
-            } else {
-                break;
             }
         }
         logPrefs.end();
@@ -307,23 +409,29 @@ void QsoLogManager::loadFromNvs() {
 }
 
 void QsoLogManager::saveToNvs() {
+    nvsHead_ = 0;
 #if defined(ARDUINO)
     Preferences logPrefs;
     if (logPrefs.begin(QSO_LOG_NAMESPACE, false)) {
         uint16_t oldCount = logPrefs.getUShort(QSO_LOG_KEY_COUNT, 0);
+        size_t clearLimit = (oldCount > maxQsos_) ? oldCount : maxQsos_;
 
         for (size_t i = 0; i < qsos_.size(); ++i) {
             char key[16];
             snprintf(key, sizeof(key), "q%u", (unsigned int)i);
-            logPrefs.putBytes(key, &qsos_[i], sizeof(QsoEntry));
+            NvsQsoRecord rec = makeNvsRecord(qsos_[i]);
+            logPrefs.putBytes(key, &rec, sizeof(rec));
         }
 
-        for (size_t i = qsos_.size(); i < oldCount; ++i) {
+        for (size_t i = qsos_.size(); i < clearLimit; ++i) {
             char key[16];
             snprintf(key, sizeof(key), "q%u", (unsigned int)i);
-            logPrefs.remove(key);
+            if (logPrefs.isKey(key)) {
+                logPrefs.remove(key);
+            }
         }
 
+        logPrefs.putUShort(kNvsKeyHead, 0);
         logPrefs.putUShort(QSO_LOG_KEY_COUNT, (uint16_t)qsos_.size());
         logPrefs.end();
     }
@@ -363,45 +471,61 @@ std::string QsoLogManager::getHostStorageMyCall() {
 }
 #endif
 
-std::string QsoLogManager::formatCabrillo(const std::string &myCall,
-                                         const std::string &contest) const {
-    const std::string effectiveCall = myCall.empty()
+std::string QsoLogManager::getEffectiveMyCall(const std::string &myCall) const {
+    return myCall.empty()
         ? (myCall_.empty() ? std::string(DEFAULT_QSO_MY_CALL) : myCall_)
         : myCall;
+}
+
+std::string QsoLogManager::formatCabrilloHeader(const std::string &effectiveCall,
+                                                const std::string &contest) {
     std::string out;
     out += "START-OF-LOG: 3.0\r\n";
     out += "CREATED-BY: GNSS Compass\r\n";
     out += "CONTEST: " + (contest.empty() ? "ARRL-10-GHZ" : contest) + "\r\n";
     out += "CALLSIGN: " + effectiveCall + "\r\n";
-
-    for (const auto &qso : qsos_) {
-        int y, m, d, hh, mm, ss;
-        epochToDateTime(qso.timestamp, y, m, d, hh, mm, ss);
-        std::string cabBand = VoiceQsoParser::bandToCabrillo(qso.band);
-
-        // Cabrillo 3.0 specification for ARRL 10 GHz and VHF/Microwave contests
-        // requires 6-character Maidenhead locator exchanges (e.g. CM87wa).
-        // Truncate 8-digit locators to 6 digits for contest log robot compliance.
-        char myGrid6[7] = {0};
-        std::strncpy(myGrid6, qso.my_grid, 6);
-        char hisGrid6[7] = {0};
-        std::strncpy(hisGrid6, qso.his_grid, 6);
-
-        char line[256];
-        snprintf(line, sizeof(line), "QSO: %-5s PH %04d-%02d-%02d %02d%02d %-10s %-6s %-10s %-6s\r\n",
-                 cabBand.c_str(), y, m, d, hh, mm,
-                 effectiveCall.c_str(),
-                 myGrid6,
-                 qso.callsign,
-                 hisGrid6);
-        out += line;
-    }
-
-    out += "END-OF-LOG:\r\n";
     return out;
 }
 
-std::string QsoLogManager::formatAdif(const std::string &programId) const {
+std::string QsoLogManager::formatCabrilloRow(const QsoEntry &qso, const std::string &effectiveCall) {
+    int y, m, d, hh, mm, ss;
+    epochToDateTime(qso.timestamp, y, m, d, hh, mm, ss);
+    std::string cabBand = VoiceQsoParser::bandToCabrillo(qso.band);
+
+    // Cabrillo 3.0 specification for ARRL 10 GHz and VHF/Microwave contests
+    // requires 6-character Maidenhead locator exchanges (e.g. CM87wa).
+    // Truncate 8-digit locators to 6 digits for contest log robot compliance.
+    char myGrid6[7] = {0};
+    snprintf(myGrid6, sizeof(myGrid6), "%.6s", qso.my_grid);
+    char hisGrid6[7] = {0};
+    snprintf(hisGrid6, sizeof(hisGrid6), "%.6s", qso.his_grid);
+
+    char line[256];
+    snprintf(line, sizeof(line), "QSO: %-5s PH %04d-%02d-%02d %02d%02d %-10s %-6s %-10s %-6s\r\n",
+             cabBand.c_str(), y, m, d, hh, mm,
+             effectiveCall.c_str(),
+             myGrid6,
+             qso.callsign,
+             hisGrid6);
+    return std::string(line);
+}
+
+std::string QsoLogManager::formatCabrilloFooter() {
+    return "END-OF-LOG:\r\n";
+}
+
+std::string QsoLogManager::formatCabrillo(const std::string &myCall,
+                                         const std::string &contest) const {
+    const std::string effectiveCall = getEffectiveMyCall(myCall);
+    std::string out = formatCabrilloHeader(effectiveCall, contest);
+    for (const auto &qso : qsos_) {
+        out += formatCabrilloRow(qso, effectiveCall);
+    }
+    out += formatCabrilloFooter();
+    return out;
+}
+
+std::string QsoLogManager::formatAdifHeader(const std::string &programId) {
     std::string out;
     out += "ADIF Export from GNSS Compass\r\n";
     out += "<ADIF_VER:5>3.1.4\r\n";
@@ -409,65 +533,80 @@ std::string QsoLogManager::formatAdif(const std::string &programId) const {
     snprintf(progBuf, sizeof(progBuf), "<PROGRAMID:%zu>%s\r\n", programId.size(), programId.c_str());
     out += progBuf;
     out += "<EOH>\r\n\r\n";
+    return out;
+}
 
+std::string QsoLogManager::formatAdifRow(const QsoEntry &qso) {
+    int y, m, d, hh, mm, ss;
+    epochToDateTime(qso.timestamp, y, m, d, hh, mm, ss);
+    std::string adifBand = VoiceQsoParser::bandToAdif(qso.band);
+
+    char rec[512];
+    char dateBuf[32];
+    snprintf(dateBuf, sizeof(dateBuf), "%04d%02d%02d", y, m, d);
+    char timeBuf[32];
+    snprintf(timeBuf, sizeof(timeBuf), "%02d%02d%02d", hh, mm, ss);
+    char distBuf[32];
+    snprintf(distBuf, sizeof(distBuf), "%.1f", qso.distance_km);
+
+    std::string r;
+    snprintf(rec, sizeof(rec), "<CALL:%zu>%s ", std::strlen(qso.callsign), qso.callsign);
+    r += rec;
+    snprintf(rec, sizeof(rec), "<QSO_DATE:%zu>%s ", std::strlen(dateBuf), dateBuf);
+    r += rec;
+    snprintf(rec, sizeof(rec), "<TIME_ON:%zu>%s ", std::strlen(timeBuf), timeBuf);
+    r += rec;
+    snprintf(rec, sizeof(rec), "<BAND:%zu>%s ", adifBand.size(), adifBand.c_str());
+    r += rec;
+    if (qso.freq_khz > 0) {
+        char freqBuf[32];
+        snprintf(freqBuf, sizeof(freqBuf), "%.3f", qso.freq_khz / 1000.0);
+        snprintf(rec, sizeof(rec), "<FREQ:%zu>%s ", std::strlen(freqBuf), freqBuf);
+        r += rec;
+    }
+    r += "<MODE:3>SSB ";
+    if (qso.my_grid[0] != '\0') {
+        snprintf(rec, sizeof(rec), "<MY_GRIDSQUARE:%zu>%s ", std::strlen(qso.my_grid), qso.my_grid);
+        r += rec;
+    }
+    if (qso.his_grid[0] != '\0') {
+        snprintf(rec, sizeof(rec), "<GRIDSQUARE:%zu>%s ", std::strlen(qso.his_grid), qso.his_grid);
+        r += rec;
+    }
+    snprintf(rec, sizeof(rec), "<DISTANCE:%zu>%s ", std::strlen(distBuf), distBuf);
+    r += rec;
+    r += "<EOR>\r\n";
+    return r;
+}
+
+std::string QsoLogManager::formatAdif(const std::string &programId) const {
+    std::string out = formatAdifHeader(programId);
     for (const auto &qso : qsos_) {
-        int y, m, d, hh, mm, ss;
-        epochToDateTime(qso.timestamp, y, m, d, hh, mm, ss);
-        std::string adifBand = VoiceQsoParser::bandToAdif(qso.band);
-
-        char rec[512];
-        char dateBuf[32];
-        snprintf(dateBuf, sizeof(dateBuf), "%04d%02d%02d", y, m, d);
-        char timeBuf[32];
-        snprintf(timeBuf, sizeof(timeBuf), "%02d%02d%02d", hh, mm, ss);
-        char distBuf[32];
-        snprintf(distBuf, sizeof(distBuf), "%.1f", qso.distance_km);
-
-        std::string r;
-        snprintf(rec, sizeof(rec), "<CALL:%zu>%s ", std::strlen(qso.callsign), qso.callsign);
-        r += rec;
-        snprintf(rec, sizeof(rec), "<QSO_DATE:%zu>%s ", std::strlen(dateBuf), dateBuf);
-        r += rec;
-        snprintf(rec, sizeof(rec), "<TIME_ON:%zu>%s ", std::strlen(timeBuf), timeBuf);
-        r += rec;
-        snprintf(rec, sizeof(rec), "<BAND:%zu>%s ", adifBand.size(), adifBand.c_str());
-        r += rec;
-        if (qso.freq_khz > 0) {
-            char freqBuf[32];
-            snprintf(freqBuf, sizeof(freqBuf), "%.3f", qso.freq_khz / 1000.0);
-            snprintf(rec, sizeof(rec), "<FREQ:%zu>%s ", std::strlen(freqBuf), freqBuf);
-            r += rec;
-        }
-        r += "<MODE:3>SSB ";
-        if (qso.my_grid[0] != '\0') {
-            snprintf(rec, sizeof(rec), "<MY_GRIDSQUARE:%zu>%s ", std::strlen(qso.my_grid), qso.my_grid);
-            r += rec;
-        }
-        if (qso.his_grid[0] != '\0') {
-            snprintf(rec, sizeof(rec), "<GRIDSQUARE:%zu>%s ", std::strlen(qso.his_grid), qso.his_grid);
-            r += rec;
-        }
-        snprintf(rec, sizeof(rec), "<DISTANCE:%zu>%s ", std::strlen(distBuf), distBuf);
-        r += rec;
-        r += "<EOR>\r\n";
-
-        out += r;
+        out += formatAdifRow(qso);
     }
     return out;
 }
 
+std::string QsoLogManager::formatCsvHeader() {
+    return "Timestamp,Date,Time,Callsign,Band,Frequency_kHz,MyGrid,HisGrid,Distance_km,Bearing_deg\r\n";
+}
+
+std::string QsoLogManager::formatCsvRow(const QsoEntry &qso) {
+    int y, m, d, hh, mm, ss;
+    epochToDateTime(qso.timestamp, y, m, d, hh, mm, ss);
+    char row[256];
+    snprintf(row, sizeof(row), "%u,%04d-%02d-%02d,%02d:%02d:%02d,%s,%s,%u,%s,%s,%.1f,%.1f\r\n",
+             qso.timestamp, y, m, d, hh, mm, ss,
+             qso.callsign, qso.band, qso.freq_khz,
+             qso.my_grid, qso.his_grid,
+             qso.distance_km, qso.bearing_deg);
+    return std::string(row);
+}
+
 std::string QsoLogManager::formatCsv() const {
-    std::string out = "Timestamp,Date,Time,Callsign,Band,Frequency_kHz,MyGrid,HisGrid,Distance_km,Bearing_deg\r\n";
+    std::string out = formatCsvHeader();
     for (const auto &qso : qsos_) {
-        int y, m, d, hh, mm, ss;
-        epochToDateTime(qso.timestamp, y, m, d, hh, mm, ss);
-        char row[256];
-        snprintf(row, sizeof(row), "%u,%04d-%02d-%02d,%02d:%02d:%02d,%s,%s,%u,%s,%s,%.1f,%.1f\r\n",
-                 qso.timestamp, y, m, d, hh, mm, ss,
-                 qso.callsign, qso.band, qso.freq_khz,
-                 qso.my_grid, qso.his_grid,
-                 qso.distance_km, qso.bearing_deg);
-        out += row;
+        out += formatCsvRow(qso);
     }
     return out;
 }
@@ -534,37 +673,48 @@ std::string QsoLogManager::formatStats() const {
     return out;
 }
 
-std::string QsoLogManager::formatList() const {
+std::string QsoLogManager::formatListHeader() {
     std::string out;
     out += "====================================================================================================\r\n";
     out += " #  | Date & Time UTC     | Callsign     | Band    | Frequency      | My Grid  | His Grid | Dist(km) | Bearing\r\n";
     out += "====================================================================================================\r\n";
+    return out;
+}
 
+std::string QsoLogManager::formatListRow(size_t index1Based, const QsoEntry &qso) {
+    int y, m, d, hh, mm, ss;
+    epochToDateTime(qso.timestamp, y, m, d, hh, mm, ss);
+
+    char freqStr[32];
+    if (qso.freq_khz > 0) {
+        snprintf(freqStr, sizeof(freqStr), "%10.3f MHz", qso.freq_khz / 1000.0);
+    } else {
+        snprintf(freqStr, sizeof(freqStr), "          ---  ");
+    }
+
+    char line[256];
+    snprintf(line, sizeof(line),
+             "%3zu | %04d-%02d-%02d %02d:%02d:%02d | %-12s | %-7s | %s | %-8s | %-8s | %8.1f | %7.1f\r\n",
+             index1Based, y, m, d, hh, mm, ss,
+             qso.callsign, qso.band, freqStr,
+             qso.my_grid, qso.his_grid,
+             qso.distance_km, qso.bearing_deg);
+    return std::string(line);
+}
+
+std::string QsoLogManager::formatListFooter() {
+    return "====================================================================================================\r\n";
+}
+
+std::string QsoLogManager::formatList() const {
+    std::string out = formatListHeader();
     if (qsos_.empty()) {
         out += "  (No QSOs logged)\r\n";
     } else {
         for (size_t i = 0; i < qsos_.size(); ++i) {
-            const auto &qso = qsos_[i];
-            int y, m, d, hh, mm, ss;
-            epochToDateTime(qso.timestamp, y, m, d, hh, mm, ss);
-
-            char freqStr[32];
-            if (qso.freq_khz > 0) {
-                snprintf(freqStr, sizeof(freqStr), "%10.3f MHz", qso.freq_khz / 1000.0);
-            } else {
-                snprintf(freqStr, sizeof(freqStr), "          ---  ");
-            }
-
-            char line[256];
-            snprintf(line, sizeof(line),
-                     "%3zu | %04d-%02d-%02d %02d:%02d:%02d | %-12s | %-7s | %s | %-8s | %-8s | %8.1f | %7.1f\r\n",
-                     i + 1, y, m, d, hh, mm, ss,
-                     qso.callsign, qso.band, freqStr,
-                     qso.my_grid, qso.his_grid,
-                     qso.distance_km, qso.bearing_deg);
-            out += line;
+            out += formatListRow(i + 1, qsos_[i]);
         }
     }
-    out += "====================================================================================================\r\n";
+    out += formatListFooter();
     return out;
 }
