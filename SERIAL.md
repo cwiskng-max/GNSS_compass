@@ -192,8 +192,16 @@ When the ESP32 transmitter line (GPIO 43) is wired to the UM982 receiver's COM1 
 
 ```mermaid
 flowchart LR
-    ESP_TX["ESP32 GPIO 43 (TX)"] -->|"TX Wire (Line 2)"| UM_RX["UM982 COM1 RX"]
-    ESP_RX["ESP32 GPIO 44 (RX)"] <--|"RX Wire (Line 1)"| UM_TX["UM982 COM1 TX"]
+    subgraph ESP32
+        ESP_TX["GPIO 43 (TX)"]
+        ESP_RX["GPIO 44 (RX)"]
+    end
+    subgraph UM982
+        UM_RX["COM1 RX"]
+        UM_TX["COM1 TX"]
+    end
+    ESP_TX -->|"TX Wire (Line 2)"| UM_RX
+    UM_TX -->|"RX Wire (Line 1)"| ESP_RX
 ```
 
 #### 1. Discover TX Wire (`gps probe`)
