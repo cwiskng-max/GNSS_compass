@@ -17,6 +17,8 @@ std::string QsoLogManager::s_hostNvsDefaultBand = DEFAULT_QSO_BAND;
 bool QsoLogManager::s_hostNvsDefaultBandStored = false;
 std::string QsoLogManager::s_hostNvsMyCall = DEFAULT_QSO_MY_CALL;
 bool QsoLogManager::s_hostNvsMyCallStored = false;
+uint16_t QsoLogManager::s_hostNvsCardTimeoutSec = DEFAULT_QSO_CARD_TIMEOUT_S;
+bool QsoLogManager::s_hostNvsCardTimeoutSecStored = false;
 #endif
 
 namespace {
@@ -93,7 +95,8 @@ void epochToDateTime(uint32_t ts, int &year, int &month, int &day, int &hour, in
 } // anonymous namespace
 
 QsoLogManager::QsoLogManager()
-    : maxQsos_(DEFAULT_MAX_QSOS), nvsHead_(0), defaultBand_(DEFAULT_QSO_BAND), myCall_(DEFAULT_QSO_MY_CALL) {}
+    : maxQsos_(DEFAULT_MAX_QSOS), nvsHead_(0), defaultBand_(DEFAULT_QSO_BAND),
+      myCall_(DEFAULT_QSO_MY_CALL), cardTimeoutSec_(DEFAULT_QSO_CARD_TIMEOUT_S) {}
 
 void QsoLogManager::begin() {
     loadFromNvs();
@@ -169,6 +172,29 @@ void QsoLogManager::setMyCall(const std::string &call, bool persist) {
 #else
         s_hostNvsMyCall = myCall_;
         s_hostNvsMyCallStored = true;
+#endif
+    }
+}
+
+uint16_t QsoLogManager::clampCardTimeoutSec(uint16_t sec) {
+    if (sec < MIN_QSO_CARD_TIMEOUT_S) return MIN_QSO_CARD_TIMEOUT_S;
+    if (sec > MAX_QSO_CARD_TIMEOUT_S) return MAX_QSO_CARD_TIMEOUT_S;
+    return sec;
+}
+
+void QsoLogManager::setCardTimeoutSec(uint16_t sec, bool persist) {
+    cardTimeoutSec_ = clampCardTimeoutSec(sec);
+
+    if (persist) {
+#if defined(ARDUINO)
+        Preferences cfgPrefs;
+        if (cfgPrefs.begin(QSO_CFG_NAMESPACE, false)) {
+            cfgPrefs.putUShort(QSO_CFG_KEY_CARD_TIMEOUT_S, cardTimeoutSec_);
+            cfgPrefs.end();
+        }
+#else
+        s_hostNvsCardTimeoutSec = cardTimeoutSec_;
+        s_hostNvsCardTimeoutSecStored = true;
 #endif
     }
 }
@@ -336,11 +362,14 @@ void QsoLogManager::loadFromNvs() {
         defaultBand_ = defB.c_str();
         String storedCall = cfgPrefs.getString(QSO_CFG_KEY_MY_CALL, DEFAULT_QSO_MY_CALL);
         myCall_ = storedCall.length() > 0 ? storedCall.c_str() : DEFAULT_QSO_MY_CALL;
+        uint16_t storedTimeout = cfgPrefs.getUShort(QSO_CFG_KEY_CARD_TIMEOUT_S, DEFAULT_QSO_CARD_TIMEOUT_S);
+        cardTimeoutSec_ = clampCardTimeoutSec(storedTimeout);
         cfgPrefs.end();
     } else {
         maxQsos_ = DEFAULT_MAX_QSOS;
         defaultBand_ = DEFAULT_QSO_BAND;
         myCall_ = DEFAULT_QSO_MY_CALL;
+        cardTimeoutSec_ = DEFAULT_QSO_CARD_TIMEOUT_S;
     }
 
     qsos_.clear();
@@ -394,6 +423,12 @@ void QsoLogManager::loadFromNvs() {
         myCall_ = s_hostNvsMyCall;
     } else {
         myCall_ = DEFAULT_QSO_MY_CALL;
+    }
+
+    if (s_hostNvsCardTimeoutSecStored) {
+        cardTimeoutSec_ = clampCardTimeoutSec(s_hostNvsCardTimeoutSec);
+    } else {
+        cardTimeoutSec_ = DEFAULT_QSO_CARD_TIMEOUT_S;
     }
 
     qsos_.clear();
@@ -452,6 +487,8 @@ void QsoLogManager::resetHostStorage() {
     s_hostNvsDefaultBandStored = false;
     s_hostNvsMyCall = DEFAULT_QSO_MY_CALL;
     s_hostNvsMyCallStored = false;
+    s_hostNvsCardTimeoutSec = DEFAULT_QSO_CARD_TIMEOUT_S;
+    s_hostNvsCardTimeoutSecStored = false;
 }
 
 size_t QsoLogManager::getHostStorageCount() {
@@ -468,6 +505,10 @@ std::string QsoLogManager::getHostStorageDefaultBand() {
 
 std::string QsoLogManager::getHostStorageMyCall() {
     return s_hostNvsMyCall;
+}
+
+uint16_t QsoLogManager::getHostStorageCardTimeoutSec() {
+    return s_hostNvsCardTimeoutSec;
 }
 #endif
 

@@ -65,8 +65,8 @@ void QsoCard::dismiss() {
     visible_ = false;
 }
 
-bool QsoCard::checkTimeout(unsigned long nowMs) {
-    if (visible_ && (nowMs >= openedMs_) && ((nowMs - openedMs_) >= QSO_MODAL_TIMEOUT_MS)) {
+bool QsoCard::checkTimeout(unsigned long nowMs, unsigned long timeoutMs) {
+    if (visible_ && (nowMs >= openedMs_) && ((nowMs - openedMs_) >= timeoutMs)) {
         visible_ = false;
         return true;
     }

@@ -804,7 +804,8 @@ void AppController::update(unsigned long nowMs) {
             redrawMainScreen();
         }
     } else if (currentUiMode_ == UiMode::QsoCard) {
-        if (displayUi_.getQsoCard().checkTimeout(nowMs)) {
+        unsigned long cardTimeoutMs = qsoLogManagerRef_ ? qsoLogManagerRef_->getCardTimeoutMs() : QSO_MODAL_TIMEOUT_MS;
+        if (displayUi_.getQsoCard().checkTimeout(nowMs, cardTimeoutMs)) {
             dismissQsoCard();
         }
     }

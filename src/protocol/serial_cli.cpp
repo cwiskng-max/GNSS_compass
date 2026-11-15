@@ -461,10 +461,11 @@ void SerialCli::executeCommand(const char *cmdLine, unsigned long nowMs, CliSour
         cleanCmd[writeIdx] = '\0';
         len = writeIdx;
 
-        // Strip stray trailing "send" from voice keyboard submission (e.g. Gboard),
+        // Strip stray trailing "send" or "sent" from voice keyboard submission (e.g. Gboard),
         // while preserving "gps send ...".
         if (len > 5 && !startsWithIgnoreCase(cleanCmd, "gps send") &&
-            equalsIgnoreCase(&cleanCmd[len - 5], " send")) {
+            (equalsIgnoreCase(&cleanCmd[len - 5], " send") ||
+             equalsIgnoreCase(&cleanCmd[len - 5], " sent"))) {
             len -= 5;
             cleanCmd[len] = '\0';
         }
@@ -1174,6 +1175,34 @@ void SerialCli::handleLogCommand(const char *arg, unsigned long nowMs) {
         }
         return;
     }
+    if (equalsIgnoreCase(arg, "timeout") || startsWithIgnoreCase(arg, "timeout ")) {
+        const char *p = arg + 7;
+        while (*p == ' ' || *p == '\t') p++;
+        if (!*p) {
+            uint16_t curSec = qsoLogManager_ ? qsoLogManager_->getCardTimeoutSec() : DEFAULT_QSO_CARD_TIMEOUT_S;
+            printFormat("[QSO LOG] Current pop-up card timeout: %u s (range %d-%d s, default %d s)\r\n",
+                        curSec, MIN_QSO_CARD_TIMEOUT_S, MAX_QSO_CARD_TIMEOUT_S, DEFAULT_QSO_CARD_TIMEOUT_S);
+        } else if (equalsIgnoreCase(p, "reset") || equalsIgnoreCase(p, "default")) {
+            if (qsoLogManager_) {
+                qsoLogManager_->setCardTimeoutSec(DEFAULT_QSO_CARD_TIMEOUT_S);
+            }
+            printFormat("[QSO LOG] Pop-up card timeout reset to %d s (saved to NVS).\r\n",
+                        DEFAULT_QSO_CARD_TIMEOUT_S);
+        } else {
+            int val = 0;
+            if (!parseStrictPositiveInt(p, val)) {
+                printFormat("[QSO ERROR] Invalid timeout '%s'. Expected seconds (%d-%d).\r\n",
+                            p, MIN_QSO_CARD_TIMEOUT_S, MAX_QSO_CARD_TIMEOUT_S);
+                return;
+            }
+            if (qsoLogManager_) {
+                qsoLogManager_->setCardTimeoutSec(static_cast<uint16_t>(val));
+                printFormat("[QSO LOG] Pop-up card timeout set to %u s (saved to NVS).\r\n",
+                            qsoLogManager_->getCardTimeoutSec());
+            }
+        }
+        return;
+    }
     if (equalsIgnoreCase(arg, "help") || strcmp(arg, "?") == 0) {
         printLogHelp();
         return;
@@ -1551,6 +1580,7 @@ void SerialCli::printLogHelp() {
     println("  log mycall [<call>|reset]- Configure station callsign for Cabrillo export");
     println("  log default band <band>  - Configure default band in NVS (default: 10 GHz)");
     println("  log max <#>              - Configure maximum QSO storage capacity (10-1000)");
+    println("  log timeout [<sec>|reset]- Configure QSO pop-up card timeout (1-60 s, default: 5 s)");
 }
 
 void SerialCli::printGpsStatus(unsigned long nowMs) {

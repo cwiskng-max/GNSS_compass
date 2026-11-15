@@ -4591,7 +4591,7 @@ void test_qso_card_formatters_and_modal_state() {
     ASSERT_TRUE(!QsoCard::isOkButtonTouched(10, 10));
     ASSERT_TRUE(!QsoCard::isOkButtonTouched(400, 400));
 
-    // 3. Active card state & 10s auto-dismiss timer
+    // 3. Active card state & default 5s auto-dismiss timer
     QsoCard card;
     ASSERT_TRUE(!card.isVisible());
 
@@ -4602,14 +4602,21 @@ void test_qso_card_formatters_and_modal_state() {
     ASSERT_TRUE(card.getActiveQsoIndex() == 1);
     ASSERT_STR_EQ(card.getActiveQso().callsign, "K6MG");
 
-    // Check timeout before 10 seconds
-    ASSERT_TRUE(!card.checkTimeout(5000));
+    // Check timeout before 5 seconds
+    ASSERT_TRUE(!card.checkTimeout(4000));
     ASSERT_TRUE(card.isVisible());
-    ASSERT_TRUE(!card.checkTimeout(10999));
+    ASSERT_TRUE(!card.checkTimeout(5999));
     ASSERT_TRUE(card.isVisible());
 
-    // Check timeout at 10 seconds
-    ASSERT_TRUE(card.checkTimeout(11000));
+    // Check timeout at 5 seconds
+    ASSERT_TRUE(card.checkTimeout(6000));
+    ASSERT_TRUE(!card.isVisible());
+
+    // Check custom 10-second timeout
+    card.show(q, 1, 1000);
+    ASSERT_TRUE(!card.checkTimeout(6000, 10000));
+    ASSERT_TRUE(card.isVisible());
+    ASSERT_TRUE(card.checkTimeout(11000, 10000));
     ASSERT_TRUE(!card.isVisible());
 
     // Explicit dismiss
@@ -4622,7 +4629,7 @@ void test_qso_card_formatters_and_modal_state() {
 }
 
 void test_app_controller_qso_card_interaction() {
-    TEST("AppController QSO card UI mode, 10s auto-dismiss, and touch/encoder dismiss");
+    TEST("AppController QSO card UI mode, configurable auto-dismiss (default 5s), and touch/encoder dismiss");
 
     Board board;
     DisplayUi display;
@@ -4646,14 +4653,23 @@ void test_app_controller_qso_card_interaction() {
     ASSERT_TRUE(display.getQsoCard().isVisible());
     ASSERT_TRUE(app.getQsoCardOpenedMs() == 1000);
 
-    // 2. 10-second non-blocking auto-dismiss
+    // 2. Default 5-second non-blocking auto-dismiss
     app.update(5000);
     ASSERT_TRUE(app.getUiMode() == UiMode::QsoCard);
     ASSERT_TRUE(display.getQsoCard().isVisible());
 
-    app.update(11000);
+    app.update(6000);
     ASSERT_TRUE(app.getUiMode() == UiMode::Normal);
     ASSERT_TRUE(!display.getQsoCard().isVisible());
+
+    // 2b. Configurable 10-second auto-dismiss via QsoLogManager
+    qsoLog.setCardTimeoutSec(10);
+    app.showQsoCard(q, 1, 7000);
+    app.update(12000); // 5s elapsed: still visible
+    ASSERT_TRUE(app.getUiMode() == UiMode::QsoCard);
+    app.update(17000); // 10s elapsed: dismissed
+    ASSERT_TRUE(app.getUiMode() == UiMode::Normal);
+    qsoLog.setCardTimeoutSec(DEFAULT_QSO_CARD_TIMEOUT_S);
 
     // 3. Manual dismiss via screen touch [ OK ] button
     app.showQsoCard(q, 2, 20000);
@@ -4929,7 +4945,7 @@ void test_serial_cli_log_commands() {
     ASSERT_TRUE(qsoLog.getQsoCount() == 0);
     ASSERT_TRUE(cliOutput.find("Removed last entry #1") != std::string::npos);
 
-    // Stray trailing "send" from Gboard voice submission
+    // Stray trailing "send" / "sent" from Gboard voice submission
     cliOutput.clear();
     cli.executeCommand("log k6mg send", 16700);
     ASSERT_TRUE(qsoLog.getQsoCount() == 1);
@@ -4946,6 +4962,19 @@ void test_serial_cli_log_commands() {
 
     cliOutput.clear();
     cli.executeCommand("log undo send", 16850);
+    ASSERT_TRUE(qsoLog.getQsoCount() == 0);
+
+    cliOutput.clear();
+    cli.executeCommand("log w6op sent", 16860);
+    ASSERT_TRUE(qsoLog.getQsoCount() == 1);
+    ASSERT_TRUE(cliOutput.find("[QSO LOGGED #1] W6OP") != std::string::npos);
+
+    cliOutput.clear();
+    cli.executeCommand("log list Sent.", 16870);
+    ASSERT_TRUE(cliOutput.find("W6OP") != std::string::npos);
+
+    cliOutput.clear();
+    cli.executeCommand("log undo sent", 16880);
     ASSERT_TRUE(qsoLog.getQsoCount() == 0);
 
     // Ensure "gps send" is not stripped
@@ -4989,6 +5018,40 @@ void test_serial_cli_log_commands() {
     cli.executeCommand("log mycall reset", 17400);
     ASSERT_TRUE(cliOutput.find("Station callsign reset to N0CALL") != std::string::npos);
     ASSERT_STR_EQ(qsoLog.getMyCall().c_str(), "N0CALL");
+
+    // 18. log timeout [<sec>|reset]
+    cliOutput.clear();
+    cli.executeCommand("log timeout", 17500);
+    ASSERT_TRUE(cliOutput.find("Current pop-up card timeout: 5 s") != std::string::npos);
+
+    cliOutput.clear();
+    cli.executeCommand("log timeout 10", 17550);
+    ASSERT_TRUE(cliOutput.find("Pop-up card timeout set to 10 s") != std::string::npos);
+    ASSERT_TRUE(qsoLog.getCardTimeoutSec() == 10);
+    ASSERT_TRUE(qsoLog.getCardTimeoutMs() == 10000);
+    ASSERT_TRUE(QsoLogManager::getHostStorageCardTimeoutSec() == 10);
+
+    // Verify NVS reload restores card timeout
+    QsoLogManager reloadedTimeoutLog;
+    reloadedTimeoutLog.begin();
+    ASSERT_TRUE(reloadedTimeoutLog.getCardTimeoutSec() == 10);
+
+    // Clamping upper bound
+    cliOutput.clear();
+    cli.executeCommand("log timeout 120", 17600);
+    ASSERT_TRUE(cliOutput.find("Pop-up card timeout set to 60 s") != std::string::npos);
+    ASSERT_TRUE(qsoLog.getCardTimeoutSec() == 60);
+
+    // Invalid input
+    cliOutput.clear();
+    cli.executeCommand("log timeout abc", 17650);
+    ASSERT_TRUE(cliOutput.find("[QSO ERROR] Invalid timeout") != std::string::npos);
+
+    // Reset back to default 5s
+    cliOutput.clear();
+    cli.executeCommand("log timeout reset", 17700);
+    ASSERT_TRUE(cliOutput.find("Pop-up card timeout reset to 5 s") != std::string::npos);
+    ASSERT_TRUE(qsoLog.getCardTimeoutSec() == 5);
 
     PASS();
 }
