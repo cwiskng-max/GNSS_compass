@@ -16,6 +16,7 @@ In addition to antenna heading several other functions are included:
 
 ## Documentation
 
+* **[Field Operation & Display Guide](OPERATION.md):** Quick start, circular display layout, touchscreen and rotary bezel controls, calibration modal, and Rover Mode 16 km qualification cards.
 * **[Hardware Schematic](Schematic.pdf):** Wiring schematic for the display, power regulation, receiver, and connectors.
 * **[Bill of Materials (BOM)](BOM.md):** Complete hardware list, electronics, mast/boom mounting hardware, sourcing links, and the [GX12 display ↔ receiver connector pinout](BOM.md#3-gx12-interconnect-pinout-display--receiver).
 * **[GNSS Receiver Configuration](RECEIVER.md):** Instructions for configuring the Unicore UM982 receiver via automated ESP32 TX line setup or manual USB-C configuration, message formats (`$KSXT`), and dual-antenna baseline constraints.
