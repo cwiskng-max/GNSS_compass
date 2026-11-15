@@ -18,6 +18,19 @@
 #endif
 
 // Portable case-insensitive comparisons
+static bool parseStrictPositiveInt(const char *s, int &out) {
+    if (!s) return false;
+    while (*s == ' ' || *s == '\t') s++;
+    if (*s == '\0' || *s == '-') return false;
+    char *endPtr = nullptr;
+    long val = std::strtol(s, &endPtr, 10);
+    if (endPtr == s || val <= 0 || val > 1000000L) return false;
+    while (*endPtr == ' ' || *endPtr == '\t') endPtr++;
+    if (*endPtr != '\0') return false;
+    out = static_cast<int>(val);
+    return true;
+}
+
 static bool equalsIgnoreCase(const char *a, const char *b) {
     if (!a || !b) return false;
 #if defined(_WIN32)
@@ -415,8 +428,8 @@ void SerialCli::executeCommand(const char *cmdLine, unsigned long nowMs, CliSour
     }
 
     // Strip speech-to-text (e.g. Gboard) sentence punctuation while preserving
-    // decimal numbers (e.g. 10368.1), standalone '?', hyphens, and raw 'gps send' payloads.
-    if (len > 0 && !startsWithIgnoreCase(cleanCmd, "gps send")) {
+    // decimal numbers (e.g. 10368.1), standalone '?', hyphens, and raw 'gps send' / 'ble suffix' payloads.
+    if (len > 0 && !startsWithIgnoreCase(cleanCmd, "gps send") && !startsWithIgnoreCase(cleanCmd, "ble suffix")) {
         size_t writeIdx = 0;
         for (size_t i = 0; i < len; ++i) {
             char c = cleanCmd[i];
@@ -1149,7 +1162,11 @@ void SerialCli::handleLogCommand(const char *arg, unsigned long nowMs) {
             size_t curMax = qsoLogManager_ ? qsoLogManager_->getMaxQsos() : DEFAULT_MAX_QSOS;
             printFormat("[QSO LOG] Current capacity: %zu QSOs (range %d-%d)\r\n", curMax, MIN_QSOS, ABS_MAX_QSOS);
         } else {
-            int val = std::atoi(p);
+            int val = 0;
+            if (!parseStrictPositiveInt(p, val)) {
+                printFormat("[QSO ERROR] Invalid capacity '%s'. Expected a number (%d-%d).\r\n", p, MIN_QSOS, ABS_MAX_QSOS);
+                return;
+            }
             if (qsoLogManager_) {
                 qsoLogManager_->setMaxQsos(static_cast<size_t>(val));
                 printFormat("[QSO LOG] Maximum capacity set to %zu QSOs (saved to NVS).\r\n", qsoLogManager_->getMaxQsos());
@@ -1250,8 +1267,8 @@ void SerialCli::handleLogDelete(const char *arg) {
         println("[QSO ERROR] Missing QSO number. Usage: log delete <#> (e.g. 'log delete 3')");
         return;
     }
-    int idx = std::atoi(arg);
-    if (idx <= 0 || !qsoLogManager_ || static_cast<size_t>(idx) > qsoLogManager_->getQsoCount()) {
+    int idx = 0;
+    if (!parseStrictPositiveInt(arg, idx) || !qsoLogManager_ || static_cast<size_t>(idx) > qsoLogManager_->getQsoCount()) {
         size_t count = qsoLogManager_ ? qsoLogManager_->getQsoCount() : 0;
         printFormat("[QSO ERROR] Invalid QSO index '%s'. Log contains %zu contacts.\r\n", arg, count);
         return;

@@ -90,6 +90,56 @@ const char* spokenTeenToString(const std::string &w) {
     return nullptr;
 }
 
+// Appends a single phonetic/numeric/alphanumeric token from words[i] (advancing i on 2-word tens).
+void appendPhoneticToken(const std::vector<std::string> &words, size_t &i,
+                         std::string &out, bool allowSlashes) {
+    std::string low = toLower(words[i]);
+
+    char nc = natoToChar(low);
+    if (nc != '\0') {
+        out.push_back(nc);
+        return;
+    }
+
+    char tenDigit = spokenTensToDigit(low);
+    if (tenDigit != '\0') {
+        out.push_back(tenDigit);
+        if (i + 1 < words.size()) {
+            std::string nextLow = toLower(words[i + 1]);
+            char unitDigit = spokenDigitToChar(nextLow);
+            if (unitDigit != '\0' && unitDigit != '0') {
+                out.push_back(unitDigit);
+                i++;
+                return;
+            } else if (words[i + 1].size() == 1 && words[i + 1][0] >= '1' && words[i + 1][0] <= '9') {
+                out.push_back(words[i + 1][0]);
+                i++;
+                return;
+            }
+        }
+        out.push_back('0');
+        return;
+    }
+
+    const char *teenStr = spokenTeenToString(low);
+    if (teenStr != nullptr) {
+        out.append(teenStr);
+        return;
+    }
+
+    char sc = spokenDigitToChar(low);
+    if (sc != '\0') {
+        out.push_back(sc);
+        return;
+    }
+
+    for (char ch : words[i]) {
+        if (isalnum((unsigned char)ch) || (allowSlashes && ch == '/')) {
+            out.push_back(std::toupper((unsigned char)ch));
+        }
+    }
+}
+
 } // anonymous namespace
 
 std::string VoiceQsoParser::stripPunctuation(const std::string &input) {
@@ -179,54 +229,7 @@ std::string VoiceQsoParser::normalizeVoiceInput(const std::string &input) {
             continue;
         }
 
-        // NATO phonetic word
-        char nc = natoToChar(low);
-        if (nc != '\0') {
-            result.push_back(nc);
-            continue;
-        }
-
-        // Spoken tens word
-        char tenDigit = spokenTensToDigit(low);
-        if (tenDigit != '\0') {
-            result.push_back(tenDigit);
-            if (i + 1 < words.size()) {
-                std::string nextLow = toLower(words[i + 1]);
-                char unitDigit = spokenDigitToChar(nextLow);
-                if (unitDigit != '\0' && unitDigit != '0') {
-                    result.push_back(unitDigit);
-                    i++;
-                    continue;
-                } else if (words[i + 1].size() == 1 && words[i + 1][0] >= '1' && words[i + 1][0] <= '9') {
-                    result.push_back(words[i + 1][0]);
-                    i++;
-                    continue;
-                }
-            }
-            result.push_back('0');
-            continue;
-        }
-
-        // Spoken teen word
-        const char *teenStr = spokenTeenToString(low);
-        if (teenStr != nullptr) {
-            result.append(teenStr);
-            continue;
-        }
-
-        // Spoken digit homophone
-        char sc = spokenDigitToChar(low);
-        if (sc != '\0') {
-            result.push_back(sc);
-            continue;
-        }
-
-        // Alphanumeric word
-        for (char ch : words[i]) {
-            if (isalnum((unsigned char)ch) || ch == '/') {
-                result.push_back(std::toupper((unsigned char)ch));
-            }
-        }
+        appendPhoneticToken(words, i, result, true);
     }
     return result;
 }
@@ -486,16 +489,23 @@ bool VoiceQsoParser::parseBandOrFreq(const std::string &token,
         return true;
     }
 
-    // Floating-point frequency in MHz
+    // Floating-point frequency in MHz (or GHz if suffixed with g/ghz)
     std::string numStr = t;
+    double scaleToMhz = 1.0;
     if (numStr.size() > 3 && numStr.substr(numStr.size() - 3) == "mhz") {
         numStr = numStr.substr(0, numStr.size() - 3);
     } else if (numStr.size() > 1 && numStr.back() == 'm') {
         numStr.pop_back();
+    } else if (numStr.size() > 3 && numStr.substr(numStr.size() - 3) == "ghz") {
+        numStr = numStr.substr(0, numStr.size() - 3);
+        scaleToMhz = 1000.0;
+    } else if (numStr.size() > 1 && numStr.back() == 'g') {
+        numStr.pop_back();
+        scaleToMhz = 1000.0;
     }
 
     char *endPtr = nullptr;
-    double f = std::strtod(numStr.c_str(), &endPtr);
+    double f = std::strtod(numStr.c_str(), &endPtr) * scaleToMhz;
     if (endPtr && *endPtr == '\0' && f > 0.0) {
         if (f >= 50.0 && f <= 54.0) {
             outBand = "50 MHz";
@@ -634,56 +644,7 @@ bool VoiceQsoParser::parseGrid(const std::string &input, std::string &outGrid) {
 
     std::string assembled;
     for (size_t i = 0; i < words.size(); ++i) {
-        std::string low = toLower(words[i]);
-
-        // NATO phonetic word
-        char nc = natoToChar(low);
-        if (nc != '\0') {
-            assembled.push_back(nc);
-            continue;
-        }
-
-        // Spoken tens word (twenty, thirty, ..., ninety)
-        char tenDigit = spokenTensToDigit(low);
-        if (tenDigit != '\0') {
-            assembled.push_back(tenDigit);
-            if (i + 1 < words.size()) {
-                std::string nextLow = toLower(words[i + 1]);
-                char unitDigit = spokenDigitToChar(nextLow);
-                if (unitDigit != '\0' && unitDigit != '0') {
-                    assembled.push_back(unitDigit);
-                    i++;
-                    continue;
-                } else if (words[i + 1].size() == 1 && words[i + 1][0] >= '1' && words[i + 1][0] <= '9') {
-                    assembled.push_back(words[i + 1][0]);
-                    i++;
-                    continue;
-                }
-            }
-            assembled.push_back('0');
-            continue;
-        }
-
-        // Spoken teen word (ten, eleven, ..., nineteen)
-        const char *teenStr = spokenTeenToString(low);
-        if (teenStr != nullptr) {
-            assembled.append(teenStr);
-            continue;
-        }
-
-        // Spoken digit homophone
-        char sc = spokenDigitToChar(low);
-        if (sc != '\0') {
-            assembled.push_back(sc);
-            continue;
-        }
-
-        // Direct characters
-        for (char ch : words[i]) {
-            if (isalnum((unsigned char)ch)) {
-                assembled.push_back(std::toupper((unsigned char)ch));
-            }
-        }
+        appendPhoneticToken(words, i, assembled, false);
     }
 
     size_t len = assembled.size();
@@ -959,51 +920,7 @@ bool VoiceQsoParser::parseQso(const std::string &input,
             continue;
         }
 
-        char nc = natoToChar(low);
-        if (nc != '\0') {
-            callsign.push_back(nc);
-            continue;
-        }
-
-        // Spoken tens word
-        char tenDigit = spokenTensToDigit(low);
-        if (tenDigit != '\0') {
-            callsign.push_back(tenDigit);
-            if (i + 1 < remainingWords.size()) {
-                std::string nextLow = toLower(remainingWords[i + 1]);
-                char unitDigit = spokenDigitToChar(nextLow);
-                if (unitDigit != '\0' && unitDigit != '0') {
-                    callsign.push_back(unitDigit);
-                    i++;
-                    continue;
-                } else if (remainingWords[i + 1].size() == 1 && remainingWords[i + 1][0] >= '1' && remainingWords[i + 1][0] <= '9') {
-                    callsign.push_back(remainingWords[i + 1][0]);
-                    i++;
-                    continue;
-                }
-            }
-            callsign.push_back('0');
-            continue;
-        }
-
-        // Spoken teen word
-        const char *teenStr = spokenTeenToString(low);
-        if (teenStr != nullptr) {
-            callsign.append(teenStr);
-            continue;
-        }
-
-        char sc = spokenDigitToChar(low);
-        if (sc != '\0') {
-            callsign.push_back(sc);
-            continue;
-        }
-
-        for (char ch : remainingWords[i]) {
-            if (isalnum((unsigned char)ch) || ch == '/') {
-                callsign.push_back(std::toupper((unsigned char)ch));
-            }
-        }
+        appendPhoneticToken(remainingWords, i, callsign, true);
     }
 
     // Clean up leading/consecutive/trailing slashes

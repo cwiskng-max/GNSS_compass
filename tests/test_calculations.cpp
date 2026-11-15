@@ -5216,6 +5216,28 @@ void test_qso_critical_fixes_regression() {
     ASSERT_TRUE(qsoLog.getLastQso()->timestamp == 0);
     ASSERT_TRUE(usbOut.find("--:--z") != std::string::npos);
 
+    // 5. GHz decimal frequencies & strict integer validation for log max / log delete
+    ASSERT_TRUE(VoiceQsoParser::parseQso("log k6mg 10.368GHz", p));
+    ASSERT_STR_EQ(p.band.c_str(), "10 GHz");
+    ASSERT_TRUE(p.freq_khz == 10368000);
+
+    size_t prevMax = qsoLog.getMaxQsos();
+    usbOut.clear();
+    cli.executeCommand("log max -5", 121000, CLI_SOURCE_USB);
+    ASSERT_TRUE(usbOut.find("[QSO ERROR]") != std::string::npos);
+    ASSERT_TRUE(qsoLog.getMaxQsos() == prevMax);
+
+    usbOut.clear();
+    cli.executeCommand("log max abc", 122000, CLI_SOURCE_USB);
+    ASSERT_TRUE(usbOut.find("[QSO ERROR]") != std::string::npos);
+    ASSERT_TRUE(qsoLog.getMaxQsos() == prevMax);
+
+    size_t prevCount = qsoLog.getQsoCount();
+    usbOut.clear();
+    cli.executeCommand("log delete 1abc", 123000, CLI_SOURCE_USB);
+    ASSERT_TRUE(usbOut.find("[QSO ERROR]") != std::string::npos);
+    ASSERT_TRUE(qsoLog.getQsoCount() == prevCount);
+
     PASS();
 }
 
