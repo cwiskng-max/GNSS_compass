@@ -1004,11 +1004,8 @@ void SerialCli::printHelp() {
     println();
     println("=== GNSS Compass Serial Commands ===");
     println("  status (or gps)       - Live GNSS receiver stream & link diagnostic");
-    println("  gps probe             - Test bidirectional TX connection to UM982");
-    println("  gps config [baseline <cm> [tol]]");
-    println("                        - Run automated 5 Hz $KSXT receiver setup");
-    println("  gps send <command>    - Send raw command to UM982 receiver");
-    println("  gps check (or audit)  - Query receiver running parameters");
+    println("  gps [status|probe|config|send|check]");
+    println("                        - UM982 GNSS receiver setup and diagnostics");
     println("  rover [status|start|stop|history|undo|max|clear]");
     println("                        - Rover transit tracking");
     println("  target <grid>         - Remote target grid setting (supports phonetics)");

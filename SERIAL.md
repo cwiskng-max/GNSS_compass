@@ -98,11 +98,8 @@ Displays a summary of available serial commands.
 
 === GNSS Compass Serial Commands ===
   status (or gps)       - Live GNSS receiver stream & link diagnostic
-  gps probe             - Test bidirectional TX connection to UM982
-  gps config [baseline <cm> [tol]]
-                        - Run automated 5 Hz $KSXT receiver setup
-  gps send <command>    - Send raw command to UM982 receiver
-  gps check (or audit)  - Query receiver running parameters
+  gps [status|probe|config|send|check]
+                        - UM982 GNSS receiver setup and diagnostics
   rover [status|start|stop|history|undo|max|clear]
                         - Rover transit tracking
   target <grid>         - Remote target grid setting (supports phonetics)
@@ -196,7 +193,7 @@ When the ESP32 transmitter line (GPIO 43) is wired to the UM982 receiver's COM1 
 ```mermaid
 flowchart LR
     ESP_TX["ESP32 GPIO 43 (TX)"] -->|"TX Wire (Line 2)"| UM_RX["UM982 COM1 RX"]
-    UM_TX["UM982 COM1 TX"] -->|"RX Wire (Line 1)"| ESP_RX["ESP32 GPIO 44 (RX)"]
+    ESP_RX["ESP32 GPIO 44 (RX)"] <--|"RX Wire (Line 1)"| UM_TX["UM982 COM1 TX"]
 ```
 
 #### 1. Discover TX Wire (`gps probe`)
@@ -354,7 +351,7 @@ Manages the non-volatile antenna alignment offset in degrees. The offset correct
 ```
 
 #### Snap Calibration to Target (`cal snap`)
-Aligns the compass heading to match the current target bearing (requires an active GNSS heading fix). Calculates $\text{offset} = \text{target} - \text{raw\_heading}$, normalizes to $[-180^\circ, +180^\circ]$, updates display, and saves to NVS.
+Aligns the compass heading to match the current target bearing (requires an active GNSS heading fix). Calculates $\text{offset} = \text{target} - \text{raw heading}$, normalizes to $[-180^\circ, +180^\circ]$, updates display, and saves to NVS.
 
 ```text
 > cal snap

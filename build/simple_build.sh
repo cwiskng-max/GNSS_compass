@@ -30,7 +30,7 @@ DIRTY=""
 if ! git diff-index --quiet HEAD -- 2>/dev/null; then
     DIRTY="-dirty"
 fi
-sed -i "s/#define FW_VERSION .*/#define FW_VERSION           \"v0.3-dev+${GIT_HASH}${DIRTY}\"/" "$SCRATCH_DIR/src/config.h"
+sed -i "s/#define FW_VERSION .*/#define FW_VERSION           \"v0.5-dev+${GIT_HASH}${DIRTY}\"/" "$SCRATCH_DIR/src/config.h"
 
 # Compile using modern --output-dir (replaces deprecated --export-binaries)
 # Match upload.maximum_size to app0/app1 (0x380000 = 3670016 bytes) in partitions.csv
