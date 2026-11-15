@@ -551,7 +551,7 @@ If the grid is missing or invalid:
 [TARGET ERROR] Missing grid square. Usage: target <grid> (e.g. 'target CM88qk' or 'target charlie mike 88 quebec kilo')
 
 > target ZZ99
-[TARGET ERROR] Invalid Maidenhead grid 'ZZ99'. Format: 4, 6, or 8 characters (e.g. 'CM88qk').
+[TARGET ERROR] Invalid Maidenhead grid: 'ZZ99'
 ```
 
 ---
@@ -680,25 +680,31 @@ If the operator sends or speaks `log` with no arguments, the CLI prompts for the
   Prints a formatted ASCII table of all QSOs in memory:
   ```text
   > log list
-  === Contest QSO Log (3 contacts) ===
-  #   UTC   Callsign     Band     Freq (MHz)  My Grid   His Grid  Dist (km)  Az (deg)
-  ----------------------------------------------------------------------------------
-    1 21:34 K6MG         10 GHz   10368.100   CM87wa    CM88qk        118.2       342
-    2 21:35 K6MG         24 GHz   24192.100   CM87wa    CM88qk        118.2       342
-    3 21:38 W6OP/R       10 GHz   10368.100   CM87wa    CM87wb         42.5        85
-  ==================================================================================
+  ====================================================================================================
+   #  | Date & Time UTC     | Callsign     | Band    | Frequency      | My Grid  | His Grid | Dist(km) | Bearing
+  ====================================================================================================
+    1 | 2026-11-11 21:34:00 | K6MG         | 10 GHz  |  10368.100 MHz | CM87wa   | CM88qk   |    118.2 |   342.0
+    2 | 2026-11-11 21:35:00 | K6MG         | 24 GHz  |  24192.100 MHz | CM87wa   | CM88qk   |    118.2 |   342.0
+    3 | 2026-11-11 21:38:00 | W6OP/R       | 10 GHz  |  10368.100 MHz | CM87wa   | CM87wb   |     42.5 |    85.0
+  ====================================================================================================
   ```
 * **Contest Statistics (`log stats`):**
-  Summarizes contest totals, unique callsigns, active band breakdown, cumulative DX distance, and maximum DX contact:
+  Summarizes contest totals, unique callsigns, unique grids, cumulative/average DX distance, best DX, and band breakdown:
   ```text
   > log stats
-  === Contest QSO Statistics ===
-  Total Contacts : 3
-  Unique Calls   : 2
-  Bands Active   : 2 (10 GHz: 2, 24 GHz: 1)
-  Total DX Dist  : 278.9 km
-  Max DX Contact : 118.2 km (K6MG on 10 GHz)
-  ==============================
+  ========================================
+           Contest QSO Statistics         
+  ========================================
+  Total QSOs:        3
+  Unique Callsigns:  2
+  Unique Grids:      2
+  Total Distance:    278.9 km
+  Average Distance:  93.0 km
+  Best DX:           118.2 km (K6MG in CM88qk on 10 GHz)
+  Band Breakdown:
+    10 GHz  :   2 QSOs (160.7 km)
+    24 GHz  :   1 QSOs (118.2 km)
+  ========================================
   ```
 
 #### 3.12.6 Contest Log Export (`log export <cabrillo|adif|csv>`)
@@ -710,28 +716,33 @@ Streams the contest log in standard formats over serial for easy saving to disk 
   ```text
   > log export cabrillo
   START-OF-LOG: 3.0
-  CREATED-BY: GNSS Compass v0.3
+  CREATED-BY: GNSS Compass
   CONTEST: ARRL-10-GHZ
-  QSO: 10G PH 2026-11-11 2134 K6MG CM87wa K6MG CM88qk
-  QSO: 24G PH 2026-11-11 2135 K6MG CM87wa K6MG CM88qk
-  QSO: 10G PH 2026-11-11 2138 W6OP/R CM87wa W6OP/R CM87wb
+  CALLSIGN: W6OP/R
+  QSO: 10G   PH 2026-11-11 2134 W6OP/R     CM87wa K6MG       CM88qk
+  QSO: 24G   PH 2026-11-11 2135 W6OP/R     CM87wa K6MG       CM88qk
+  QSO: 10G   PH 2026-11-11 2138 W6OP/R     CM87wa W6OP/R     CM87wb
   END-OF-LOG:
   ```
 * **Standard ADIF (`log export adif` or `adi`):**
-  Emits standard amateur radio data interchange records with `<CALL>`, `<BAND>`, `<FREQ>`, `<QSO_DATE>`, `<TIME_ON>`, `<MY_GRIDSQUARE>`, `<GRIDSQUARE>`, `<DISTANCE>`, `<ANT_AZ>` for direct import into N1MM, Log4OM, MacLoggerDX, or LoTW:
+  Emits standard amateur radio data interchange records with `<CALL>`, `<QSO_DATE>`, `<TIME_ON>`, `<BAND>`, `<FREQ>`, `<MODE>`, `<MY_GRIDSQUARE>`, `<GRIDSQUARE>`, and `<DISTANCE>` for direct import into N1MM, Log4OM, MacLoggerDX, or LoTW:
   ```text
   > log export adif
-  <ADIF_VER:5>3.1.4 <PROGRAMID:12>GNSS_COMPASS <EOH>
-  <CALL:4>K6MG <BAND:3>3cm <FREQ:9>10368.100 <QSO_DATE:8>20261111 <TIME_ON:4>2134 <MY_GRIDSQUARE:6>CM87wa <GRIDSQUARE:6>CM88qk <DISTANCE:5>118.2 <ANT_AZ:3>342 <EOR>
-  <CALL:4>K6MG <BAND:5>1.2cm <FREQ:9>24192.100 <QSO_DATE:8>20261111 <TIME_ON:4>2135 <MY_GRIDSQUARE:6>CM87wa <GRIDSQUARE:6>CM88qk <DISTANCE:5>118.2 <ANT_AZ:3>342 <EOR>
+  ADIF Export from GNSS Compass
+  <ADIF_VER:5>3.1.4
+  <PROGRAMID:12>GNSS Compass
+  <EOH>
+
+  <CALL:4>K6MG <QSO_DATE:8>20261111 <TIME_ON:6>213400 <BAND:3>3cm <FREQ:9>10368.100 <MODE:3>SSB <MY_GRIDSQUARE:6>CM87wa <GRIDSQUARE:6>CM88qk <DISTANCE:5>118.2 <EOR>
+  <CALL:4>K6MG <QSO_DATE:8>20261111 <TIME_ON:6>213500 <BAND:5>1.2cm <FREQ:9>24192.100 <MODE:3>SSB <MY_GRIDSQUARE:6>CM87wa <GRIDSQUARE:6>CM88qk <DISTANCE:5>118.2 <EOR>
   ```
 * **Comma-Separated Values (`log export csv`):**
   Emits tabular CSV format with column headers for analysis in Excel or Google Sheets:
   ```text
   > log export csv
-  QSO,UTC_Timestamp,Callsign,Band,Freq_MHz,My_Grid,His_Grid,Distance_km,Bearing_deg
-  1,1762904040,K6MG,10 GHz,10368.100,CM87wa,CM88qk,118.2,342.0
-  2,1762904100,K6MG,24 GHz,24192.100,CM87wa,CM88qk,118.2,342.0
+  Timestamp,Date,Time,Callsign,Band,Frequency_kHz,MyGrid,HisGrid,Distance_km,Bearing_deg
+  1762904040,2026-11-11,21:34:00,K6MG,10 GHz,10368100,CM87wa,CM88qk,118.2,342.0
+  1762904100,2026-11-11,21:35:00,K6MG,24 GHz,24192100,CM87wa,CM88qk,118.2,342.0
   ```
 
 #### 3.12.7 Configuring Station Callsign, Default Band & Storage Capacity
@@ -752,7 +763,7 @@ Streams the contest log in standard formats over serial for easy saving to disk 
   Configures which band is logged when omitted in voice dictation. Saved permanently to NVS:
   ```text
   > log default band 24
-  [QSO LOG] Default band updated to: 24 GHz (Saved to NVS).
+  [QSO LOG] Default band set to 24 GHz.
   ```
   Query current default band:
   ```text
@@ -776,15 +787,16 @@ Whenever a contact is successfully committed via `log`, the ESP32-S3 firmware im
 │                 480 x 480 Round Display                 │
 │                                                         │
 │               ┌─────────────────────────┐               │
-│               │     *** QSO LOGGED ***  │               │
+│               │  *** QSO LOGGED #18 *** │               │
 │               │                         │               │
-│               │        K6MG / R         │  (Large Text) │
+│               │         K6MG/R          │  (Large Text) │
 │               │                         │               │
-│               │   10 GHz (10368.100)    │               │
-│               │   CM88qk  -  118.2 km   │               │
-│               │   Time: 21:34 UTC       │               │
+│               │  10 GHz (10368.100 MHz) │               │
+│               │    CM87wa -> CM88qk     │               │
+│               │   118.2 km @ 342 deg    │               │
+│               │     Time: 21:34 UTC     │               │
 │               │                         │               │
-│               │       [  OK  ]          │  (Auto 10s)   │
+│               │     [ OK (Auto 10s) ]   │               │
 │               └─────────────────────────┘               │
 │                                                         │
 └─────────────────────────────────────────────────────────┘

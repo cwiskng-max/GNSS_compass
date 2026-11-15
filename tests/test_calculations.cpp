@@ -5210,6 +5210,12 @@ void test_qso_critical_fixes_regression() {
     cli.update(10300);
     cli.handleBleConnectionChanged(false);
 
+    // 4. Without GPS time, timestamp is 0 and displays '--:--z' rather than uptime
+    usbOut.clear();
+    cli.executeCommand("log k6mg 10", 120000, CLI_SOURCE_USB);
+    ASSERT_TRUE(qsoLog.getLastQso()->timestamp == 0);
+    ASSERT_TRUE(usbOut.find("--:--z") != std::string::npos);
+
     PASS();
 }
 

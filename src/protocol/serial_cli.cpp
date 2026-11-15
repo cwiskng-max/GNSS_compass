@@ -1173,8 +1173,6 @@ void SerialCli::handleLogCommand(const char *arg, unsigned long nowMs) {
     uint32_t ts = 0;
     if (gpsManager_.hasTime() && gpsManager_.getEpochTime() > 0) {
         ts = gpsManager_.getEpochTime();
-    } else if (nowMs > 0) {
-        ts = static_cast<uint32_t>(nowMs / 1000);
     }
 
     const char *myGrid = nctx.currentGrid;
@@ -1205,16 +1203,22 @@ void SerialCli::handleLogCommand(const char *arg, unsigned long nowMs) {
         qsoLoggedCb_(entry, qsoIndex, nowMs, qsoLoggedContext_);
     }
 
-    int h = (ts / 3600) % 24;
-    int m = (ts / 60) % 60;
+    char timeStr[8];
+    if (ts > 0) {
+        int h = (ts / 3600) % 24;
+        int m = (ts / 60) % 60;
+        std::snprintf(timeStr, sizeof(timeStr), "%02d:%02dz", h, m);
+    } else {
+        std::snprintf(timeStr, sizeof(timeStr), "--:--z");
+    }
     char bandStr[48];
     if (parsed.freq_khz > 0) {
         std::snprintf(bandStr, sizeof(bandStr), "%s (%.3f MHz)", parsed.band.c_str(), static_cast<double>(parsed.freq_khz) / 1000.0);
     } else {
         std::snprintf(bandStr, sizeof(bandStr), "%s", parsed.band.c_str());
     }
-    printFormat("[QSO LOGGED #%zu] %s | %s | %02d:%02dz | %s -> %s (%.1f km @ %.0f deg)\r\n",
-                qsoIndex, parsed.callsign.c_str(), bandStr, h, m,
+    printFormat("[QSO LOGGED #%zu] %s | %s | %s | %s -> %s (%.1f km @ %.0f deg)\r\n",
+                qsoIndex, parsed.callsign.c_str(), bandStr, timeStr,
                 (myGrid && myGrid[0]) ? myGrid : "------",
                 (hisGrid && hisGrid[0]) ? hisGrid : "------",
                 distKm, bearingDeg);

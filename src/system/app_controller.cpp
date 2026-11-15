@@ -218,10 +218,12 @@ void AppController::discardLastStopAndRearm(unsigned long nowMs) {
 }
 
 void AppController::showQsoCard(const QsoEntry &qso, size_t qsoIndex, unsigned long nowMs) {
+    if (isSelfTesting_) return;
 #if defined(ARDUINO)
     if (nowMs == 0) nowMs = millis();
 #endif
     if (nowMs > 0) currentNowMs_ = nowMs;
+    pendingModalButtonRelease_ = ModalButtonId::None;
     qsoCardOpenedMillis_ = nowMs;
     setUiMode(UiMode::QsoCard);
     displayUi_.getQsoCard().show(qso, qsoIndex, nowMs);
@@ -682,6 +684,10 @@ void AppController::handleUserEvent(const UserEvent &event, unsigned long nowMs)
                 if (event.buttonId == ModalButtonId::Cancel) {
                     displayUi_.getRoverHistoryModal().drawCancelButton(true);
                 }
+            } else if (currentUiMode_ == UiMode::QsoCard) {
+                if (event.buttonId == ModalButtonId::Ok) {
+                    displayUi_.getQsoCard().drawOkButton(true);
+                }
             }
             break;
 
@@ -693,6 +699,8 @@ void AppController::handleUserEvent(const UserEvent &event, unsigned long nowMs)
             } else if (currentUiMode_ == UiMode::RoverHistory) {
                 displayUi_.getRoverHistoryModal().drawDiscardButton(false, 0.0f);
                 displayUi_.getRoverHistoryModal().drawCancelButton(false);
+            } else if (currentUiMode_ == UiMode::QsoCard) {
+                displayUi_.getQsoCard().drawOkButton(false);
             }
             break;
 

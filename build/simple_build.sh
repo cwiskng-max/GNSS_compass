@@ -119,8 +119,8 @@ fi
 
 echo
 echo "Flash Installation Options for port $SERIAL_PORT:"
-echo "  1) Upgrade: Flash update binary to 0x100000 (Preserves NVS logs & settings) [default]"
-echo "  2) Fresh Install: Flash full factory image to 0x0 (Repartition & overwrite all)"
+echo "  1) Upgrade: Flash update binary to 0x100000 (Requires 16MB partition table; preserves NVS) [default]"
+echo "  2) Fresh Install: Flash full factory image to 0x0 (Required once when upgrading from <=v0.4; repartitions flash)"
 echo "  3) Skip installation"
 echo
 read -p "Select option [1/2/3, default: 1]: " resp
