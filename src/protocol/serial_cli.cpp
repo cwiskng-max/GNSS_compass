@@ -1,4 +1,5 @@
 #include "serial_cli.h"
+#include "voice_qso_parser.h"
 #include "../geo/geo_math.h"
 #include "../geo/maidenhead.h"
 #include "text_output.h"
@@ -17,6 +18,19 @@
 #endif
 
 // Portable case-insensitive comparisons
+static bool parseStrictPositiveInt(const char *s, int &out) {
+    if (!s) return false;
+    while (*s == ' ' || *s == '\t') s++;
+    if (*s == '\0' || *s == '-') return false;
+    char *endPtr = nullptr;
+    long val = std::strtol(s, &endPtr, 10);
+    if (endPtr == s || val <= 0 || val > 1000000L) return false;
+    while (*endPtr == ' ' || *endPtr == '\t') endPtr++;
+    if (*endPtr != '\0') return false;
+    out = static_cast<int>(val);
+    return true;
+}
+
 static bool equalsIgnoreCase(const char *a, const char *b) {
     if (!a || !b) return false;
 #if defined(_WIN32)
@@ -36,11 +50,14 @@ static bool startsWithIgnoreCase(const char *str, const char *prefix) {
 #endif
 }
 
-SerialCli::SerialCli(GpsManager &gpsManager, Calibration &calibration, GpsSimulator &simulator, RoverLogManager *roverLogManager, BleSerialManager *bleManager)
+SerialCli::SerialCli(GpsManager &gpsManager, Calibration &calibration, GpsSimulator &simulator,
+                     RoverLogManager *roverLogManager, BleSerialManager *bleManager,
+                     QsoLogManager *qsoLogManager)
     : gpsManager_(gpsManager),
       calibration_(calibration),
       simulator_(simulator),
       roverLogManager_(roverLogManager),
+      qsoLogManager_(qsoLogManager),
       bleManager_(bleManager),
       activeSource_(CLI_SOURCE_USB),
       navContextFn_(nullptr),
@@ -55,11 +72,23 @@ SerialCli::SerialCli(GpsManager &gpsManager, Calibration &calibration, GpsSimula
       roverStopCb_(nullptr),
       roverUndoCb_(nullptr),
       roverActionContext_(nullptr),
+      targetGridCb_(nullptr),
+      targetGridContext_(nullptr),
+      qsoLoggedCb_(nullptr),
+      qsoLoggedContext_(nullptr),
       outputFn_(nullptr),
       outputContext_(nullptr),
       restartCb_(nullptr),
       restartContext_(nullptr),
       pendingRoverClear_(false),
+      pendingRoverClearSource_(CLI_SOURCE_USB),
+      pendingQsoClear_(false),
+      pendingQsoClearSource_(CLI_SOURCE_USB),
+      pendingQsoInput_(false),
+      pendingQsoSource_(CLI_SOURCE_USB),
+      pendingExportFormat_(ExportFormat::None),
+      pendingExportIndex_(0),
+      pendingExportSource_(CLI_SOURCE_USB),
       pendingAudit_(false),
       pendingAuditSource_(CLI_SOURCE_USB),
       pendingConfig_(false),
@@ -137,6 +166,15 @@ void SerialCli::begin() {
     usbLine_.reset();
     bleLine_.reset();
     pendingRoverClear_ = false;
+    pendingRoverClearSource_ = CLI_SOURCE_USB;
+    pendingQsoClear_ = false;
+    pendingQsoClearSource_ = CLI_SOURCE_USB;
+    pendingQsoInput_ = false;
+    pendingQsoSource_ = CLI_SOURCE_USB;
+    pendingExportFormat_ = ExportFormat::None;
+    pendingExportIndex_ = 0;
+    pendingExportSource_ = CLI_SOURCE_USB;
+    pendingExportCall_.clear();
     pendingAudit_ = false;
     pendingAuditSource_ = CLI_SOURCE_USB;
     auditState_.inProgress = false;
@@ -160,6 +198,18 @@ void SerialCli::handleBleConnectionChanged(bool connected) {
     // A partial line from the previous session must not prefix the next client's first command,
     // and replies to later asynchronous output should no longer target the old BLE session.
     bleLine_.reset();
+    if (pendingQsoInput_ && pendingQsoSource_ == CLI_SOURCE_BLE) {
+        pendingQsoInput_ = false;
+    }
+    if (pendingRoverClear_ && pendingRoverClearSource_ == CLI_SOURCE_BLE) {
+        pendingRoverClear_ = false;
+    }
+    if (pendingQsoClear_ && pendingQsoClearSource_ == CLI_SOURCE_BLE) {
+        pendingQsoClear_ = false;
+    }
+    if (pendingExportFormat_ != ExportFormat::None && pendingExportSource_ == CLI_SOURCE_BLE) {
+        pendingExportFormat_ = ExportFormat::None;
+    }
     activeSource_ = CLI_SOURCE_USB;
 }
 
@@ -178,6 +228,15 @@ void SerialCli::setCurrentGrid(const char *grid) {
         fallbackNavContext_.currentGrid[sizeof(fallbackNavContext_.currentGrid) - 1] = '\0';
     } else {
         fallbackNavContext_.currentGrid[0] = '\0';
+    }
+}
+
+void SerialCli::setTargetGrid(const char *grid) {
+    if (grid) {
+        strncpy(fallbackNavContext_.targetGrid, grid, sizeof(fallbackNavContext_.targetGrid) - 1);
+        fallbackNavContext_.targetGrid[sizeof(fallbackNavContext_.targetGrid) - 1] = '\0';
+    } else {
+        fallbackNavContext_.targetGrid[0] = '\0';
     }
 }
 
@@ -281,6 +340,10 @@ void SerialCli::update(unsigned long nowMs) {
         bleManager_->update(nowMs);
     }
 
+    if (pendingExportFormat_ != ExportFormat::None) {
+        servicePendingExport(true);
+    }
+
     if (auditState_.inProgress) {
         // If all 4 responses arrive, isComplete() renders immediately in handleAuditResponse().
         // If any response is missing or unsupported, wait up to 4000 ms before rendering partial results.
@@ -363,12 +426,56 @@ void SerialCli::executeCommand(const char *cmdLine, unsigned long nowMs, CliSour
                        cleanCmd[len - 1] == '\r' || cleanCmd[len - 1] == '\n')) {
         cleanCmd[--len] = '\0';
     }
+
+    // Strip speech-to-text (e.g. Gboard) sentence punctuation while preserving
+    // decimal numbers (e.g. 10368.1), standalone '?', hyphens, and raw 'gps send' / 'ble suffix' payloads.
+    if (len > 0 && !startsWithIgnoreCase(cleanCmd, "gps send") && !startsWithIgnoreCase(cleanCmd, "ble suffix")) {
+        size_t writeIdx = 0;
+        for (size_t i = 0; i < len; ++i) {
+            char c = cleanCmd[i];
+            bool isPunctSpace = false;
+            if (c == ' ' || c == '\t' || c == ',' || c == '!' || c == ';') {
+                isPunctSpace = true;
+            } else if (c == '.' || c == ':') {
+                bool betweenDigits = (i > 0 && i + 1 < len &&
+                                      std::isdigit(static_cast<unsigned char>(cleanCmd[i - 1])) &&
+                                      std::isdigit(static_cast<unsigned char>(cleanCmd[i + 1])));
+                isPunctSpace = !betweenDigits;
+            } else if (c == '?') {
+                bool standalone = ((i == 0 || cleanCmd[i - 1] == ' ' || cleanCmd[i - 1] == '\t') &&
+                                   (i + 1 == len || cleanCmd[i + 1] == ' ' || cleanCmd[i + 1] == '\t'));
+                isPunctSpace = !standalone;
+            }
+
+            if (isPunctSpace) {
+                if (writeIdx > 0 && cleanCmd[writeIdx - 1] != ' ') {
+                    cleanCmd[writeIdx++] = ' ';
+                }
+            } else {
+                cleanCmd[writeIdx++] = c;
+            }
+        }
+        if (writeIdx > 0 && cleanCmd[writeIdx - 1] == ' ') {
+            writeIdx--;
+        }
+        cleanCmd[writeIdx] = '\0';
+        len = writeIdx;
+
+        // Strip stray trailing "send" from voice keyboard submission (e.g. Gboard),
+        // while preserving "gps send ...".
+        if (len > 5 && !startsWithIgnoreCase(cleanCmd, "gps send") &&
+            equalsIgnoreCase(&cleanCmd[len - 5], " send")) {
+            len -= 5;
+            cleanCmd[len] = '\0';
+        }
+    }
+
     if (len == 0) {
         printPrompt();
         return;
     }
 
-    if (pendingRoverClear_) {
+    if (pendingRoverClear_ && activeSource_ == pendingRoverClearSource_) {
         pendingRoverClear_ = false;
         if (equalsIgnoreCase(cleanCmd, "yes") || equalsIgnoreCase(cleanCmd, "y") ||
             equalsIgnoreCase(cleanCmd, "confirm")) {
@@ -380,10 +487,54 @@ void SerialCli::executeCommand(const char *cmdLine, unsigned long nowMs, CliSour
         return;
     }
 
+    if (pendingQsoClear_ && activeSource_ == pendingQsoClearSource_) {
+        pendingQsoClear_ = false;
+        if (equalsIgnoreCase(cleanCmd, "yes") || equalsIgnoreCase(cleanCmd, "y") ||
+            equalsIgnoreCase(cleanCmd, "confirm")) {
+            doLogClear();
+        } else {
+            println("[QSO LOG] QSO clear aborted.");
+        }
+        printPrompt();
+        return;
+    }
+
+    if (pendingQsoInput_ && activeSource_ == pendingQsoSource_) {
+        pendingQsoInput_ = false;
+        if (equalsIgnoreCase(cleanCmd, "cancel")) {
+            println("[QSO] Cancelled.");
+            printPrompt();
+            return;
+        }
+        if (!startsWithIgnoreCase(cleanCmd, "help") && strcmp(cleanCmd, "?") != 0 &&
+            !startsWithIgnoreCase(cleanCmd, "status") && !equalsIgnoreCase(cleanCmd, "s") &&
+            !equalsIgnoreCase(cleanCmd, "g") && !equalsIgnoreCase(cleanCmd, "t") &&
+            !startsWithIgnoreCase(cleanCmd, "diag") && !startsWithIgnoreCase(cleanCmd, "demo") &&
+            !startsWithIgnoreCase(cleanCmd, "rover") && !startsWithIgnoreCase(cleanCmd, "target") &&
+            !startsWithIgnoreCase(cleanCmd, "gps") && !startsWithIgnoreCase(cleanCmd, "sim") &&
+            !startsWithIgnoreCase(cleanCmd, "cal") && !startsWithIgnoreCase(cleanCmd, "test") &&
+            !startsWithIgnoreCase(cleanCmd, "ble") && !startsWithIgnoreCase(cleanCmd, "ver") &&
+            !startsWithIgnoreCase(cleanCmd, "log") && !equalsIgnoreCase(cleanCmd, "restart") &&
+            !equalsIgnoreCase(cleanCmd, "reboot") && !equalsIgnoreCase(cleanCmd, "exit") &&
+            !equalsIgnoreCase(cleanCmd, "quit") && !equalsIgnoreCase(cleanCmd, "disconnect")) {
+            handleLogCommand(cleanCmd, nowMs);
+            printPrompt();
+            return;
+        }
+    }
+
     if (startsWithIgnoreCase(cleanCmd, "rover")) {
         const char *arg = cleanCmd + 5;
         while (*arg == ' ' || *arg == '\t') arg++;
         handleRoverCommand(arg, nowMs);
+    } else if (startsWithIgnoreCase(cleanCmd, "log") && (cleanCmd[3] == '\0' || cleanCmd[3] == ' ' || cleanCmd[3] == '\t')) {
+        const char *arg = cleanCmd + 3;
+        while (*arg == ' ' || *arg == '\t') arg++;
+        handleLogCommand(arg, nowMs);
+    } else if (startsWithIgnoreCase(cleanCmd, "target")) {
+        const char *arg = cleanCmd + 6;
+        while (*arg == ' ' || *arg == '\t') arg++;
+        handleTargetCommand(arg, nowMs);
     } else if (startsWithIgnoreCase(cleanCmd, "sim")) {
         const char *arg = cleanCmd + 3;
         while (*arg == ' ' || *arg == '\t') arg++;
@@ -518,12 +669,28 @@ void SerialCli::executeCommand(const char *cmdLine, unsigned long nowMs, CliSour
         printFormat("Unknown command: '%s'. Type 'help' for available commands.\r\n", cleanCmd);
     }
 
-    if (!pendingAudit_ && !auditState_.inProgress) {
+    if (!pendingAudit_ && !auditState_.inProgress && pendingExportFormat_ == ExportFormat::None) {
         printPrompt();
     }
 }
 
+void SerialCli::printGpsHelp() {
+    println();
+    println("=== GPS Receiver Commands ===");
+    println("  gps status            - Live GNSS receiver stream & link diagnostic");
+    println("  gps probe             - Test bidirectional TX connection to UM982");
+    println("  gps config [baseline <cm> [tol]]");
+    println("                        - Run automated 5 Hz $KSXT receiver setup");
+    println("  gps send <command>    - Send raw command to UM982 receiver");
+    println("  gps check (or audit)  - Query receiver running parameters");
+}
+
 void SerialCli::handleGpsCommand(const char *arg, unsigned long nowMs) {
+    if (equalsIgnoreCase(arg, "help") || strcmp(arg, "?") == 0) {
+        printGpsHelp();
+        return;
+    }
+
     if (equalsIgnoreCase(arg, "probe")) {
         println("[GPS PROBE] Transmitting 'version' discovery probe on GPIO 43...");
         gpsManager_.probeTx(nowMs);
@@ -619,13 +786,8 @@ void SerialCli::handleGpsCommand(const char *arg, unsigned long nowMs) {
         return;
     }
 
-    println("[GPS ERROR] Unknown gps subcommand. Available:");
-    println("  gps status            - Live GNSS receiver stream & link diagnostic");
-    println("  gps probe             - Test bidirectional TX connection to UM982");
-    println("  gps config [baseline <cm> [tol]]");
-    println("                        - Run automated 5 Hz $KSXT receiver setup");
-    println("  gps send <command>    - Send raw command to UM982 receiver");
-    println("  gps check (or audit)  - Query receiver running parameters");
+    println("[GPS ERROR] Unknown gps subcommand.");
+    printGpsHelp();
 }
 
 static void extractField(const char *src, int targetIdx, char *dst, size_t dstSize) {
@@ -885,13 +1047,14 @@ void SerialCli::printHelp() {
     println();
     println("=== GNSS Compass Serial Commands ===");
     println("  status (or gps)       - Live GNSS receiver stream & link diagnostic");
-    println("  gps probe             - Test bidirectional TX connection to UM982");
-    println("  gps config [baseline <cm> [tol]]");
-    println("                        - Run automated 5 Hz $KSXT receiver setup");
-    println("  gps send <command>    - Send raw command to UM982 receiver");
-    println("  gps check (or audit)  - Query receiver running parameters");
+    println("  gps [status|probe|config|send|check]");
+    println("                        - UM982 GNSS receiver setup and diagnostics");
     println("  rover [status|start|stop|history|undo|max|clear]");
     println("                        - Rover transit tracking");
+    println("  target <grid>         - Remote target grid setting (supports phonetics)");
+    println("  log <call> [band/freq]- Voice-friendly contest QSO logging (10 GHz default)");
+    println("  log [undo|del|list|stats|export|mycall|default|clear]");
+    println("                        - QSO log management and contest export");
     println("  test (or demo)        - Run visual display self-test demo");
     println("  cal [snap|zero|<val>] - View or configure antenna calibration");
     println("  sim [on|off|hdg|pos|grid|rover|status]");
@@ -906,6 +1069,488 @@ void SerialCli::printHelp() {
     println("  help (or ?)           - Show this help menu");
     println("====================================");
     println();
+}
+
+void SerialCli::handleTargetCommand(const char *arg, unsigned long nowMs) {
+    while (arg && (*arg == ' ' || *arg == '\t')) arg++;
+    if (!arg || *arg == '\0') {
+        println("[TARGET ERROR] Missing grid square. Usage: target <grid> (e.g. 'target CM88qk' or 'target charlie mike 88 quebec kilo')");
+        return;
+    }
+
+    std::string cleanGrid;
+    if (!VoiceQsoParser::parseGrid(arg, cleanGrid)) {
+        printFormat("[TARGET ERROR] Invalid Maidenhead grid: '%s'\r\n", arg);
+        return;
+    }
+
+    if (targetGridCb_) {
+        targetGridCb_(cleanGrid.c_str(), nowMs, targetGridContext_);
+    } else {
+        setTargetGrid(cleanGrid.c_str());
+    }
+
+    CliNavContext nctx = getNavContext();
+    double bearing = nctx.targetBearing;
+    double distKm = nctx.roverDistanceMeters / 1000.0;
+
+    // Fallback geodesic calculation when in standalone test mode without full AppController provider
+    if (!navContextFn_ && nctx.currentGrid[0] != '\0') {
+        GeoPoint curPt, tgtPt;
+        if (gridToGeoPoint(nctx.currentGrid, curPt) && gridToGeoPoint(cleanGrid.c_str(), tgtPt)) {
+            double distMeters = 0.0, brg = 0.0;
+            calculateWgs84(curPt, tgtPt, distMeters, brg);
+            bearing = brg;
+            distKm = distMeters / 1000.0;
+            fallbackNavContext_.targetBearing = bearing;
+            fallbackNavContext_.roverDistanceMeters = distMeters;
+        }
+    }
+
+    printFormat("[TARGET] Target set to %s (Bearing: %.1f deg, Distance: %.1f km)\r\n",
+                cleanGrid.c_str(), bearing, distKm);
+}
+
+void SerialCli::handleLogCommand(const char *arg, unsigned long nowMs) {
+    while (arg && (*arg == ' ' || *arg == '\t')) arg++;
+    if (!arg || *arg == '\0') {
+        pendingQsoInput_ = true;
+        pendingQsoSource_ = activeSource_;
+        println("[QSO] Callsign? (e.g. 'K6MG' or 'Kilo Six Mike Golf', or 'cancel')");
+        return;
+    }
+
+    if (equalsIgnoreCase(arg, "undo")) {
+        handleLogUndo();
+        return;
+    }
+    if (startsWithIgnoreCase(arg, "delete") || startsWithIgnoreCase(arg, "del")) {
+        handleLogDelete(arg);
+        return;
+    }
+    if (startsWithIgnoreCase(arg, "clear")) {
+        handleLogClear(arg);
+        return;
+    }
+    if (equalsIgnoreCase(arg, "list") || equalsIgnoreCase(arg, "show")) {
+        handleLogList();
+        return;
+    }
+    if (equalsIgnoreCase(arg, "stats")) {
+        handleLogStats();
+        return;
+    }
+    if (startsWithIgnoreCase(arg, "export")) {
+        handleLogExport(arg);
+        return;
+    }
+    if (startsWithIgnoreCase(arg, "default")) {
+        handleLogDefault(arg);
+        return;
+    }
+    if (equalsIgnoreCase(arg, "mycall") || startsWithIgnoreCase(arg, "mycall ") ||
+        equalsIgnoreCase(arg, "my call") || startsWithIgnoreCase(arg, "my call ") ||
+        equalsIgnoreCase(arg, "my callsign") || startsWithIgnoreCase(arg, "my callsign ") ||
+        equalsIgnoreCase(arg, "callsign") || startsWithIgnoreCase(arg, "callsign ")) {
+        handleLogCall(arg);
+        return;
+    }
+    if (startsWithIgnoreCase(arg, "max") || startsWithIgnoreCase(arg, "capacity")) {
+        const char *p = arg + (startsWithIgnoreCase(arg, "max") ? 3 : 8);
+        while (*p == ' ' || *p == '\t') p++;
+        if (!*p) {
+            size_t curMax = qsoLogManager_ ? qsoLogManager_->getMaxQsos() : DEFAULT_MAX_QSOS;
+            printFormat("[QSO LOG] Current capacity: %zu QSOs (range %d-%d)\r\n", curMax, MIN_QSOS, ABS_MAX_QSOS);
+        } else {
+            int val = 0;
+            if (!parseStrictPositiveInt(p, val)) {
+                printFormat("[QSO ERROR] Invalid capacity '%s'. Expected a number (%d-%d).\r\n", p, MIN_QSOS, ABS_MAX_QSOS);
+                return;
+            }
+            if (qsoLogManager_) {
+                qsoLogManager_->setMaxQsos(static_cast<size_t>(val));
+                printFormat("[QSO LOG] Maximum capacity set to %zu QSOs (saved to NVS).\r\n", qsoLogManager_->getMaxQsos());
+            }
+        }
+        return;
+    }
+    if (equalsIgnoreCase(arg, "help") || strcmp(arg, "?") == 0) {
+        printLogHelp();
+        return;
+    }
+
+    std::string defBand = qsoLogManager_ ? qsoLogManager_->getDefaultBand() : "10 GHz";
+    ParsedQso parsed;
+    if (!VoiceQsoParser::parseQso(arg, parsed, defBand)) {
+        printFormat("[QSO ERROR] %s. Usage: log <call> [band/freq]\r\n", parsed.error_message.c_str());
+        return;
+    }
+
+    CliNavContext nctx = getNavContext();
+    uint32_t ts = 0;
+    if (gpsManager_.hasTime() && gpsManager_.getEpochTime() > 0) {
+        ts = gpsManager_.getEpochTime();
+    }
+
+    const char *myGrid = nctx.currentGrid;
+    const char *hisGrid = nctx.targetGrid;
+
+    float distKm = 0.0f;
+    float bearingDeg = 0.0f;
+
+    GeoPoint curPt, tgtPt;
+    if (gridToGeoPoint(myGrid, curPt) && gridToGeoPoint(hisGrid, tgtPt)) {
+        double distMeters = 0.0, brg = 0.0;
+        calculateWgs84(curPt, tgtPt, distMeters, brg);
+        distKm = static_cast<float>(distMeters / 1000.0);
+        bearingDeg = static_cast<float>(brg);
+    } else if (nctx.roverDistanceMeters > 0.0) {
+        distKm = static_cast<float>(nctx.roverDistanceMeters / 1000.0);
+        bearingDeg = static_cast<float>(nctx.targetBearing);
+    }
+
+    QsoEntry entry(ts, parsed.callsign.c_str(), parsed.band.c_str(), parsed.freq_khz,
+                   myGrid, hisGrid, distKm, bearingDeg);
+    if (qsoLogManager_) {
+        qsoLogManager_->appendQso(entry);
+    }
+    size_t qsoIndex = qsoLogManager_ ? qsoLogManager_->getQsoCount() : 1;
+
+    if (qsoLoggedCb_) {
+        qsoLoggedCb_(entry, qsoIndex, nowMs, qsoLoggedContext_);
+    }
+
+    char timeStr[8];
+    if (ts > 0) {
+        int h = (ts / 3600) % 24;
+        int m = (ts / 60) % 60;
+        std::snprintf(timeStr, sizeof(timeStr), "%02d:%02dz", h, m);
+    } else {
+        std::snprintf(timeStr, sizeof(timeStr), "--:--z");
+    }
+    char bandStr[48];
+    if (parsed.freq_khz > 0) {
+        std::snprintf(bandStr, sizeof(bandStr), "%s (%.3f MHz)", parsed.band.c_str(), static_cast<double>(parsed.freq_khz) / 1000.0);
+    } else {
+        std::snprintf(bandStr, sizeof(bandStr), "%s", parsed.band.c_str());
+    }
+    printFormat("[QSO LOGGED #%zu] %s | %s | %s | %s -> %s (%.1f km @ %.0f deg)\r\n",
+                qsoIndex, parsed.callsign.c_str(), bandStr, timeStr,
+                (myGrid && myGrid[0]) ? myGrid : "------",
+                (hisGrid && hisGrid[0]) ? hisGrid : "------",
+                distKm, bearingDeg);
+}
+
+void SerialCli::handleLogUndo() {
+    if (!qsoLogManager_ || qsoLogManager_->isEmpty()) {
+        println("[QSO LOG] Log is empty, nothing to undo.");
+        return;
+    }
+    QsoEntry last;
+    qsoLogManager_->getLastQso(last);
+    size_t lastIndex = qsoLogManager_->getQsoCount();
+    qsoLogManager_->popLastQso();
+    size_t remaining = qsoLogManager_->getQsoCount();
+    printFormat("[QSO LOG] Removed last entry #%zu (%s on %s). Log contains %zu contacts.\r\n",
+                lastIndex, last.callsign, last.band, remaining);
+}
+
+void SerialCli::handleLogDelete(const char *arg) {
+    while (*arg == ' ' || *arg == '\t') arg++;
+    if (startsWithIgnoreCase(arg, "delete")) {
+        arg += 6;
+    } else if (startsWithIgnoreCase(arg, "del")) {
+        arg += 3;
+    }
+    while (*arg == ' ' || *arg == '\t') arg++;
+    if (!*arg) {
+        println("[QSO ERROR] Missing QSO number. Usage: log delete <#> (e.g. 'log delete 3')");
+        return;
+    }
+    int idx = 0;
+    if (!parseStrictPositiveInt(arg, idx) || !qsoLogManager_ || static_cast<size_t>(idx) > qsoLogManager_->getQsoCount()) {
+        size_t count = qsoLogManager_ ? qsoLogManager_->getQsoCount() : 0;
+        printFormat("[QSO ERROR] Invalid QSO index '%s'. Log contains %zu contacts.\r\n", arg, count);
+        return;
+    }
+    QsoEntry entry;
+    qsoLogManager_->getQso(static_cast<size_t>(idx - 1), entry);
+    qsoLogManager_->deleteQsoByIndex(static_cast<size_t>(idx));
+    size_t remaining = qsoLogManager_->getQsoCount();
+    printFormat("[QSO LOG] Deleted QSO #%d (%s on %s). Entries re-indexed (%zu contacts remain).\r\n",
+                idx, entry.callsign, entry.band, remaining);
+}
+
+void SerialCli::handleLogClear(const char *arg) {
+    while (*arg == ' ' || *arg == '\t') arg++;
+    if (startsWithIgnoreCase(arg, "clear")) {
+        arg += 5;
+    }
+    while (*arg == ' ' || *arg == '\t') arg++;
+    if (startsWithIgnoreCase(arg, "confirm") || startsWithIgnoreCase(arg, "yes") ||
+        startsWithIgnoreCase(arg, "-y") || startsWithIgnoreCase(arg, "force")) {
+        pendingQsoClear_ = false;
+        doLogClear();
+        return;
+    }
+    if (startsWithIgnoreCase(arg, "cancel") || startsWithIgnoreCase(arg, "no") ||
+        startsWithIgnoreCase(arg, "-n")) {
+        pendingQsoClear_ = false;
+        println("[QSO LOG] QSO clear aborted.");
+        return;
+    }
+
+    pendingQsoClear_ = true;
+    pendingQsoClearSource_ = activeSource_;
+    println("[QSO LOG] WARNING: This will permanently erase all contest QSO history!");
+    println("[QSO LOG] Type 'log clear confirm' (or 'yes') to proceed, or 'no' to abort.");
+}
+
+void SerialCli::doLogClear() {
+    if (qsoLogManager_) {
+        qsoLogManager_->clearLog();
+    }
+    println("[QSO LOG] Contest QSO log cleared (0 contacts).");
+}
+
+void SerialCli::startStreamingExport(ExportFormat fmt) {
+    if (!qsoLogManager_) return;
+
+    pendingExportFormat_ = fmt;
+    pendingExportIndex_ = 0;
+    pendingExportSource_ = activeSource_;
+    pendingExportCall_ = qsoLogManager_->getEffectiveMyCall();
+
+    switch (fmt) {
+        case ExportFormat::List:
+            print(QsoLogManager::formatListHeader().c_str());
+            break;
+        case ExportFormat::Cabrillo:
+            print(QsoLogManager::formatCabrilloHeader(pendingExportCall_).c_str());
+            break;
+        case ExportFormat::Adif:
+            print(QsoLogManager::formatAdifHeader().c_str());
+            break;
+        case ExportFormat::Csv:
+            print(QsoLogManager::formatCsvHeader().c_str());
+            break;
+        default:
+            pendingExportFormat_ = ExportFormat::None;
+            return;
+    }
+
+    if (qsoLogManager_->isEmpty()) {
+        if (fmt == ExportFormat::List) {
+            print("  (No QSOs logged)\r\n");
+            print(QsoLogManager::formatListFooter().c_str());
+        } else if (fmt == ExportFormat::Cabrillo) {
+            print(QsoLogManager::formatCabrilloFooter().c_str());
+        }
+        pendingExportFormat_ = ExportFormat::None;
+        return;
+    }
+
+    servicePendingExport();
+}
+
+void SerialCli::servicePendingExport(bool fromUpdate) {
+    if (pendingExportFormat_ == ExportFormat::None || !qsoLogManager_) {
+        pendingExportFormat_ = ExportFormat::None;
+        return;
+    }
+
+    CliSource prevSource = activeSource_;
+    activeSource_ = pendingExportSource_;
+
+    const bool throttledBle = (pendingExportSource_ == CLI_SOURCE_BLE && bleManager_ != nullptr);
+    if (throttledBle && (!bleManager_->isConnected() || !bleManager_->isSubscribed())) {
+        pendingExportFormat_ = ExportFormat::None;
+        activeSource_ = prevSource;
+        return;
+    }
+
+    const size_t total = qsoLogManager_->getQsoCount();
+    while (pendingExportIndex_ < total) {
+        if (throttledBle) {
+            size_t avail = bleManager_->getTxCapacity() - bleManager_->getTxQueued();
+            if (avail < 512) {
+                activeSource_ = prevSource;
+                return;
+            }
+        }
+
+        const QsoEntry *qso = qsoLogManager_->getQso(pendingExportIndex_);
+        if (qso) {
+            std::string row;
+            switch (pendingExportFormat_) {
+                case ExportFormat::List:
+                    row = QsoLogManager::formatListRow(pendingExportIndex_ + 1, *qso);
+                    break;
+                case ExportFormat::Cabrillo:
+                    row = QsoLogManager::formatCabrilloRow(*qso, pendingExportCall_);
+                    break;
+                case ExportFormat::Adif:
+                    row = QsoLogManager::formatAdifRow(*qso);
+                    break;
+                case ExportFormat::Csv:
+                    row = QsoLogManager::formatCsvRow(*qso);
+                    break;
+                default:
+                    break;
+            }
+            if (!row.empty()) {
+                print(row.c_str());
+            }
+        }
+        pendingExportIndex_++;
+    }
+
+    if (throttledBle) {
+        size_t avail = bleManager_->getTxCapacity() - bleManager_->getTxQueued();
+        if (avail < 128) {
+            activeSource_ = prevSource;
+            return;
+        }
+    }
+
+    if (pendingExportFormat_ == ExportFormat::List) {
+        print(QsoLogManager::formatListFooter().c_str());
+    } else if (pendingExportFormat_ == ExportFormat::Cabrillo) {
+        print(QsoLogManager::formatCabrilloFooter().c_str());
+    }
+
+    pendingExportFormat_ = ExportFormat::None;
+    if (fromUpdate) {
+        printPrompt();
+    }
+    activeSource_ = prevSource;
+}
+
+void SerialCli::handleLogList() {
+    if (!qsoLogManager_ || qsoLogManager_->isEmpty()) {
+        println("[QSO LOG] Log is empty (0 contacts).");
+        return;
+    }
+    startStreamingExport(ExportFormat::List);
+}
+
+void SerialCli::handleLogStats() {
+    if (!qsoLogManager_) {
+        println("[QSO LOG] Log manager unavailable.");
+        return;
+    }
+    std::string statsStr = qsoLogManager_->formatStats();
+    print(statsStr.c_str());
+}
+
+void SerialCli::handleLogExport(const char *arg) {
+    while (*arg == ' ' || *arg == '\t') arg++;
+    if (startsWithIgnoreCase(arg, "export")) {
+        arg += 6;
+    }
+    while (*arg == ' ' || *arg == '\t') arg++;
+    if (!*arg) {
+        println("[QSO ERROR] Missing export format. Usage: log export <cabrillo|adif|csv>");
+        return;
+    }
+    if (!qsoLogManager_) {
+        println("[QSO ERROR] Log manager unavailable.");
+        return;
+    }
+    if (startsWithIgnoreCase(arg, "cabrillo") || startsWithIgnoreCase(arg, "cab")) {
+        startStreamingExport(ExportFormat::Cabrillo);
+    } else if (startsWithIgnoreCase(arg, "adif") || startsWithIgnoreCase(arg, "adi")) {
+        startStreamingExport(ExportFormat::Adif);
+    } else if (startsWithIgnoreCase(arg, "csv")) {
+        startStreamingExport(ExportFormat::Csv);
+    } else {
+        printFormat("[QSO ERROR] Unknown export format '%s'. Usage: log export <cabrillo|adif|csv>\r\n", arg);
+    }
+}
+
+void SerialCli::handleLogDefault(const char *arg) {
+    while (*arg == ' ' || *arg == '\t') arg++;
+    if (startsWithIgnoreCase(arg, "default")) {
+        arg += 7;
+    }
+    while (*arg == ' ' || *arg == '\t') arg++;
+    if (startsWithIgnoreCase(arg, "band")) {
+        arg += 4;
+    }
+    while (*arg == ' ' || *arg == '\t') arg++;
+    if (!*arg) {
+        std::string cur = qsoLogManager_ ? qsoLogManager_->getDefaultBand() : "10 GHz";
+        printFormat("[QSO LOG] Current default band: %s\r\n", cur.c_str());
+        println("[QSO LOG] Usage: log default band <band> (e.g. 'log default band 24' or 'log default band 10 GHz')");
+        return;
+    }
+    std::string bnd, cab, adif;
+    uint32_t freqKhz = 0;
+    if (!VoiceQsoParser::parseBandOrFreq(arg, bnd, freqKhz, cab, adif)) {
+        printFormat("[QSO ERROR] Unrecognized band '%s'.\r\n", arg);
+        return;
+    }
+    if (qsoLogManager_) {
+        qsoLogManager_->setDefaultBand(bnd);
+    }
+    printFormat("[QSO LOG] Default band set to %s.\r\n", bnd.c_str());
+}
+
+void SerialCli::handleLogCall(const char *arg) {
+    while (*arg == ' ' || *arg == '\t') arg++;
+    if (startsWithIgnoreCase(arg, "my callsign")) {
+        arg += 11;
+    } else if (startsWithIgnoreCase(arg, "callsign")) {
+        arg += 8;
+    } else if (startsWithIgnoreCase(arg, "my call")) {
+        arg += 7;
+    } else if (startsWithIgnoreCase(arg, "mycall")) {
+        arg += 6;
+    }
+    while (*arg == ' ' || *arg == '\t') arg++;
+
+    if (!*arg) {
+        std::string cur = qsoLogManager_ ? qsoLogManager_->getMyCall() : DEFAULT_QSO_MY_CALL;
+        printFormat("[QSO LOG] Current station callsign: %s\r\n", cur.c_str());
+        println("[QSO LOG] Usage: log mycall <callsign|reset> (e.g. 'log mycall K6MG/R' or 'log my call kilo six mike golf')");
+        return;
+    }
+
+    if (equalsIgnoreCase(arg, "reset") || equalsIgnoreCase(arg, "default") || equalsIgnoreCase(arg, "clear")) {
+        if (qsoLogManager_) {
+            qsoLogManager_->setMyCall(DEFAULT_QSO_MY_CALL);
+        }
+        printFormat("[QSO LOG] Station callsign reset to %s.\r\n", DEFAULT_QSO_MY_CALL);
+        return;
+    }
+
+    std::string normalized = VoiceQsoParser::normalizeVoiceInput(arg);
+    if (normalized.empty() || normalized.size() > 15) {
+        printFormat("[QSO ERROR] Invalid station callsign '%s'.\r\n", arg);
+        return;
+    }
+
+    if (qsoLogManager_) {
+        qsoLogManager_->setMyCall(normalized);
+    }
+    printFormat("[QSO LOG] Station callsign set to %s (saved to NVS).\r\n", normalized.c_str());
+}
+
+void SerialCli::printLogHelp() {
+    println();
+    println("=== Contest QSO Logging Commands ===");
+    println("  log <call> [band/freq]   - Immediately log QSO and display pop-up card");
+    println("                             (e.g. 'log k6mg 10', 'log 24 k6mg', 'log k6mg 10368.1',");
+    println("                              or phonetic: 'log kilo six mike golf')");
+    println("  log undo                 - Remove the most recent QSO entry");
+    println("  log delete <#> (or del)  - Delete specific QSO entry by number");
+    println("  log clear [confirm]      - Erase entire contest QSO history");
+    println("  log list (or show)       - Display formatted ASCII table of logged QSOs");
+    println("  log stats                - Show contest statistics (QSOs, DX, bands, grids)");
+    println("  log export <cab|adif|csv>- Stream contest log export");
+    println("  log mycall [<call>|reset]- Configure station callsign for Cabrillo export");
+    println("  log default band <band>  - Configure default band in NVS (default: 10 GHz)");
+    println("  log max <#>              - Configure maximum QSO storage capacity (10-1000)");
 }
 
 void SerialCli::printGpsStatus(unsigned long nowMs) {
@@ -1116,7 +1761,21 @@ void SerialCli::printSimulationStatus(unsigned long nowMs) {
     println();
 }
 
+void SerialCli::printCalHelp() {
+    println();
+    println("=== Antenna Calibration Commands ===");
+    println("  cal [status|show]     - Display current calibration offset & heading");
+    println("  cal snap              - Align antenna heading to current target bearing");
+    println("  cal zero (or reset)   - Reset calibration offset to 0.0 deg");
+    println("  cal [set] <deg>       - Set manual antenna offset in degrees");
+}
+
 void SerialCli::handleCalCommand(const char *arg) {
+    if (arg && (equalsIgnoreCase(arg, "help") || strcmp(arg, "?") == 0)) {
+        printCalHelp();
+        return;
+    }
+
     if (!arg || *arg == '\0' || equalsIgnoreCase(arg, "status") || equalsIgnoreCase(arg, "show")) {
         printCalibrationStatus();
         return;
@@ -1153,7 +1812,26 @@ void SerialCli::handleCalCommand(const char *arg) {
     printFormat("[CAL] Offset set to %+5.1f deg\r\n", calibration_.getOffset());
 }
 
+void SerialCli::printSimHelp() {
+    println();
+    println("=== GPS Simulation Commands ===");
+    println("  sim on / sim off      - Enable or disable simulation mode");
+    println("  sim status            - Show simulation state & injected values");
+    println("  sim hdg <deg> [fixed|float|lost]");
+    println("                        - Inject simulated heading & quality");
+    println("  sim pos <lat> <lon>   - Inject simulated latitude & longitude");
+    println("  sim grid <grid>       - Inject simulated Maidenhead grid (4/6/8-char)");
+    println("  sim rover [origin_grid] <dist_km>");
+    println("                        - Simulate rover transit displacement");
+    println("  sim time <hh:mm>      - Inject simulated UTC time");
+}
+
 void SerialCli::handleSimCommand(const char *arg, unsigned long nowMs) {
+    if (arg && (equalsIgnoreCase(arg, "help") || strcmp(arg, "?") == 0)) {
+        printSimHelp();
+        return;
+    }
+
     if (!arg || *arg == '\0' || equalsIgnoreCase(arg, "status")) {
         printSimulationStatus(nowMs);
         return;
@@ -1285,14 +1963,8 @@ void SerialCli::handleSimCommand(const char *arg, unsigned long nowMs) {
         return;
     }
 
-    println("[SIM ERROR] Unknown sim command. Available:");
-    println("  sim on / sim off");
-    println("  sim status");
-    println("  sim hdg <deg> [fixed|float|lost]");
-    println("  sim pos <lat> <lon>");
-    println("  sim grid <grid>");
-    println("  sim rover [origin_grid] <dist_km>");
-    println("  sim time <hh:mm>");
+    println("[SIM ERROR] Unknown sim command.");
+    printSimHelp();
 }
 
 void SerialCli::handleRoverCommand(const char *arg, unsigned long nowMs) {
@@ -1479,6 +2151,7 @@ void SerialCli::handleRoverClear(const char *arg) {
     }
 
     pendingRoverClear_ = true;
+    pendingRoverClearSource_ = activeSource_;
     println("[ROVER] WARNING: This will permanently erase all contest location history!");
     println("[ROVER] Type 'rover clear confirm' (or 'yes') to proceed, or 'no' to abort.");
 }

@@ -90,6 +90,7 @@ void DisplayUi::initLcd() {
 
     calModal_.setGfx(gfx_);
     roverHistoryModal_.setGfx(gfx_);
+    qsoCard_.setGfx(gfx_);
 }
 
 void DisplayUi::begin() {

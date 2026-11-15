@@ -142,6 +142,14 @@ ModalButtonId InputManager::getRoverModalButtonFromTouch(int16_t x, int16_t y) {
     return ModalButtonId::None;
 }
 
+ModalButtonId InputManager::getQsoModalButtonFromTouch(int16_t x, int16_t y) {
+    if (x >= QSO_TOUCH_OK_X_MIN && x <= QSO_TOUCH_OK_X_MAX &&
+        y >= QSO_TOUCH_OK_Y_MIN && y <= QSO_TOUCH_OK_Y_MAX) {
+        return ModalButtonId::Ok;
+    }
+    return ModalButtonId::None;
+}
+
 void InputManager::handleTouchPoint(bool touched, int16_t x, int16_t y, unsigned long nowMs) {
     if (touched) {
         if (x != 0 || y != 0) {
@@ -175,6 +183,14 @@ void InputManager::handleTouchPoint(bool touched, int16_t x, int16_t y, unsigned
                             ev.buttonId = btn;
                             queueEvent(ev);
                         }
+                    } else if (uiMode_ == UiMode::QsoCard) {
+                        ModalButtonId btn = getQsoModalButtonFromTouch(x, y);
+                        if (btn != ModalButtonId::None) {
+                            UserEvent ev;
+                            ev.type = UserEventType::ModalButtonDown;
+                            ev.buttonId = btn;
+                            queueEvent(ev);
+                        }
                     }
                 }
             } else {
@@ -195,7 +211,7 @@ void InputManager::handleTouchPoint(bool touched, int16_t x, int16_t y, unsigned
                         ev.progress = 0.0f;
                         queueEvent(ev);
                     }
-                    if (uiMode_ == UiMode::Calibrating || uiMode_ == UiMode::RoverHistory) {
+                    if (uiMode_ == UiMode::Calibrating || uiMode_ == UiMode::RoverHistory || uiMode_ == UiMode::QsoCard) {
                         UserEvent ev;
                         ev.type = UserEventType::ModalButtonUp;
                         queueEvent(ev);
@@ -265,7 +281,7 @@ void InputManager::handleTouchPoint(bool touched, int16_t x, int16_t y, unsigned
                 ev.type = UserEventType::HoldDiscardButtonProgress;
                 ev.progress = 0.0f;
                 queueEvent(ev);
-            } else if ((uiMode_ == UiMode::Calibrating || uiMode_ == UiMode::RoverHistory) && pressDuration >= LONG_PRESS_MS) {
+            } else if ((uiMode_ == UiMode::Calibrating || uiMode_ == UiMode::RoverHistory || uiMode_ == UiMode::QsoCard) && pressDuration >= LONG_PRESS_MS) {
                 UserEvent ev;
                 ev.type = UserEventType::ModalButtonUp;
                 queueEvent(ev);
@@ -305,6 +321,10 @@ void InputManager::handleTouchPoint(bool touched, int16_t x, int16_t y, unsigned
                         ev.type = UserEventType::ModalButtonUp;
                         queueEvent(ev);
                     }
+                } else if (uiMode_ == UiMode::QsoCard) {
+                    UserEvent ev;
+                    ev.type = UserEventType::DismissQsoCardTriggered;
+                    queueEvent(ev);
                 } else {
                     // Normal mode short taps
                     if (isCalPillTouched(px, py)) {

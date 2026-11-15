@@ -6,7 +6,7 @@
 // Firmware Version
 // ==============================================================================
 #ifndef FW_VERSION
-#define FW_VERSION           "v0.3-dev"
+#define FW_VERSION           "v0.5-dev"
 #endif
 
 // ==============================================================================
@@ -75,6 +75,8 @@
 #define BUTTON_SAVE_HOLD_BG  0x0540
 #define BUTTON_DISCARD_IDLE_BG   0x4000
 #define BUTTON_DISCARD_HOLD_BG   0x6000
+#define BUTTON_OK_IDLE_BG        0x1B19
+#define BUTTON_SNAP_IDLE_BG      BUTTON_BLUE_BG
 
 // ==============================================================================
 // Display Dimensions & Layout (480 x 480 Round Display)
@@ -231,6 +233,43 @@
 #define DEFAULT_MAX_ROVER_STOPS      100
 #define MIN_ROVER_STOPS              10
 #define ABS_MAX_ROVER_STOPS          500
+
+// ==============================================================================
+// Voice QSO Logging Configuration
+// ==============================================================================
+#define QSO_CFG_NAMESPACE            "qso_cfg"
+#define QSO_CFG_KEY_MAX_QSOS         "max_qsos"
+#define QSO_CFG_KEY_DEFAULT_BAND     "def_band"
+#define QSO_CFG_KEY_MY_CALL          "my_call"
+#define QSO_LOG_NAMESPACE            "qso_log"
+#define QSO_LOG_KEY_COUNT            "count"
+
+#define DEFAULT_MAX_QSOS             200
+#define MIN_QSOS                     10
+#define ABS_MAX_QSOS                 1000
+#define DEFAULT_QSO_BAND             "10 GHz"
+#define DEFAULT_QSO_MY_CALL          "N0CALL"
+
+// QSO Pop-Up Card Modal Dialog Geometry
+#define QSO_MODAL_X                  40
+#define QSO_MODAL_Y                  65
+#define QSO_MODAL_W                  400
+#define QSO_MODAL_H                  350
+
+// QSO Pop-Up Card "OK" Button Geometry
+#define QSO_BTN_OK_X                 150
+#define QSO_BTN_OK_Y                 330
+#define QSO_BTN_OK_W                 180
+#define QSO_BTN_OK_H                 42
+
+// QSO Pop-Up Card Touch Hit Areas
+#define QSO_TOUCH_OK_X_MIN           130
+#define QSO_TOUCH_OK_X_MAX           350
+#define QSO_TOUCH_OK_Y_MIN           320
+#define QSO_TOUCH_OK_Y_MAX           385
+
+// QSO Pop-Up Card Auto-Dismiss Timeout (10 seconds)
+#define QSO_MODAL_TIMEOUT_MS         10000
 
 // Row 5 Rover Qualification Card Layout & Colors (RGB565)
 // Scaled to fit within 480x480 circular screen chord (chord width ~330 px at Y: 374..414)

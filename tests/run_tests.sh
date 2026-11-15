@@ -15,10 +15,12 @@ g++ -O2 -Wall -Wextra -I"$REPO_DIR" \
     "$REPO_DIR/src/protocol/ble_serial_manager.cpp" \
     "$REPO_DIR/src/protocol/ble_serial_manager_host.cpp" \
     "$REPO_DIR/src/protocol/ble_serial_manager_esp32.cpp" \
+    "$REPO_DIR/src/protocol/voice_qso_parser.cpp" \
     "$REPO_DIR/src/protocol/serial_cli.cpp" \
     "$REPO_DIR/src/system/board.cpp" \
     "$REPO_DIR/src/system/calibration.cpp" \
     "$REPO_DIR/src/system/rover_log_manager.cpp" \
+    "$REPO_DIR/src/system/qso_log_manager.cpp" \
     "$REPO_DIR/src/system/self_test.cpp" \
     "$REPO_DIR/src/system/app_controller.cpp" \
     "$REPO_DIR/src/gnss/simulator.cpp" \
@@ -29,6 +31,7 @@ g++ -O2 -Wall -Wextra -I"$REPO_DIR" \
     "$REPO_DIR/src/ui/cal_modal.cpp" \
     "$REPO_DIR/src/ui/rover_history_modal.cpp" \
     "$REPO_DIR/src/ui/rover_card.cpp" \
+    "$REPO_DIR/src/ui/qso_card.cpp" \
     "$REPO_DIR/src/ui/display_ui.cpp" \
     "$SCRIPT_DIR/test_calculations.cpp" -o "$SCRIPT_DIR/run_tests"
 

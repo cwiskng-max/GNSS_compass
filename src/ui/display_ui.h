@@ -8,6 +8,7 @@
 #include "cal_modal.h"
 #include "rover_card.h"
 #include "rover_history_modal.h"
+#include "qso_card.h"
 
 #if defined(ARDUINO)
 #include <Arduino_GFX_Library.h>
@@ -67,6 +68,7 @@ public:
 
     CalModal &getCalModal() { return calModal_; }
     RoverHistoryModal &getRoverHistoryModal() { return roverHistoryModal_; }
+    QsoCard &getQsoCard() { return qsoCard_; }
 
 #if defined(ARDUINO)
     Arduino_GFX *getGfx() const { return gfx_; }
@@ -83,6 +85,7 @@ public:
 private:
     CalModal calModal_;
     RoverHistoryModal roverHistoryModal_;
+    QsoCard qsoCard_;
     char lastRoverCardBuf_[24] = {0};
     RoverState lastRoverCardState_ = static_cast<RoverState>(-1);
     uint16_t lastRoverCardDistColor_ = 0xFFFF;

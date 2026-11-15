@@ -1,6 +1,8 @@
 # Compiled firmware binaries and debug maps
 *.bin
 build/*.bin
+!tools/boot_app0.bin
+*.uf2
 *.elf
 build/*.elf
 *.map

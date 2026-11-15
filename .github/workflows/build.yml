@@ -40,24 +40,44 @@ jobs:
           arduino-cli lib install "Adafruit CST8XX Library"
           arduino-cli lib install "Adafruit BusIO"
 
-      - name: Compile Firmware
+      - name: Compile & Package Firmware
         run: |
+          pip install esptool
           mkdir -p build/gps_compass
-          cp -r gps_compass.ino src build/gps_compass/
+          cp -r gps_compass.ino partitions.csv src build/gps_compass/
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
             HEAD_SHA="${{ github.event.pull_request.head.sha }}"
-            FW_VER="v0.2-${HEAD_SHA::7}"
+            FW_VER="v0.5-${HEAD_SHA::7}"
           else
-            FW_VER="v0.2-${GITHUB_SHA::7}"
+            FW_VER="v0.5-${GITHUB_SHA::7}"
           fi
           sed -i "s/#define FW_VERSION .*/#define FW_VERSION           \"$FW_VER\"/" build/gps_compass/src/config.h
-          arduino-cli compile --fqbn esp32:esp32:esp32s3:FlashSize=16M,PSRAM=opi,CDCOnBoot=cdc --export-binaries build/gps_compass
-          cp build/gps_compass/build/esp32.esp32.esp32s3/gps_compass.ino.bin ./gps_compass.ino.esp32s3.bin
+          arduino-cli compile --fqbn esp32:esp32:esp32s3:FlashSize=16M,PSRAM=opi,CDCOnBoot=cdc --build-property upload.maximum_size=3670016 --export-binaries build/gps_compass
 
-      - name: Upload Build Artifact
+          BUILD_OUT="build/gps_compass/build/esp32.esp32.esp32s3"
+          cp "$BUILD_OUT/gps_compass.ino.bin" ./gps_compass-update.bin
+
+          # Locate boot_app0.bin
+          BOOT_APP0="tools/boot_app0.bin"
+          if [ ! -f "$BOOT_APP0" ]; then
+            BOOT_APP0=$(find ~/.arduino15 -name "boot_app0.bin" 2>/dev/null | head -n 1)
+          fi
+
+          # Merge factory binary (File A - Fresh Install at 0x0)
+          esptool.py --chip esp32s3 merge_bin \
+            --flash_mode dio --flash_freq 80m --flash_size 16MB \
+            -o ./gps_compass-factory.bin \
+            0x0 "$BUILD_OUT/gps_compass.ino.bootloader.bin" \
+            0x8000 "$BUILD_OUT/gps_compass.ino.partitions.bin" \
+            0x89000 "$BOOT_APP0" \
+            0x100000 "$BUILD_OUT/gps_compass.ino.bin"
+
+      - name: Upload Build Artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: gps_compass.ino.esp32s3.bin
-          path: gps_compass.ino.esp32s3.bin
+          name: gps-compass-binaries
+          path: |
+            gps_compass-factory.bin
+            gps_compass-update.bin
           if-no-files-found: error
 

@@ -17,8 +17,10 @@
 #include "../protocol/serial_cli.h"
 #include "../protocol/ble_serial_manager.h"
 #include "rover_log_manager.h"
+#include "qso_log_manager.h"
 #include "../ui/rover_card.h"
 #include "../ui/rover_history_modal.h"
+#include "../ui/qso_card.h"
 
 /**
  * @brief High-level operational mode of the compass system.
@@ -46,7 +48,8 @@ public:
                   GpsSimulator &gpsSimulator,
                   SerialCli &serialCli,
                   RoverLogManager *roverLogManager = nullptr,
-                  BleSerialManager *bleManager = nullptr);
+                  BleSerialManager *bleManager = nullptr,
+                  QsoLogManager *qsoLogManager = nullptr);
 
     void begin();
     void update(unsigned long nowMs = 0);
@@ -66,6 +69,11 @@ public:
     void onTargetEdited(unsigned long nowMs = 0);
     void discardLastStopAndRearm(unsigned long nowMs = 0);
 
+    // QSO Pop-Up Card modal controls
+    void showQsoCard(const QsoEntry &qso, size_t qsoIndex, unsigned long nowMs = 0);
+    void dismissQsoCard();
+    unsigned long getQsoCardOpenedMs() const { return qsoCardOpenedMillis_; }
+
     // State accessors
     OperationalMode getOperationalMode() const { return operationalMode_; }
     void setOperationalMode(OperationalMode mode);
@@ -82,10 +90,12 @@ public:
 
     RoverLogManager& getRoverLogManager() { return *roverLogManagerRef_; }
     const RoverLogManager& getRoverLogManager() const { return *roverLogManagerRef_; }
+    QsoLogManager& getQsoLogManager() { return *qsoLogManagerRef_; }
+    const QsoLogManager& getQsoLogManager() const { return *qsoLogManagerRef_; }
     GridEditor& getGridEditor() { return gridEditor_; }
     const GridEditor& getGridEditor() const { return gridEditor_; }
     const char* getTargetGrid() const { return gridEditor_.getGrid(); }
-    void setTargetGrid(const char *grid);
+    void setTargetGrid(const char *grid, unsigned long nowMs = 0);
 
     const char* getMyGrid() const { return myGrid_; }
     void setMyGrid(const char *grid);
@@ -139,6 +149,8 @@ private:
     SerialCli &serialCli_;
     RoverLogManager roverLogManagerOwned_;
     RoverLogManager *roverLogManagerRef_;
+    QsoLogManager qsoLogManagerOwned_;
+    QsoLogManager *qsoLogManagerRef_;
     BleSerialManager *bleManager_;
     bool bleConnected_;
 
@@ -173,6 +185,7 @@ private:
     UiMode currentUiMode_;
     bool isSelfTesting_;
     unsigned long calModalOpenedMillis_;
+    unsigned long qsoCardOpenedMillis_;
     ModalButtonId pendingModalButtonRelease_;
     unsigned long pendingModalButtonReleaseStartMillis_;
 };

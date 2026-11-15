@@ -6,6 +6,7 @@
 #include "src/system/calibration.h"
 #include "src/gnss/simulator.h"
 #include "src/system/rover_log_manager.h"
+#include "src/system/qso_log_manager.h"
 #include "src/protocol/ble_serial_manager.h"
 #include "src/protocol/serial_cli.h"
 #include "src/system/app_controller.h"
@@ -18,11 +19,12 @@ GpsManager       gpsManager;
 Calibration      calibration;
 GpsSimulator     gpsSimulator;
 RoverLogManager  roverLogManager;
+QsoLogManager    qsoLogManager;
 BleSerialManager bleSerialManager;
-SerialCli        serialCli(gpsManager, calibration, gpsSimulator, &roverLogManager, &bleSerialManager);
+SerialCli        serialCli(gpsManager, calibration, gpsSimulator, &roverLogManager, &bleSerialManager, &qsoLogManager);
 
 // Top-Level Application Controller
-AppController app(board, displayUi, inputManager, gpsManager, calibration, gpsSimulator, serialCli, &roverLogManager, &bleSerialManager);
+AppController app(board, displayUi, inputManager, gpsManager, calibration, gpsSimulator, serialCli, &roverLogManager, &bleSerialManager, &qsoLogManager);
 
 void setup() {
   Serial.begin(115200);
