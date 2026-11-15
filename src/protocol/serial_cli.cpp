@@ -1010,7 +1010,7 @@ void SerialCli::printHelp() {
     println("                        - Rover transit tracking");
     println("  target <grid>         - Remote target grid setting (supports phonetics)");
     println("  log <call> [band/freq]- Voice-friendly contest QSO logging (10 GHz default)");
-    println("  log [undo|del|list|stats|export|default|clear]");
+    println("  log [undo|del|list|stats|export|mycall|default|clear]");
     println("                        - QSO log management and contest export");
     println("  test (or demo)        - Run visual display self-test demo");
     println("  cal [snap|zero|<val>] - View or configure antenna calibration");

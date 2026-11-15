@@ -104,7 +104,7 @@ Displays a summary of available serial commands.
                         - Rover transit tracking
   target <grid>         - Remote target grid setting (supports phonetics)
   log <call> [band/freq]- Voice-friendly contest QSO logging (10 GHz default)
-  log [undo|del|list|stats|export|default|clear]
+  log [undo|del|list|stats|export|mycall|default|clear]
                         - QSO log management and contest export
   test (or demo)        - Run visual display self-test demo
   cal [snap|zero|<val>] - View or configure antenna calibration
