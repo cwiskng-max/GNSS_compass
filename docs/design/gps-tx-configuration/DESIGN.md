@@ -1,7 +1,7 @@
 # GNSS Receiver Bidirectional Communication & Automated Configuration — Technical Design
 
 * **Feature:** Automated TX Discovery Probe & In-System UM982 Configuration Pipeline
-* **Status:** Proposed / Ready for Review
+* **Status:** Implemented
 * **Target Hardware:** ESP32-S3 (Elecrow 2.1" Display), Unicore UM982 Dual-Antenna RTK Receiver
 * **Serial Interface:** Hardware UART (Serial2: RX=GPIO 44, TX=GPIO 43, 115200 8N1)
 * **Associated Docs:** [RECEIVER.md](../../RECEIVER.md), [SERIAL.md](../../SERIAL.md), [BOM.md](../../BOM.md)
