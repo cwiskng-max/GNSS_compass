@@ -58,7 +58,7 @@ The target list is stored in NVS using the same indexed-key architecture as `Rov
 #### Capacity & Struct Footprint
 * **Configurable Max Size:** Like Rover History (`DEFAULT_MAX_ROVER_STOPS = 100`, `10–500`), Target Presets supports a configurable capacity `maxTargets_` (**default `100`**, clamped **`10–500`**) persisted under `"target_cfg"` (`"max_targets"`), adjustable via `target max <n>`.
 * **Indexed NVS Keys:** Storing entries as indexed keys (`t0`, `t1`, ...) with `count` avoids the ~4 KB ESP-IDF single-blob limit, scaling cleanly up to 500 presets with automatic orphan cleanup if capacity is reduced.
-* **Struct Footprint (`TargetPreset`):** Each preset contains a 6-character Maidenhead locator, an optional 11-character human-readable label (spaces allowed, e.g. `"MT DIABLO"`, `"LOMA PRIETA"`), a usage counter for frequency-first sorting, and a timestamp:
+* **Struct Footprint (`TargetPreset`):** Each preset contains a 6-character Maidenhead locator, an optional 11-character human-readable label (spaces allowed, e.g. `"Mt Diablo"`, `"Loma Prieta"`), a usage counter for frequency-first sorting, and a timestamp:
   ```cpp
   #define DEFAULT_MAX_TARGET_PRESETS 100
   #define MIN_TARGET_PRESETS         10
@@ -68,7 +68,7 @@ The target list is stored in NVS using the same indexed-key architecture as `Rov
   #pragma pack(push, 1)
   struct TargetPreset {
     char     grid[7];                      // "CM87vu" (6 chars + null)
-    char     label[MAX_TARGET_LABEL_LEN];  // "MT DIABLO" (up to 11 chars + null, spaces allowed)
+    char     label[MAX_TARGET_LABEL_LEN];  // "Mt Diablo" (up to 11 chars + null, spaces allowed)
     uint16_t useCount;                     // Incremented on [ LOAD / SELECT ] for frequency sorting
     uint32_t lastUsedTime;                 // Unix timestamp or sequence counter (tie-breaker)
   };
@@ -198,7 +198,7 @@ Before heading into the field, operators can connect the compass to a laptop or 
 ```text
 === Target Preset Serial Commands ===
 target <GRID>               - Set active target grid directly (existing voice/CLI command)
-target add <GRID> [LABEL]   - Add or update a target preset (spaces allowed, e.g. "target add CM97bb LOMA PRIETA")
+target add <GRID> [LABEL]   - Add or update a target preset (spaces allowed, e.g. "target add CM97bb Loma Prieta")
 target save [LABEL]         - Save the current active target grid into presets (optional label, spaces allowed)
 target del <INDEX|GRID>     - Remove a specific target by 1-based index or grid
 target list                 - Print all saved targets with index, grid, label, use count, and NVS slot
@@ -215,13 +215,13 @@ Rather than requiring complex file transfer protocols (like XMODEM/YMODEM) or fl
    # ARRL 10 GHz Contest - NorCal Rover Summit Roster
    # ----------------------------------------------------
    target clear
-   target add CM87vu DIABLO
-   target add CM97be UMUNHUM
-   target add CM97bb LOMA_P
-   target add CM88no ST_HELN
-   target add CM87uv TAMALPAIS
-   target add DM04ms FRAZIER
-   target add DM13dr SADDLEBK
+   target add CM87vu Diablo
+   target add CM97be Umunhum
+   target add CM97bb Loma P
+   target add CM88no St Heln
+   target add CM87uv Tamalpais
+   target add DM04ms Frazier
+   target add DM13dr Saddlebk
    target list
    ```
 
@@ -248,21 +248,21 @@ Rather than requiring complex file transfer protocols (like XMODEM/YMODEM) or fl
    As lines stream across USB CDC, `processSerialInput()` parses each command, validates the Maidenhead format, and writes the `TargetPresetList` struct into NVS flash with atomic wear leveling. The device confirms:
    ```text
    [TARGET] Cleared all presets.
-   [TARGET] Added #1: CM87vu (DIABLO)
-   [TARGET] Added #2: CM97be (UMUNHUM)
-   [TARGET] Added #3: CM97bb (LOMA_P)
-   [TARGET] Added #4: CM88no (ST_HELN)
-   [TARGET] Added #5: CM87uv (TAMALPAIS)
-   [TARGET] Added #6: DM04ms (FRAZIER)
-   [TARGET] Added #7: DM13dr (SADDLEBK)
+   [TARGET] Added #1: CM87vu (Diablo)
+   [TARGET] Added #2: CM97be (Umunhum)
+   [TARGET] Added #3: CM97bb (Loma P)
+   [TARGET] Added #4: CM88no (St Heln)
+   [TARGET] Added #5: CM87uv (Tamalpais)
+   [TARGET] Added #6: DM04ms (Frazier)
+   [TARGET] Added #7: DM13dr (Saddlebk)
    === Saved Target Presets (7/20) ===
-     #1: CM87vu - DIABLO
-     #2: CM97be - UMUNHUM
-     #3: CM97bb - LOMA_P
-     #4: CM88no - ST_HELN
-     #5: CM87uv - TAMALPAIS
-     #6: DM04ms - FRAZIER
-     #7: DM13dr - SADDLEBK
+     #1: CM87vu - Diablo
+     #2: CM97be - Umunhum
+     #3: CM97bb - Loma P
+     #4: CM88no - St Heln
+     #5: CM87uv - Tamalpais
+     #6: DM04ms - Frazier
+     #7: DM13dr - Saddlebk
    ===================================
    ```
    All targets are now permanently committed to flash. The operator can unplug the USB cable, drive to any operating site, and find all summits waiting in the on-screen preset picker.
@@ -392,7 +392,7 @@ When starting a new contest weekend or roving into a completely different divisi
 ## 8. Verification & Test Plan
 
 ### Automated Host Unit Tests (`tests/test_calculations.cpp` via `tests/run_tests.sh`)
-1. **Deduplication & Labels with Spaces:** Adding `CM87vu` twice updates without duplicating; `target add CM97bb LOMA PRIETA` preserves spaces up to `MAX_TARGET_LABEL_LEN - 1`.
+1. **Deduplication & Labels with Spaces:** Adding `CM87vu` twice updates without duplicating; `target add CM97bb Loma Prieta` preserves spaces up to `MAX_TARGET_LABEL_LEN - 1`.
 2. **Frequency-First Sorting:** Loading a preset increments `useCount` and moves higher-frequency targets to the top (with `lastUsedTime` tie-breaker).
 3. **Configurable Capacity & Eviction:** Clamps `maxTargets_` to `10–500` (default `100`), persists via `NvsConfig`, and evicts least-used/oldest entry when full.
 4. **Individual Item Deletion & Shift:** Deleting an entry removes it cleanly, shifts subsequent items, and updates NVS.

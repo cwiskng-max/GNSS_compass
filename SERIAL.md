@@ -570,15 +570,15 @@ Pre-load contest summit rosters before heading into the field or manage presets 
 | **`target help`** | Show `target` command help. |
 
 ```text
-> target add CM87vu MT DIABLO
-[TARGET] Added #1: CM87vu (MT DIABLO)
+> target add CM87vu Mt Diablo
+[TARGET] Added #1: CM87vu (Mt Diablo)
 
 > target save
 [TARGET] Saved current target: CM97be (UMUNHUM)
 
 > target list
 === Saved Target Presets (2/100) ===
-  #1: CM87vu - MT DIABLO (uses: 0)
+  #1: CM87vu - Mt Diablo (uses: 0)
   #2: CM97be - UMUNHUM (uses: 0)
 =====================================
 ```
