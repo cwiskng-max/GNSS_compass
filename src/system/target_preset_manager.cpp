@@ -109,13 +109,38 @@ const TargetPreset* TargetPresetManager::getPreset(size_t index) const {
 }
 
 void TargetPresetManager::sortPresets() {
-    std::stable_sort(presets_.begin(), presets_.end(),
-        [](const TargetPreset &a, const TargetPreset &b) {
+    if (presets_.size() <= 1) return;
+    if (nvsSlots_.size() != presets_.size()) {
+        nvsSlots_.resize(presets_.size());
+        for (size_t i = 0; i < presets_.size(); ++i) {
+            nvsSlots_[i] = i;
+        }
+    }
+
+    std::vector<size_t> order(presets_.size());
+    for (size_t i = 0; i < order.size(); ++i) {
+        order[i] = i;
+    }
+    std::stable_sort(order.begin(), order.end(),
+        [this](size_t ia, size_t ib) {
+            const TargetPreset &a = presets_[ia];
+            const TargetPreset &b = presets_[ib];
             if (a.useCount != b.useCount) {
                 return a.useCount > b.useCount;
             }
             return a.lastUsedTime > b.lastUsedTime;
         });
+
+    std::vector<TargetPreset> sortedPresets;
+    std::vector<size_t> sortedSlots;
+    sortedPresets.reserve(presets_.size());
+    sortedSlots.reserve(nvsSlots_.size());
+    for (size_t idx : order) {
+        sortedPresets.push_back(presets_[idx]);
+        sortedSlots.push_back(nvsSlots_[idx]);
+    }
+    presets_.swap(sortedPresets);
+    nvsSlots_.swap(sortedSlots);
 }
 
 bool TargetPresetManager::addOrUpdatePreset(const char *grid, const char *label, uint32_t nowSec) {
@@ -130,15 +155,19 @@ bool TargetPresetManager::addOrUpdatePreset(const char *grid, const char *label,
 
     int existingIdx = findIndexByGrid(norm);
     if (existingIdx >= 0) {
-        TargetPreset &existing = presets_[static_cast<size_t>(existingIdx)];
+        size_t idx = static_cast<size_t>(existingIdx);
+        TargetPreset updated = presets_[idx];
         if (nowSec > 0) {
-            existing.lastUsedTime = nowSec;
+            updated.lastUsedTime = nowSec;
         }
         if (label && label[0] != '\0') {
-            existing.setLabel(label);
+            updated.setLabel(label);
         }
+        if (idx < nvsSlots_.size() && !listStore_.putSlot(nvsSlots_[idx], updated)) {
+            return false;
+        }
+        presets_[idx] = updated;
         sortPresets();
-        saveToNvs();
         return true;
     }
 
@@ -152,15 +181,43 @@ bool TargetPresetManager::addOrUpdatePreset(const char *grid, const char *label,
         }
     }
 
-    // Evict least-used / oldest entry (at the back of the sorted vector) if at capacity
-    while (presets_.size() >= maxTargets_) {
-        presets_.pop_back();
+    TargetPreset preset(norm, effectiveLabel, 0, nowSec);
+
+    if (presets_.size() < maxTargets_) {
+        size_t newSlot = presets_.size();
+        if (!listStore_.putSlotAndCount(newSlot, preset, newSlot + 1)) {
+            return false;
+        }
+        presets_.push_back(preset);
+        nvsSlots_.push_back(newSlot);
+        sortPresets();
+        return true;
     }
 
-    TargetPreset preset(norm, effectiveLabel, 0, nowSec);
+    // Evict least-used / oldest entry (at the back of the sorted vector)
+    bool needsTruncateSave = (presets_.size() > maxTargets_);
+    while (presets_.size() > maxTargets_) {
+        presets_.pop_back();
+        if (!nvsSlots_.empty()) nvsSlots_.pop_back();
+    }
+
+    if (needsTruncateSave) {
+        presets_.pop_back();
+        presets_.push_back(preset);
+        sortPresets();
+        saveToNvs();
+        return true;
+    }
+
+    size_t evictedSlot = nvsSlots_.empty() ? (presets_.size() - 1) : nvsSlots_.back();
+    if (!listStore_.putSlot(evictedSlot, preset)) {
+        return false;
+    }
+    presets_.pop_back();
+    if (!nvsSlots_.empty()) nvsSlots_.pop_back();
     presets_.push_back(preset);
+    nvsSlots_.push_back(evictedSlot);
     sortPresets();
-    saveToNvs();
     return true;
 }
 
@@ -168,14 +225,18 @@ bool TargetPresetManager::recordUse(size_t index, uint32_t nowSec) {
     if (index >= presets_.size()) {
         return false;
     }
-    if (presets_[index].useCount < UINT16_MAX) {
-        presets_[index].useCount++;
+    TargetPreset updated = presets_[index];
+    if (updated.useCount < UINT16_MAX) {
+        updated.useCount++;
     }
     if (nowSec > 0) {
-        presets_[index].lastUsedTime = nowSec;
+        updated.lastUsedTime = nowSec;
     }
+    if (index < nvsSlots_.size()) {
+        listStore_.putSlot(nvsSlots_[index], updated);
+    }
+    presets_[index] = updated;
     sortPresets();
-    saveToNvs();
     return true;
 }
 
@@ -183,8 +244,24 @@ bool TargetPresetManager::removePreset(size_t index) {
     if (index >= presets_.size()) {
         return false;
     }
+    size_t freedSlot = (index < nvsSlots_.size()) ? nvsSlots_[index] : index;
+    size_t lastSlot = presets_.size() - 1;
+
+    if (freedSlot != lastSlot) {
+        for (size_t i = 0; i < nvsSlots_.size(); ++i) {
+            if (i != index && nvsSlots_[i] == lastSlot) {
+                listStore_.putSlot(freedSlot, presets_[i]);
+                nvsSlots_[i] = freedSlot;
+                break;
+            }
+        }
+    }
+    listStore_.removeSlotAndCount(lastSlot, lastSlot);
+
     presets_.erase(presets_.begin() + static_cast<std::ptrdiff_t>(index));
-    saveToNvs();
+    if (index < nvsSlots_.size()) {
+        nvsSlots_.erase(nvsSlots_.begin() + static_cast<std::ptrdiff_t>(index));
+    }
     return true;
 }
 
@@ -198,6 +275,7 @@ bool TargetPresetManager::removePresetByGrid(const char *grid) {
 
 void TargetPresetManager::clearAll() {
     presets_.clear();
+    nvsSlots_.clear();
     listStore_.clear();
 }
 
@@ -223,10 +301,39 @@ void TargetPresetManager::loadFromNvs() {
     uint16_t storedMax = cfgStore_.getUShort(TARGET_CFG_KEY_MAX_TARGETS, DEFAULT_MAX_TARGET_PRESETS);
     maxTargets_ = clampMaxTargets(storedMax);
     listStore_.load(presets_, maxTargets_);
+
+    bool hadCorrupt = false;
+    std::vector<TargetPreset> clean;
+    clean.reserve(presets_.size());
+    for (size_t i = 0; i < presets_.size(); ++i) {
+        TargetPreset p = presets_[i];
+        p.grid[sizeof(p.grid) - 1] = '\0';
+        p.label[sizeof(p.label) - 1] = '\0';
+        char norm[7];
+        if (!normalizeGrid(p.grid, norm)) {
+            hadCorrupt = true;
+            continue;
+        }
+        p.setGrid(norm);
+        clean.push_back(p);
+    }
+    presets_.swap(clean);
+
+    nvsSlots_.resize(presets_.size());
+    for (size_t i = 0; i < presets_.size(); ++i) {
+        nvsSlots_[i] = i;
+    }
     sortPresets();
+    if (hadCorrupt) {
+        saveToNvs();
+    }
 }
 
 void TargetPresetManager::saveToNvs() {
+    nvsSlots_.resize(presets_.size());
+    for (size_t i = 0; i < presets_.size(); ++i) {
+        nvsSlots_[i] = i;
+    }
     listStore_.save(presets_);
 }
 

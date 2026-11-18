@@ -158,24 +158,30 @@ public:
         Preferences prefs;
         if (prefs.begin(ns_.c_str(), false)) {
             uint16_t oldCount = prefs.getUShort(countKey_.c_str(), 0);
+            size_t written = 0;
+            bool ok = true;
 
             // Overwrite entries in place (never clear() to protect against mid-write power loss)
             for (size_t i = 0; i < items.size(); ++i) {
                 char key[16];
                 std::snprintf(key, sizeof(key), "%c%u", keyPrefix_, static_cast<unsigned int>(i));
-                prefs.putBytes(key, &items[i], sizeof(T));
+                if (prefs.putBytes(key, &items[i], sizeof(T)) != sizeof(T)) {
+                    ok = false;
+                    break;
+                }
+                written++;
             }
 
-            // Clean up trailing orphaned keys if the list shrunk
-            for (size_t i = items.size(); i < oldCount; ++i) {
+            // Clean up trailing orphaned keys if the list shrunk (or failed mid-write)
+            for (size_t i = written; i < oldCount; ++i) {
                 char key[16];
                 std::snprintf(key, sizeof(key), "%c%u", keyPrefix_, static_cast<unsigned int>(i));
                 prefs.remove(key);
             }
 
-            prefs.putUShort(countKey_.c_str(), static_cast<uint16_t>(items.size()));
+            prefs.putUShort(countKey_.c_str(), static_cast<uint16_t>(written));
             prefs.end();
-            return true;
+            return ok;
         }
         return false;
 #else
@@ -186,6 +192,77 @@ public:
             std::vector<uint8_t> bytes(sizeof(T));
             std::memcpy(bytes.data(), &items[i], sizeof(T));
             vec.push_back(bytes);
+        }
+        return true;
+#endif
+    }
+
+    bool putSlot(size_t index, const T &item) {
+        if (ns_.empty()) return false;
+#if defined(ARDUINO)
+        Preferences prefs;
+        if (prefs.begin(ns_.c_str(), false)) {
+            char key[16];
+            std::snprintf(key, sizeof(key), "%c%u", keyPrefix_, static_cast<unsigned int>(index));
+            bool ok = (prefs.putBytes(key, &item, sizeof(T)) == sizeof(T));
+            prefs.end();
+            return ok;
+        }
+        return false;
+#else
+        auto &vec = hostBlobStore()[ns_];
+        if (index >= vec.size()) {
+            vec.resize(index + 1);
+        }
+        vec[index].resize(sizeof(T));
+        std::memcpy(vec[index].data(), &item, sizeof(T));
+        return true;
+#endif
+    }
+
+    bool putSlotAndCount(size_t index, const T &item, size_t newCount) {
+        if (ns_.empty()) return false;
+#if defined(ARDUINO)
+        Preferences prefs;
+        if (prefs.begin(ns_.c_str(), false)) {
+            char key[16];
+            std::snprintf(key, sizeof(key), "%c%u", keyPrefix_, static_cast<unsigned int>(index));
+            bool ok = (prefs.putBytes(key, &item, sizeof(T)) == sizeof(T));
+            if (ok) {
+                prefs.putUShort(countKey_.c_str(), static_cast<uint16_t>(newCount));
+            }
+            prefs.end();
+            return ok;
+        }
+        return false;
+#else
+        if (!putSlot(index, item)) return false;
+        auto &vec = hostBlobStore()[ns_];
+        if (vec.size() > newCount) {
+            vec.resize(newCount);
+        }
+        return true;
+#endif
+    }
+
+    bool removeSlotAndCount(size_t index, size_t newCount) {
+        if (ns_.empty()) return false;
+#if defined(ARDUINO)
+        Preferences prefs;
+        if (prefs.begin(ns_.c_str(), false)) {
+            char key[16];
+            std::snprintf(key, sizeof(key), "%c%u", keyPrefix_, static_cast<unsigned int>(index));
+            prefs.remove(key);
+            prefs.putUShort(countKey_.c_str(), static_cast<uint16_t>(newCount));
+            prefs.end();
+            return true;
+        }
+        return false;
+#else
+        (void)index;
+        auto &vec = hostBlobStore()[ns_];
+        if (newCount < vec.size()) {
+            vec.resize(newCount);
         }
         return true;
 #endif

@@ -118,6 +118,7 @@ private:
     void sortPresets();
 
     std::vector<TargetPreset> presets_;
+    std::vector<size_t> nvsSlots_;
     size_t maxTargets_;
     NvsConfig cfgStore_;
     NvsListStore<TargetPreset> listStore_;

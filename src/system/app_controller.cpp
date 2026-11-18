@@ -76,7 +76,7 @@ void AppController::setTargetGrid(const char *grid, unsigned long nowMs) {
                                     gridEditor_.isEditing(), resolveTargetLabel(gridEditor_.getGrid()));
     }
     updateNavigation();
-    if (lastRenderedMode_ == OperationalMode::Rover) {
+    if (currentUiMode_ == UiMode::Normal && lastRenderedMode_ == OperationalMode::Rover) {
         redrawMainScreen();
     }
 }

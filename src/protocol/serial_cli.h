@@ -309,7 +309,8 @@ private:
         List,
         Cabrillo,
         Adif,
-        Csv
+        Csv,
+        TargetList
     };
     ExportFormat pendingExportFormat_;
     size_t pendingExportIndex_;

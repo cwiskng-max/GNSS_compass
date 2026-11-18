@@ -1319,17 +1319,13 @@ void SerialCli::handleTargetCommand(const char *arg, unsigned long nowMs) {
         printFormat("=== Saved Target Presets (%zu/%zu) ===\r\n", count, maxTargets);
         if (count == 0) {
             println("  (No saved target presets)");
-        } else {
-            for (size_t i = 0; i < count; ++i) {
-                const TargetPreset *p = targetPresetManager_->getPreset(i);
-                if (!p) continue;
-                const char *lbl = (p->label[0] != '\0') ? p->label : "(none)";
-                printFormat("  #%zu: %s - %-16s (uses: %u, slot: t%zu)\r\n",
-                            i + 1, p->grid, lbl,
-                            static_cast<unsigned>(p->useCount), i);
-            }
+            println("===================================");
+            return;
         }
-        println("===================================");
+        pendingExportFormat_ = ExportFormat::TargetList;
+        pendingExportIndex_ = 0;
+        pendingExportSource_ = activeSource_;
+        servicePendingExport(false);
         return;
     }
 
@@ -1671,7 +1667,15 @@ void SerialCli::startStreamingExport(ExportFormat fmt) {
 }
 
 void SerialCli::servicePendingExport(bool fromUpdate) {
-    if (pendingExportFormat_ == ExportFormat::None || !qsoLogManager_) {
+    if (pendingExportFormat_ == ExportFormat::None) {
+        return;
+    }
+    if (pendingExportFormat_ == ExportFormat::TargetList) {
+        if (!targetPresetManager_) {
+            pendingExportFormat_ = ExportFormat::None;
+            return;
+        }
+    } else if (!qsoLogManager_) {
         pendingExportFormat_ = ExportFormat::None;
         return;
     }
@@ -1686,7 +1690,9 @@ void SerialCli::servicePendingExport(bool fromUpdate) {
         return;
     }
 
-    const size_t total = qsoLogManager_->getQsoCount();
+    const size_t total = (pendingExportFormat_ == ExportFormat::TargetList)
+                             ? targetPresetManager_->getCount()
+                             : qsoLogManager_->getQsoCount();
     while (pendingExportIndex_ < total) {
         if (throttledBle) {
             size_t avail = bleManager_->getTxCapacity() - bleManager_->getTxQueued();
@@ -1696,27 +1702,37 @@ void SerialCli::servicePendingExport(bool fromUpdate) {
             }
         }
 
-        const QsoEntry *qso = qsoLogManager_->getQso(pendingExportIndex_);
-        if (qso) {
-            std::string row;
-            switch (pendingExportFormat_) {
-                case ExportFormat::List:
-                    row = QsoLogManager::formatListRow(pendingExportIndex_ + 1, *qso);
-                    break;
-                case ExportFormat::Cabrillo:
-                    row = QsoLogManager::formatCabrilloRow(*qso, pendingExportCall_);
-                    break;
-                case ExportFormat::Adif:
-                    row = QsoLogManager::formatAdifRow(*qso);
-                    break;
-                case ExportFormat::Csv:
-                    row = QsoLogManager::formatCsvRow(*qso);
-                    break;
-                default:
-                    break;
+        if (pendingExportFormat_ == ExportFormat::TargetList) {
+            const TargetPreset *p = targetPresetManager_->getPreset(pendingExportIndex_);
+            if (p) {
+                const char *lbl = (p->label[0] != '\0') ? p->label : "(none)";
+                printFormat("  #%zu: %s - %-16s (uses: %u, slot: t%zu)\r\n",
+                            pendingExportIndex_ + 1, p->grid, lbl,
+                            static_cast<unsigned>(p->useCount), pendingExportIndex_);
             }
-            if (!row.empty()) {
-                print(row.c_str());
+        } else {
+            const QsoEntry *qso = qsoLogManager_->getQso(pendingExportIndex_);
+            if (qso) {
+                std::string row;
+                switch (pendingExportFormat_) {
+                    case ExportFormat::List:
+                        row = QsoLogManager::formatListRow(pendingExportIndex_ + 1, *qso);
+                        break;
+                    case ExportFormat::Cabrillo:
+                        row = QsoLogManager::formatCabrilloRow(*qso, pendingExportCall_);
+                        break;
+                    case ExportFormat::Adif:
+                        row = QsoLogManager::formatAdifRow(*qso);
+                        break;
+                    case ExportFormat::Csv:
+                        row = QsoLogManager::formatCsvRow(*qso);
+                        break;
+                    default:
+                        break;
+                }
+                if (!row.empty()) {
+                    print(row.c_str());
+                }
             }
         }
         pendingExportIndex_++;
@@ -1734,6 +1750,8 @@ void SerialCli::servicePendingExport(bool fromUpdate) {
         print(QsoLogManager::formatListFooter().c_str());
     } else if (pendingExportFormat_ == ExportFormat::Cabrillo) {
         print(QsoLogManager::formatCabrilloFooter().c_str());
+    } else if (pendingExportFormat_ == ExportFormat::TargetList) {
+        println("===================================");
     }
 
     pendingExportFormat_ = ExportFormat::None;
