@@ -1171,6 +1171,7 @@ void SerialCli::handleTargetCommand(const char *arg, unsigned long nowMs) {
         } else {
             printFormat("[TARGET] %s #%d: %s\r\n", verb, idx + 1, normGrid);
         }
+        if (stateChangedCb_) stateChangedCb_(stateChangedContext_);
         return;
     }
 
@@ -1211,6 +1212,7 @@ void SerialCli::handleTargetCommand(const char *arg, unsigned long nowMs) {
         } else {
             printFormat("[TARGET] Saved #%d: %s\r\n", idx + 1, normGrid);
         }
+        if (stateChangedCb_) stateChangedCb_(stateChangedContext_);
         return;
     }
 
@@ -1252,6 +1254,7 @@ void SerialCli::handleTargetCommand(const char *arg, unsigned long nowMs) {
             }
             targetPresetManager_->removePreset(static_cast<size_t>(index1Based - 1));
             printFormat("[TARGET] Deleted #%d: %s\r\n", index1Based, deletedGrid);
+            if (stateChangedCb_) stateChangedCb_(stateChangedContext_);
             return;
         }
 
@@ -1264,6 +1267,7 @@ void SerialCli::handleTargetCommand(const char *arg, unsigned long nowMs) {
             }
             targetPresetManager_->removePresetByGrid(normGrid);
             printFormat("[TARGET] Deleted #%d: %s\r\n", idx + 1, normGrid);
+            if (stateChangedCb_) stateChangedCb_(stateChangedContext_);
             return;
         }
 
@@ -1325,6 +1329,7 @@ void SerialCli::handleTargetCommand(const char *arg, unsigned long nowMs) {
         }
         targetPresetManager_->clearAll();
         println("[TARGET] Cleared all presets.");
+        if (stateChangedCb_) stateChangedCb_(stateChangedContext_);
         return;
     }
 

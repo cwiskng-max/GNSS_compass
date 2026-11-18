@@ -604,6 +604,12 @@ void AppController::begin() {
                 self->displayUi_.renderUtcTime(self->hours_, self->minutes_, true);
             }
         }
+        if (self->currentUiMode_ == UiMode::Normal) {
+            self->displayUi_.renderTargetGrid(self->gridEditor_.getGrid(),
+                                              self->gridEditor_.getCursorColumn(),
+                                              self->gridEditor_.isEditing(),
+                                              self->resolveTargetLabel(self->gridEditor_.getGrid()));
+        }
         self->updateNavigation();
     }, this);
 

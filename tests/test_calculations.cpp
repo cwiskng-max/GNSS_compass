@@ -6058,6 +6058,13 @@ void test_app_controller_target_list_workflow_e2e() {
     app.update(44460); // >= 120 ms pendingModalButtonRelease_
     ASSERT_TRUE(app.getUiMode() == UiMode::Normal);
 
+    // 16. CLI 'target save <name>' updates preset label and refreshes active target label
+    app.setTargetGrid("CM98bb", 45000);
+    ASSERT_TRUE(app.resolveTargetLabel(app.getTargetGrid()) == nullptr);
+    cli.executeCommand("target save MY SUMMIT");
+    ASSERT_TRUE(app.resolveTargetLabel(app.getTargetGrid()) != nullptr);
+    ASSERT_STR_EQ(app.resolveTargetLabel(app.getTargetGrid()), "MY SUMMIT");
+
     PASS();
 }
 
