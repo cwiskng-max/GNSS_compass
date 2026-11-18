@@ -250,7 +250,7 @@ When the rover arrives at a site with $\ge 16.0\text{ km}$ displacement, but the
 
 ## 4. Modular Geodesics & Domain Model Integration
 
-The modular geodesic and coordinate engine was formally adopted in PR #10 under [`src/geo/`](../../src/geo/):
+The modular geodesic and coordinate engine was formally adopted in PR #10 under [`src/geo/`](../../../src/geo/):
 
 ```text
 src/geo/
@@ -344,7 +344,7 @@ The display architecture in `DisplayUi` is optimized for high readability and ze
 
 ## 6. Serial CLI & Simulation Framework Integration
 
-Integrating with [`src/protocol/serial_cli.h`](../../src/protocol/serial_cli.h) and [`tools/gps_sim.py`](../../tools/gps_sim.py):
+Integrating with [`src/protocol/serial_cli.h`](../../../src/protocol/serial_cli.h) and [`tools/gps_sim.py`](../../../tools/gps_sim.py):
 
 ### 6.1 CLI Commands for Rover Operations
 
@@ -371,7 +371,7 @@ Integrating with [`src/protocol/serial_cli.h`](../../src/protocol/serial_cli.h) 
 
 ### 6.2 Simulation Verification with `gps_sim.py`
 
-The simulation framework in [`tools/gps_sim.py`](../../tools/gps_sim.py) enables full automated and interactive validation without requiring road trips:
+The simulation framework in [`tools/gps_sim.py`](../../../tools/gps_sim.py) enables full automated and interactive validation without requiring road trips:
 - **Transit Journey (States A $\to$ B):**  
   `./tools/gps_sim.py rover --origin CM87wa --speed 75 --distance 25`  
   Feeds a live vehicle track driving from `CM87wa` past 16 km into `CM87wb`, testing real-time State A (Red) to State B (Green) qualification.

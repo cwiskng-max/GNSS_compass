@@ -36,7 +36,7 @@ The 480×480 circular display organizes station telemetry into functional rows a
 
 | Row / Zone | Function | Example | Description |
 | :--- | :--- | :---: | :--- |
-| **Row 1** | **Local Grid** | `CM87wa00` | 8-digit Maidenhead locator from live GNSS coordinates (`JJ00AA00` before fix). **Tap** to start Rover Mode; **long-press (1.5 s)** to open Rover History. |
+| **Row 1** | **Local Grid** | `CM87wa00` | 8-digit Maidenhead locator from live GNSS coordinates (`JJ00AA00` before fix), with a Bluetooth status icon on the right flank when BLE is connected. **Tap** to start Rover Mode; **long-press (1.5 s)** to open Rover History. |
 | **Row 2** | **Target Grid** | `FN31pr` | 6-digit destination grid square (`ZA00AA` default). **Tap** any character to select it for rotary editing (yellow caret `^`); **long-press (> 500 ms)** to open the Target Presets modal. In Bearing Mode (when not editing), a cyan summit/preset label appears beneath Row 2 if matched. |
 | **Row 3** | **Live Heading & Target Azimuth** | `142.6  142.8` | **Left:** Real-time antenna heading ($0.0^\circ$–$359.9^\circ$, color-coded by RTK state).<br>**Right:** Great-circle azimuth from your position to the target grid. |
 | **Cal Pill** | **Calibration Offset Pill** | `OFF` / `+4.2°` | Centered pill between Row 3 and Row 4. Shows active heading offset (`OFF` in gray when `0.0°`, or offset in cyan). **Tap** to open the Calibration Modal. |
@@ -63,23 +63,23 @@ Row 3 (left) dynamically color-codes the carrier-phase RTK solution quality:
    * **Tap** directly on any of the 6 characters in **Row 2**, or **press the rotary knob** (in Normal Mode).
    * A yellow caret (`^`) appears beneath the active character and the character turns yellow.
 2. **Change Value (Rotary Bezel):** Turn the outer rotary bezel clockwise/counter-clockwise:
-   * **Positions 1 & 2 (Field):** `A`–`R`
+   * **Positions 1 & 2 (Field):** `A`–`Z`
    * **Positions 3 & 4 (Square):** `0`–`9`
-   * **Positions 5 & 6 (Subsquare):** `A`–`X`
+   * **Positions 5 & 6 (Subsquare):** `A`–`Z`
 3. **Auto-Lock Timeout:** After **5 seconds** of inactivity, edit mode locks and the yellow caret disappears to prevent accidental changes.
 4. **Target Label Subtitle:** When not editing and not in Rover Mode, any matching saved preset label (or built-in regional summit name such as `DIABLO` or `UMUNHUM`) is displayed in cyan beneath Row 2.
 
 ### 4.2 Target Grid Presets Modal (`TargetListModal`)
 For rapid switching between pre-loaded contest summits or previously dialed grids (up to `100` presets by default, configurable `10–500` via CLI):
 1. **Open Modal:** **Long-press Row 2 (Target Grid) for > 500 ms**.
-2. **Live Geodetic Preview:** Displays up to **4 visible rows** at a time (with a vertical scroll track when more than 4 presets are saved). Each row shows its index, 6-character grid, label, and live true azimuth + distance in km calculated from your current GPS position. Presets are sorted by usage frequency (`useCount` descending, then most recently used).
+2. **Live Geodetic Preview:** Displays up to **3 visible rows** at a time (with a vertical scroll track when more than 3 presets are saved). Each row shows its index, 6-character grid, label, and live true azimuth + distance in km calculated from your current GPS position. Presets are sorted by usage frequency (`useCount` descending, then most recently used).
 3. **Browse & Select:**
    * **Rotate Bezel** or **tap a visible row** to highlight a preset.
    * **Tap `[ USE ]`** (or **press the rotary knob**) to load the selected grid as your active target, increment its usage count, and close the modal. *(If Rover Mode is active, selecting a preset stops Rover Mode just like manual target changes.)*
 4. **Save, Delete, Clear, or Close:**
-   * **`[ + SAVE ]`:** Bookmarks (or updates) the current active target grid in NVS (auto-assigning a regional summit name if matched) and selects it.
+   * **`[ ADD ]`:** Bookmarks (or updates) the current active target grid in NVS (auto-assigning a regional summit name if matched) and selects it.
    * **`[ DEL ]`:** Removes only the currently highlighted preset.
-   * **`[ HOLD TO CLEAR ALL ]`:** Press and **hold for 1.5 seconds** (yellow progress bar) to wipe the entire preset list from NVS.
+   * **`[ HOLD TO CLEAR ALL ]`:** Press and **hold for 1.5 seconds** (red progress bar) to wipe the entire preset list from NVS.
    * **`[ CLOSE ]`** (or **30 seconds** of inactivity): Closes the modal without changing your target or stopping Rover Mode.
 
 *(Presets can also be pre-loaded or managed over USB-C / BLE UART using `target add|save|del|list|max|clear`; see [SERIAL.md](SERIAL.md#311-remote-target-setting-target-grid).)*
@@ -103,7 +103,7 @@ Tap the **Version Footer** at the bottom of the screen to launch the 9-step on-d
 ### 4.5 QSO Confirmation Pop-Up Card (`QsoCard`)
 When a contact is logged over USB-C or BLE (`log <call> [band/freq]`), a green-bordered confirmation card appears over the main display:
 * **Displayed Fields:** QSO log index (`*** QSO LOGGED #<n> ***`), callsign, band & optional frequency, grid path (`<myGrid> -> <hisGrid>`), geodesic distance & true bearing, and UTC timestamp (`HH:MM UTC`).
-* **Dismiss Controls:** Tap **`[ OK ]`**, touch anywhere on the screen, turn or press the rotary knob, or wait for the auto-dismiss timer (**5 seconds** by default; configurable via `log cardtimeout` in [SERIAL.md](SERIAL.md#3128-on-display-qso-confirmation-pop-up-card)).
+* **Dismiss Controls:** Tap **`[ OK ]`**, touch anywhere on the screen, turn or press the rotary knob, or wait for the auto-dismiss timer (**5 seconds** by default; configurable via `log timeout` in [SERIAL.md](SERIAL.md#3128-on-display-qso-confirmation-pop-up-card)).
 
 ---
 

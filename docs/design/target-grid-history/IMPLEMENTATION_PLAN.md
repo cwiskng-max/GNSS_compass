@@ -1,7 +1,7 @@
 # Target Grid Presets & History Manager — Multi-Chat Implementation Plan
 
 **Branch:** `target-grid-history`  
-**Design Spec:** [`docs/design/target-grid-history/DESIGN.md`](file:///home/davek/devel/GNSS_compass/docs/design/target-grid-history/DESIGN.md)  
+**Design Spec:** [`docs/design/target-grid-history/DESIGN.md`](DESIGN.md)  
 **Goal:** Implement the MVP in 4 self-contained chats so each session stays focused, compiles cleanly, and passes `bash tests/run_tests.sh` before moving to the next chat.
 
 ---

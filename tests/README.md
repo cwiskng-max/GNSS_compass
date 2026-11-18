@@ -58,6 +58,7 @@ The test suite runs automatically on every push and pull request in [`.github/wo
 33. **BLE TX Queue:** MTU-based chunking (20 bytes at MTU 23, capped at 244), backoff and retry after a rejected send, pausing on congestion, a 100-line dump, the overflow policy (drop until drained, then one notice), and discarding queued output on disconnect.
 34. **BLE Diagnostics & Text Helpers (`ble_diagnostics.*`, `line_buffer.h`, `text_output.*`):** Always-on versus `diag on` logging, diagnostic queue overflow reporting, line editing, and single-call CRLF delivery for long lines.
 35. **CLI Dual Transport & BLE Integration:** Independent USB/BLE line buffers, reply routing, broadcast, output-handler mirroring, `disconnect`, and reset of reply routing and partial BLE input when the link changes.
+36. **Voice QSO Logging, Presets & NVS Storage (`VoiceQsoParser`, `QsoLogManager`, `QsoCard`, `TargetPresetManager`, `TargetListModal`, `NvsConfig`, `NvsListStore`):** Covers NATO phonetic & homophone callsign/grid parsing, band/frequency mapping, Cabrillo 3.0 / ADIF / CSV exports, QSO/preset/rover NVS persistence and capacity clamping, `log timeout` configuration, and modal row/card formatting (72 total tests).
 
 ---
 
