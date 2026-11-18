@@ -6077,13 +6077,149 @@ void test_app_controller_target_list_workflow_e2e() {
     cli.executeCommand("target del one");
     ASSERT_TRUE(targetMgr.getCount() == 1);
 
-    // Delete remaining preset by phonetic grid
+    // 18. Delete remaining preset by phonetic grid
     if (targetMgr.findByGrid("CM87vu") != nullptr) {
         cli.executeCommand("target del charlie mike 87 victor uniform");
     } else {
         cli.executeCommand("target del charlie mike nine seven bravo echo");
     }
     ASSERT_TRUE(targetMgr.isEmpty());
+
+    PASS();
+}
+
+void test_target_preset_review_fixes() {
+    TEST("Target preset review fixes: BLE list streaming, modal guards, row width, punctuation, corrupt NVS");
+
+    TargetPresetManager::resetHostStorage();
+    Board board;
+    DisplayUi ui;
+    InputManager input;
+    GpsManager gps;
+    Calibration cal;
+    GpsSimulator sim;
+    RoverLogManager roverLog;
+    QsoLogManager qsoLog;
+    TargetPresetManager targetMgr;
+    BleSerialManager ble;
+    SerialCli cli(gps, cal, sim, &roverLog, &ble, &qsoLog, &targetMgr);
+    AppController app(board, ui, input, gps, cal, sim, cli, &roverLog, &ble, &qsoLog, &targetMgr);
+
+    app.begin();
+    GeoPoint here;
+    ASSERT_TRUE(gridToGeoPoint("CM87wa", here));
+    app.setCurrentPosition(here);
+
+    // 1. FormatPresetRow width <= 27 chars at index 499 and distKm >= 1000
+    char rowBuf[48];
+    GeoPoint farPt;
+    ASSERT_TRUE(gridToGeoPoint("FN31pr", farPt)); // ~4000+ km from CM87wa
+    TargetPreset farPreset("FN31pr", "LONG SUMMIT NAME", 10, 100);
+    TargetListModal::formatPresetRow(499, farPreset, here, true, rowBuf, sizeof(rowBuf));
+    ASSERT_TRUE(std::strlen(rowBuf) <= 27);
+    ASSERT_TRUE(std::strncmp(rowBuf, "500. FN31pr ", 12) == 0);
+
+    // 2. Voice punctuation variants: trailing periods & leading comma before label
+    cli.executeCommand("target add charlie mike 87 victor uniform, mt diablo");
+    ASSERT_TRUE(targetMgr.getCount() == 1);
+    ASSERT_STR_EQ(targetMgr.findByGrid("CM87vu")->label, "mt diablo");
+    cli.executeCommand("target list.");
+    cli.executeCommand("target del 1.");
+    ASSERT_TRUE(targetMgr.isEmpty());
+    cli.executeCommand("target add CM97be UMUNHUM");
+    cli.executeCommand("target clear.");
+    ASSERT_TRUE(targetMgr.isEmpty());
+
+    // 3. [ CLOSE ] followed by [ USE ] within 120 ms does not leave stale Cancel pending
+    targetMgr.addOrUpdatePreset("CM87vu", "DIABLO", 100);
+    UserEvent evOpen, evCancel, evLoad;
+    evOpen.type = UserEventType::LongPressTargetGridTriggered;
+    evCancel.type = UserEventType::CancelModalTriggered;
+    evLoad.type = UserEventType::LoadTargetTriggered;
+
+    app.handleUserEvent(evOpen, 1000);
+    app.handleUserEvent(evCancel, 1020);
+    app.handleUserEvent(evLoad, 1050); // Exits to Normal before 120 ms timer
+    ASSERT_TRUE(app.getUiMode() == UiMode::Normal);
+    // Re-open Calibration modal before 1140 ms and verify stale Cancel does NOT close it
+    UserEvent evCal;
+    evCal.type = UserEventType::TouchCalibrationPill;
+    app.handleUserEvent(evCal, 1080);
+    ASSERT_TRUE(app.getUiMode() == UiMode::Calibrating);
+    app.update(1200);
+    ASSERT_TRUE(app.getUiMode() == UiMode::Calibrating);
+    app.handleUserEvent(evCancel, 1210);
+    app.update(1350);
+    ASSERT_TRUE(app.getUiMode() == UiMode::Normal);
+
+    // 4. CLI 'target <grid>' in Rover Mode while TargetList is open does not clobber UiMode
+    app.startRoverMode(2000);
+    ASSERT_TRUE(app.isRoverMode());
+    app.handleUserEvent(evOpen, 2100);
+    ASSERT_TRUE(app.getUiMode() == UiMode::TargetList);
+    cli.executeCommand("target CM97be");
+    ASSERT_TRUE(!app.isRoverMode());
+    ASSERT_TRUE(app.getUiMode() == UiMode::TargetList); // Modal remains active
+
+    // 5. CLI 'target max 10' / 'target del' while TargetList is open clamps selection
+    for (int i = 0; i < 15; ++i) {
+        char g[7];
+        std::snprintf(g, sizeof(g), "CM8%duu", i % 10);
+        if (i >= 10) std::snprintf(g, sizeof(g), "CM9%duu", i - 10);
+        targetMgr.addOrUpdatePreset(g, "TEST", static_cast<uint32_t>(i + 1));
+    }
+    UserEvent evCw;
+    evCw.type = UserEventType::RotateClockwise;
+    for (int i = 0; i < 14; ++i) {
+        app.handleUserEvent(evCw, 2200 + i);
+    }
+    ASSERT_TRUE(app.getSelectedPresetIndex() == 14);
+    cli.executeCommand("target max 10");
+    ASSERT_TRUE(targetMgr.getCount() == 10);
+    ASSERT_TRUE(app.getSelectedPresetIndex() < 10);
+    cli.executeCommand("target clear");
+    ASSERT_TRUE(app.getSelectedPresetIndex() == 0);
+    ASSERT_TRUE(app.getPresetScrollOffset() == 0);
+    app.handleUserEvent(evCancel, 2300);
+    app.update(2450);
+
+    // 6. BLE 'target list' with 350 presets streams without dropping bytes
+    targetMgr.setMaxTargets(350, true);
+    for (int i = 0; i < 350; ++i) {
+        char g[7];
+        g[0] = 'C';
+        g[1] = static_cast<char>('A' + (i / 200));
+        g[2] = static_cast<char>('0' + ((i / 20) % 10));
+        g[3] = static_cast<char>('0' + (i % 10));
+        g[4] = 'a';
+        g[5] = static_cast<char>('a' + ((i / 10) % 2));
+        g[6] = '\0';
+        targetMgr.addOrUpdatePreset(g, "BLE TEST", static_cast<uint32_t>(i + 1));
+    }
+    ASSERT_TRUE(targetMgr.getCount() == 350);
+
+    ble.setConnected(true);
+    ble.setSubscribed(true);
+    ble.setMtu(128);
+    ble.clearTxBuffer();
+
+    ble.simulateRx("target list\n", 12);
+    for (int tick = 0; tick < 400; ++tick) {
+        cli.update(3000 + tick * 10);
+    }
+    const std::string &bleOut = ble.getTxBuffer();
+    ASSERT_TRUE(ble.getTxDroppedBytes() == 0);
+    ASSERT_TRUE(bleOut.find("=== Saved Target Presets (350/350) ===") != std::string::npos);
+    ASSERT_TRUE(bleOut.find("#350:") != std::string::npos);
+    ASSERT_TRUE(bleOut.find("===================================") != std::string::npos);
+
+    // 7. Corrupt NVS entry recovery on loadFromNvs()
+    NvsListStore<TargetPreset> rawStore(TARGET_LOG_NAMESPACE, TARGET_LOG_KEY_COUNT, 't');
+    TargetPreset corrupt("ZZ99zz", "BAD", 5, 50); // Z > R, invalid Maidenhead
+    rawStore.putSlot(0, corrupt);
+    targetMgr.loadFromNvs();
+    ASSERT_TRUE(targetMgr.getCount() == 349);
+    ASSERT_TRUE(targetMgr.findByGrid("ZZ99zz") == nullptr);
 
     PASS();
 }
@@ -6163,6 +6299,7 @@ int main() {
     test_display_ui_row2_label_behavior();
     test_input_manager_target_list_hit_testing_and_gestures();
     test_app_controller_target_list_workflow_e2e();
+    test_target_preset_review_fixes();
 
     std::cout << "========================================" << std::endl;
     std::cout << "  All " << tests_passed << " / " << tests_run << " tests PASSED successfully!" << std::endl;

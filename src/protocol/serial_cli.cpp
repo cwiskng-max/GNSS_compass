@@ -32,13 +32,23 @@ static bool parseStrictPositiveInt(const char *s, int &out) {
 }
 
 static bool parsePositiveIntOrVoice(const char *s, int &out) {
-    if (parseStrictPositiveInt(s, out)) {
-        return true;
-    }
     if (!s) return false;
     while (*s == ' ' || *s == '\t') s++;
-    if (std::isalpha(static_cast<unsigned char>(*s))) {
-        std::string voiceNorm = VoiceQsoParser::normalizeVoiceInput(s);
+    std::string trimmed(s);
+    while (!trimmed.empty()) {
+        char c = trimmed.back();
+        if (c == ' ' || c == '\t' || c == '.' || c == ',' || c == '!' || c == '?') {
+            trimmed.pop_back();
+        } else {
+            break;
+        }
+    }
+    if (trimmed.empty()) return false;
+    if (parseStrictPositiveInt(trimmed.c_str(), out)) {
+        return true;
+    }
+    if (std::isalpha(static_cast<unsigned char>(trimmed[0]))) {
+        std::string voiceNorm = VoiceQsoParser::normalizeVoiceInput(trimmed);
         if (!voiceNorm.empty()) {
             return parseStrictPositiveInt(voiceNorm.c_str(), out);
         }
@@ -1104,12 +1114,27 @@ void SerialCli::printTargetHelp() {
     println();
 }
 
+static bool isSubcmdPunct(char c) {
+    return (c == '.' || c == ',' || c == '!' || c == '?');
+}
+
 static bool hasSubcommandPrefix(const char *arg, const char *cmd) {
     if (!arg || !cmd) return false;
     size_t len = std::strlen(cmd);
     if (!startsWithIgnoreCase(arg, cmd)) return false;
     char next = arg[len];
-    return (next == '\0' || next == ' ' || next == '\t');
+    if (next == '\0' || next == ' ' || next == '\t') return true;
+    if (isSubcmdPunct(next)) {
+        char after = arg[len + 1];
+        return (after == '\0' || after == ' ' || after == '\t');
+    }
+    return false;
+}
+
+static const char* skipSubcommandPrefix(const char *arg, size_t cmdLen) {
+    const char *p = arg + cmdLen;
+    while (*p == ' ' || *p == '\t' || isSubcmdPunct(*p)) p++;
+    return p;
 }
 
 void SerialCli::handleTargetCommand(const char *arg, unsigned long nowMs) {
@@ -1136,8 +1161,7 @@ void SerialCli::handleTargetCommand(const char *arg, unsigned long nowMs) {
             println("[TARGET] Target preset manager not available.");
             return;
         }
-        const char *p = arg + 3;
-        while (*p == ' ' || *p == '\t') p++;
+        const char *p = skipSubcommandPrefix(arg, 3);
         if (*p == '\0') {
             println("[TARGET ERROR] Usage: target add <GRID> [LABEL]");
             return;
@@ -1183,8 +1207,8 @@ void SerialCli::handleTargetCommand(const char *arg, unsigned long nowMs) {
             }
         }
 
-        // Remainder (if any) is the optional label (spaces allowed)
-        while (*lblStart == ' ' || *lblStart == '\t') lblStart++;
+        // Remainder (if any) is the optional label (spaces allowed; strip leading comma/period separators)
+        while (*lblStart == ' ' || *lblStart == '\t' || *lblStart == ',' || *lblStart == '.') lblStart++;
         char labelBuf[64];
         size_t lLen = 0;
         while (lblStart[lLen] && lLen < sizeof(labelBuf) - 1) {
@@ -1219,8 +1243,7 @@ void SerialCli::handleTargetCommand(const char *arg, unsigned long nowMs) {
             println("[TARGET] Target preset manager not available.");
             return;
         }
-        const char *p = arg + 4;
-        while (*p == ' ' || *p == '\t') p++;
+        const char *p = skipSubcommandPrefix(arg, 4);
         char labelBuf[64];
         size_t lLen = 0;
         while (p[lLen] && lLen < sizeof(labelBuf) - 1) {
@@ -1260,8 +1283,7 @@ void SerialCli::handleTargetCommand(const char *arg, unsigned long nowMs) {
             println("[TARGET] Target preset manager not available.");
             return;
         }
-        const char *p = arg + (startsWithIgnoreCase(arg, "delete") ? 6 : 3);
-        while (*p == ' ' || *p == '\t') p++;
+        const char *p = skipSubcommandPrefix(arg, startsWithIgnoreCase(arg, "delete") ? 6 : 3);
         if (*p == '\0') {
             println("[TARGET ERROR] Usage: target del <INDEX|GRID>");
             return;
@@ -1334,8 +1356,7 @@ void SerialCli::handleTargetCommand(const char *arg, unsigned long nowMs) {
             println("[TARGET] Target preset manager not available.");
             return;
         }
-        const char *p = arg + 3;
-        while (*p == ' ' || *p == '\t') p++;
+        const char *p = skipSubcommandPrefix(arg, 3);
         if (*p == '\0') {
             printFormat("[TARGET] Max presets capacity: %zu (range: %u-%u)\r\n",
                         targetPresetManager_->getMaxTargets(), MIN_TARGET_PRESETS, ABS_MAX_TARGET_PRESETS);
@@ -1349,6 +1370,7 @@ void SerialCli::handleTargetCommand(const char *arg, unsigned long nowMs) {
         }
         targetPresetManager_->setMaxTargets(static_cast<size_t>(val), true);
         printFormat("[TARGET] Max presets capacity set to %zu\r\n", targetPresetManager_->getMaxTargets());
+        if (stateChangedCb_) stateChangedCb_(stateChangedContext_);
         return;
     }
 
@@ -2189,8 +2211,7 @@ void SerialCli::handleSimCommand(const char *arg, unsigned long nowMs) {
     simulator_.setActive(true);
 
     if (startsWithIgnoreCase(arg, "hdg")) {
-        const char *p = arg + 3;
-        while (*p == ' ' || *p == '\t') p++;
+        const char *p = skipSubcommandPrefix(arg, 3);
         float h = (float)atof(p);
         BearingQuality q = BEARING_FIXED;
 
@@ -2211,8 +2232,7 @@ void SerialCli::handleSimCommand(const char *arg, unsigned long nowMs) {
     }
 
     if (startsWithIgnoreCase(arg, "pos")) {
-        const char *p = arg + 3;
-        while (*p == ' ' || *p == '\t') p++;
+        const char *p = skipSubcommandPrefix(arg, 3);
         char *endPtr = nullptr;
         double lat = strtod(p, &endPtr);
         if (endPtr && *endPtr != '\0') {
@@ -2331,8 +2351,7 @@ void SerialCli::handleRoverCommand(const char *arg, unsigned long nowMs) {
     }
 
     if (startsWithIgnoreCase(arg, "max")) {
-        const char *p = arg + 3;
-        while (*p == ' ' || *p == '\t') p++;
+        const char *p = skipSubcommandPrefix(arg, 3);
         handleRoverMax(p);
         return;
     }

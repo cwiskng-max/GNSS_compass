@@ -18,6 +18,9 @@ void TargetListModal::formatPresetRow(size_t index,
     if (!outBuf || bufSize == 0) return;
 
     const char *lbl = preset.label;
+    size_t idxNum = index + 1;
+    int idxChars = (idxNum >= 100) ? 5 : ((idxNum >= 10) ? 4 : 3); // "<N>. "
+
     GeoPoint tgtPt;
     if (hasGps && gridToGeoPoint(preset.grid, tgtPt)) {
         double distMeters = 0.0;
@@ -27,12 +30,22 @@ void TargetListModal::formatPresetRow(size_t index,
         int azDeg = static_cast<int>(std::round(fwdAzimuth)) % 360;
         if (azDeg < 0) azDeg += 360;
         int distKm = static_cast<int>(std::round(distMeters / 1000.0));
+        if (distKm < 0) distKm = 0;
 
-        std::snprintf(outBuf, bufSize, "%zu. %s %-7.7s %03d\xf7 %3dk",
-                      index + 1, preset.grid, lbl, azDeg, distKm);
+        int distChars = (distKm >= 10000) ? 6 : ((distKm >= 1000) ? 5 : 4); // "%3dk"
+        int lblW = 27 - (idxChars + 7 + 5 + distChars + 1);
+        if (lblW < 3) lblW = 3;
+        if (lblW > 7) lblW = 7;
+
+        std::snprintf(outBuf, bufSize, "%zu. %s %-*.*s %03d\xf7 %3dk",
+                      idxNum, preset.grid, lblW, lblW, lbl, azDeg, distKm);
     } else {
-        std::snprintf(outBuf, bufSize, "%zu. %s %-7.7s ---\xf7 ---k",
-                      index + 1, preset.grid, lbl);
+        int lblW = 27 - (idxChars + 7 + 5 + 4 + 1);
+        if (lblW < 3) lblW = 3;
+        if (lblW > 7) lblW = 7;
+
+        std::snprintf(outBuf, bufSize, "%zu. %s %-*.*s ---\xf7 ---k",
+                      idxNum, preset.grid, lblW, lblW, lbl);
     }
 }
 

@@ -247,6 +247,8 @@ void AppController::setUiMode(UiMode mode) {
     inputManager_.setUiMode(mode);
     if (mode != UiMode::Normal) {
         gridEditor_.setEditing(false);
+    } else {
+        pendingModalButtonRelease_ = ModalButtonId::None;
     }
 }
 
@@ -609,6 +611,9 @@ void AppController::begin() {
                                               self->gridEditor_.getCursorColumn(),
                                               self->gridEditor_.isEditing(),
                                               self->resolveTargetLabel(self->gridEditor_.getGrid()));
+        } else if (self->currentUiMode_ == UiMode::TargetList) {
+            self->clampTargetModalSelection();
+            self->drawTargetListModal();
         }
         self->updateNavigation();
     }, this);
