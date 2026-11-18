@@ -70,23 +70,23 @@ Row 3 (left) dynamically color-codes the carrier-phase RTK solution quality:
 4. **Target Label Subtitle:** When not editing and not in Rover Mode, any matching saved preset label (or built-in regional summit name such as `DIABLO` or `UMUNHUM`) is displayed in cyan beneath Row 2.
 
 ### 4.2 Target Grid Presets Modal (`TargetListModal`)
-For rapid switching between pre-loaded contest summits or previously dialed grids:
+For rapid switching between pre-loaded contest summits or previously dialed grids (up to `100` presets by default, configurable `10–500` via CLI):
 1. **Open Modal:** **Long-press Row 2 (Target Grid) for > 500 ms**.
-2. **Live Geodetic Preview:** Each row displays its index, 6-character grid, label, and live true azimuth + distance in km calculated from your current GPS position. Presets are sorted by usage frequency (`useCount` descending, then most recently used).
+2. **Live Geodetic Preview:** Displays up to **4 visible rows** at a time (with a vertical scroll track when more than 4 presets are saved). Each row shows its index, 6-character grid, label, and live true azimuth + distance in km calculated from your current GPS position. Presets are sorted by usage frequency (`useCount` descending, then most recently used).
 3. **Browse & Select:**
    * **Rotate Bezel** or **tap a visible row** to highlight a preset.
    * **Tap `[ USE ]`** (or **press the rotary knob**) to load the selected grid as your active target, increment its usage count, and close the modal. *(If Rover Mode is active, selecting a preset stops Rover Mode just like manual target changes.)*
 4. **Save, Delete, Clear, or Close:**
-   * **`[ + SAVE ]`:** Bookmarks the current active target grid into NVS (auto-assigning a regional summit name if matched).
+   * **`[ + SAVE ]`:** Bookmarks (or updates) the current active target grid in NVS (auto-assigning a regional summit name if matched) and selects it.
    * **`[ DEL ]`:** Removes only the currently highlighted preset.
    * **`[ HOLD TO CLEAR ALL ]`:** Press and **hold for 1.5 seconds** (yellow progress bar) to wipe the entire preset list from NVS.
    * **`[ CLOSE ]`** (or **30 seconds** of inactivity): Closes the modal without changing your target or stopping Rover Mode.
 
 *(Presets can also be pre-loaded or managed over USB-C / BLE UART using `target add|save|del|list|max|clear`; see [SERIAL.md](SERIAL.md#311-remote-target-setting-target-grid).)*
 
-### 4.2 Antenna Heading Calibration (`CalModal`)
+### 4.3 Antenna Heading Calibration (`CalModal`)
 If your GNSS boom has a small mechanical alignment offset relative to your RF feed/dish, you can trim it on-device without moving hardware:
-1. **Open Modal:** Tap the **Calibration Pill** between Row 3 and Row 4.
+1. **Open Modal:** Tap the **Calibration Pill** between Row 3 and Row 4. The modal displays `Target Bearing`, `Raw GNSS Hdg`, `Current Offset`, and `Proposed Offset` (pre-snapped to align with the current Target Azimuth if a live heading is available).
 2. **Adjust Proposed Offset:**
    * **Rotary Bezel:** Turn to nudge the proposed offset in **$0.1^\circ$ steps**.
    * **`SNAP TARGET`:** Tap to automatically compute the offset that aligns your current live GNSS heading with the current Target Azimuth (Row 3, right).
@@ -97,8 +97,13 @@ If your GNSS boom has a small mechanical alignment offset relative to your RF fe
 
 *(Calibration can also be inspected or adjusted via CLI with `cal`, `cal snap`, `cal <deg>`, and `cal zero`; see [SERIAL.md](SERIAL.md#35-antenna-heading-calibration-cal).)*
 
-### 4.3 Visual Self-Test (Version Footer)
+### 4.4 Visual Self-Test (Version Footer)
 Tap the **Version Footer** at the bottom of the screen to launch the 9-step on-device visual self-test, which verifies distance math, formatting, bearing colors, live GNSS link health, calibration UI, and Rover Mode cards, then restores live telemetry.
+
+### 4.5 QSO Confirmation Pop-Up Card (`QsoCard`)
+When a contact is logged over USB-C or BLE (`log <call> [band/freq]`), a green-bordered confirmation card appears over the main display:
+* **Displayed Fields:** QSO log index (`*** QSO LOGGED #<n> ***`), callsign, band & optional frequency, grid path (`<myGrid> -> <hisGrid>`), geodesic distance & true bearing, and UTC timestamp (`HH:MM UTC`).
+* **Dismiss Controls:** Tap **`[ OK ]`**, touch anywhere on the screen, turn or press the rotary knob, or wait for the auto-dismiss timer (**5 seconds** by default; configurable via `log cardtimeout` in [SERIAL.md](SERIAL.md#3128-on-display-qso-confirmation-pop-up-card)).
 
 ---
 
@@ -127,10 +132,10 @@ While in Rover Mode, accidental touches won't wipe out your transit tracking:
 
 ### 5.4 Rover History & 1-Touch Undo (`RoverHistoryModal`)
 If you tapped Row 1 accidentally before leaving a site:
-1. **Long-press Row 1 (Local Grid) for 1.5 seconds** to open the **Rover History Modal**, which shows the most recent stop, displacement/qualification status, and total logged stops.
-2. Press and **hold `HOLD TO DISCARD LAST STOP` for 1.5 seconds** to remove the last stop and re-arm tracking from the previous stop, or tap **`[ CANCEL ]`** to close.
+1. **Long-press Row 1 (Local Grid) for 1.5 seconds** to open the **Rover History Modal**, which displays the most recent stop (`Last: #<n> - <grid> (<HH:MM>Z)`), displacement/qualification status (`ORIGIN`, `UNDER 16k`, or `QUALIFIED`), and total logged stops.
+2. Press and **hold `HOLD TO DISCARD LAST STOP` for 1.5 seconds** to remove the last stop and re-arm tracking from the previous stop, or tap **`[ CANCEL ]`** to close (the modal also auto-closes after **15 seconds** of inactivity).
 
-*(Rover tracking can also be controlled via BLE/USB CLI using `rover status|start|stop|history|undo|max|clear`; see [SERIAL.md](SERIAL.md).)*
+*(Rover tracking can also be controlled via BLE/USB CLI using `rover status|start|stop|history|undo|max|clear`; see [SERIAL.md](SERIAL.md#313-rover-mode-rover).)*
 
 ---
 
@@ -158,6 +163,7 @@ See **[SERIAL.md](SERIAL.md)** for full BLE setup, voice dictation tips, macro p
 | **Rotate Bezel** | Edit selected grid character / nudge Calibration Offset (`±0.1°`) |
 | **Tap Calibration Pill** | Open Antenna Calibration Modal (15 s timeout) |
 | **Tap Version Footer** | Run 9-step visual self-test |
+| **Tap `[ OK ]` / Screen (QSO Card)** | Dismiss QSO Confirmation Pop-Up Card immediately (5 s default timeout) |
 
 ### Color Reference
 | Element & Color | Meaning |

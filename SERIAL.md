@@ -53,7 +53,7 @@ Because the Elecrow 2.1" display is often mounted on a mast, tripod, or vehicle 
    * **M6 (`exit`):** `disconnect\n` (Cleanly release BLE radio link)
 
 > [!TIP]
-> For active microwave contest logging and remote target setting, see the **[Contest Voice Dictation Field Macro Profile](#3132-recommended-field-macro-button-configurations)** in Section 3.13.2.
+> For active microwave contest logging and remote target setting, see the **[Contest Voice Dictation Field Macro Profile](#3142-recommended-field-macro-button-configurations)** in Section 3.14.2.
 
 > [!TIP]
 > In *Serial Bluetooth Terminal*, go to **Settings -> Bluetooth LE** and verify that **"Close GATT on disconnect"** is enabled, or simply type `disconnect` in the terminal before switching devices to release the Bluetooth link immediately.
@@ -130,7 +130,7 @@ Displays a summary of available serial commands.
 | **`status`** *(or `gps`)* | None | USB, BLE | Live GNSS receiver stream & link diagnostic, RTK fix health |
 | **`gps`** | `probe` \| `config` \| `check` \| `send <cmd>` \| `help` | USB, BLE | UM982 receiver setup, TX line discovery, in-system config |
 | **`rover`** | `status` \| `start` \| `stop` \| `history` \| `undo` \| `max` \| `clear` \| `help` | USB, BLE | Rover transit tracking (16 km displacement rule & qualification) |
-| **`target`** | `<grid>` \| `add` \| `save` \| `del` \| `list` \| `max` \| `clear` | USB, BLE | Remote target Maidenhead grid setting & NVS target preset manager |
+| **`target`** | `<grid>` \| `add` \| `save` \| `del` \| `list` \| `max` \| `clear` \| `help` | USB, BLE | Remote target Maidenhead grid setting & NVS target preset manager |
 | **`log`** | `<call> [band/freq]` *(supports NATO phonetics)* | USB, BLE | Voice-friendly contest QSO logging (10 GHz default, phonetics & band auto-mapping) |
 | **`log`** | `undo` \| `delete <#>` \| `clear` | USB, BLE | Contest QSO log editing, deletion, and rollback |
 | **`log`** | `list` *(or `show`)* \| `stats` \| `help` | USB, BLE | Formatted ASCII log table, contest statistics (DX, bands, grids), and log help |
@@ -832,14 +832,45 @@ Whenever a contact is successfully committed via `log`, the ESP32-S3 firmware im
 ```
 
 * **Heads-Up Verification:** The operator can verify that their spoken contact was logged accurately without taking their eyes off the antenna mast or picking up their phone.
-* **10-Second Auto-Dismiss:** The card remains on screen for 10 seconds, then dismisses itself automatically, returning to the live compass needle view without stalling receiver tracking or RTK navigation.
+* **5-Second Auto-Dismiss (Default):** The card remains on screen for 5 seconds by default (configurable via `log cardtimeout`), then dismisses itself automatically, returning to the live compass needle view without stalling receiver tracking or RTK navigation.
 * **Instant Dismissal:** Tapping the `[ OK ]` button, touching anywhere on the touch display, or turning/clicking the rotary knob closes the modal immediately.
 
 ---
 
-### 3.13 Mobile Voice Dictation Field Guide & Macros
+### 3.13 Rover Mode (`rover`)
 
-#### 3.13.1 Mobile Terminal Setup (iOS & Android)
+Manage Rover 16 km contest transit tracking, inspect visited grid history, and configure NVS stop storage remotely over USB-C or BLE.
+
+| Subcommand | Description |
+| :--- | :--- |
+| **`rover`** *(or `rover status`)* | Display active Rover Mode status, origin grid, current displacement (km), and 16 km qualification state (`TRANSIT`, `QUALIFIED`, `REVISIT`, or `NO GPS`). |
+| **`rover start`** | Emulate a Row 1 tap: snapshot the current position as the departure origin, log the stop in NVS, and arm Rover Mode. |
+| **`rover stop`** | Emulate a target exit: commit the stop and return Row 5 to Normal Bearing Mode. |
+| **`rover history`** *(or `rover log`)* | Print a formatted ASCII table of all logged contest stops, timestamps, displacements, and qualification flags. |
+| **`rover undo`** | Discard the most recent stop from NVS and re-arm Rover Mode from the previous stop. |
+| **`rover max [n]`** | Show or set the maximum number of rover stops stored in NVS (`10`–`500`). |
+| **`rover clear [confirm]`** | Erase all rover location history from NVS. Without `confirm` (`yes` / `-y` / `force`), prompts for confirmation (`cancel` / `no` / `-n` aborts). |
+| **`rover help`** *(or `rover ?`)* | Display the `rover` command help menu. |
+
+```text
+> rover start
+[ROVER] Rover mode armed at CM87wa (Stop #1 logged).
+
+> rover status
+========================================
+          Rover Transit Status          
+========================================
+State        : ACTIVE (TRANSIT)
+Origin Grid  : CM87wa
+Displacement : 6.4 km (need >= 16.0 km)
+========================================
+```
+
+---
+
+### 3.14 Mobile Voice Dictation Field Guide & Macros
+
+#### 3.14.1 Mobile Terminal Setup (iOS & Android)
 
 ##### Android (*Serial Bluetooth Terminal* + Google Gboard)
 1. Open **[Serial Bluetooth Terminal](https://play.google.com/store/apps/details?id=de.kai_morich.serial_bluetooth_terminal)**.
@@ -857,7 +888,7 @@ Whenever a contact is successfully committed via `log`, the ESP32-S3 firmware im
 5. Speak: `"log w6op stroke rover 10"` or `"target CM88qk"`.
 6. Tap the send arrow.
 
-#### 3.13.2 Recommended Field Macro Button Configurations
+#### 3.14.2 Recommended Field Macro Button Configurations
 
 In *Serial Bluetooth Terminal* (Android), you can assign quick-action macros to the row of 6 buttons (`M1`–`M6`) across the bottom of the screen. Long-press any button to set its title and command string:
 
@@ -886,7 +917,7 @@ In *Serial Bluetooth Terminal* (Android), you can assign quick-action macros to 
 | **`M5`** | `undo` | `rover undo\n` | Discard accidental stop and re-arm transit tracking |
 | **`M6`** | `exit` | `disconnect\n` | Cleanly release BLE radio link |
 
-#### 3.13.3 Mountaintop Voice Dictation Tips
+#### 3.14.3 Mountaintop Voice Dictation Tips
 
 1. **Wind Noise Mitigation:**
    Microwave contest operating positions (mountain peaks, exposed ridgelines, coastal overlooks) frequently experience severe wind gusts. To prevent garbled speech-to-text recognition:
