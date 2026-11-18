@@ -1,7 +1,7 @@
 # Target Grid Presets & Mountain-Top History Manager — Design Specification
 
 * **Feature:** Non-Volatile Target Maidenhead Grid History, Rover Preset Manager, & Live Azimuth/Distance Preview
-* **Status:** Proposed (v0.4-dev)
+* **Status:** Implemented
 * **Target Hardware:** ESP32-S3 (16 MB Flash, 8 MB OPI PSRAM), 480x480 Round Touch Display (ST7701 + CST8XX), Rotary Encoder, PCF8574 I2C Expander
 
 ---

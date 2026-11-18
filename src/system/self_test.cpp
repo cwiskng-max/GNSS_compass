@@ -6,7 +6,10 @@
 #include "../protocol/nmea_parser.h"
 #include "../ui/rover_card.h"
 #include "../ui/rover_history_modal.h"
+#include "../ui/target_list_modal.h"
+#include "../ui/display_ui.h"
 #include "rover_log_manager.h"
+#include "target_preset_manager.h"
 #include <cstring>
 #include <cmath>
 #include <cstdio>
@@ -122,6 +125,23 @@ int SelfTest::runAssertions(int *failedTests, int maxFails) {
         !localMgr.popLastStop() ||
         localMgr.getStopCount() != 1) {
         recordFailure(9, "Rover history stack operations");
+    }
+
+    // Test 10: TargetPresetManager & TargetListModal pure invariants (non-NVS)
+    char normGrid[7] = {0};
+    char hdrBuf[40] = {0};
+    char lblBuf[MAX_TARGET_LABEL_LEN] = {0};
+    const char *summit = TargetPresetManager::lookupRegionalSummit("cm87VU");
+    TargetListModal::formatHeader(3, 100, hdrBuf, sizeof(hdrBuf));
+    DisplayUi::formatTargetLabel("MT DIABLO", false, false, lblBuf, sizeof(lblBuf));
+    if (!TargetPresetManager::normalizeGrid("cm87VU", normGrid) ||
+        std::strcmp(normGrid, "CM87vu") != 0 ||
+        TargetPresetManager::clampMaxTargets(2) != MIN_TARGET_PRESETS ||
+        TargetPresetManager::clampMaxTargets(999) != ABS_MAX_TARGET_PRESETS ||
+        !summit || std::strcmp(summit, "DIABLO") != 0 ||
+        std::strcmp(hdrBuf, "SAVED TARGET GRIDS (3/100)") != 0 ||
+        std::strcmp(lblBuf, "MT DIABLO") != 0) {
+        recordFailure(10, "Target preset invariants & modal formatting");
     }
 
     return failedCount;

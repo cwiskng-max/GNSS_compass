@@ -5867,6 +5867,185 @@ void test_input_manager_target_list_hit_testing_and_gestures() {
     PASS();
 }
 
+void test_app_controller_target_list_workflow_e2e() {
+    TEST("AppController TargetList E2E: pre-load, Row 2 label, save, Rover cancel/timeout/load");
+
+    TargetPresetManager::resetHostStorage();
+    RoverLogManager::resetHostStorage();
+
+    Board board;
+    DisplayUi ui;
+    InputManager input;
+    GpsManager gps;
+    Calibration cal;
+    GpsSimulator sim;
+    SerialCli cli(gps, cal, sim);
+    RoverLogManager roverLog;
+    QsoLogManager qsoLog;
+    TargetPresetManager targetMgr;
+
+    AppController app(board, ui, input, gps, cal, sim, cli, &roverLog, nullptr, &qsoLog, &targetMgr);
+    app.begin();
+
+    GeoPoint siteA(38.000, -122.100, true);
+    app.setCurrentPosition(siteA);
+    app.update(500);
+
+    // 1. Pre-load presets via SerialCli
+    cli.executeCommand("target add CM87vu DIABLO");
+    cli.executeCommand("target add CM97be UMUNHUM");
+    cli.executeCommand("target add CM97bb LOMA P");
+    cli.executeCommand("target add CM88no ST HELN");
+    ASSERT_TRUE(targetMgr.getCount() == 4);
+
+    // 2. Active target label lookup (saved preset + regional summit fallback)
+    cli.executeCommand("target CM87vu");
+    ASSERT_STR_EQ(app.getTargetGrid(), "CM87vu");
+    ASSERT_TRUE(app.resolveTargetLabel(app.getTargetGrid()) != nullptr);
+    ASSERT_STR_EQ(app.resolveTargetLabel(app.getTargetGrid()), "DIABLO");
+
+    // Regional summit fallback when not in saved list
+    app.setTargetGrid("DM04ms", 600);
+    ASSERT_TRUE(app.resolveTargetLabel(app.getTargetGrid()) != nullptr);
+    ASSERT_STR_EQ(app.resolveTargetLabel(app.getTargetGrid()), "FRAZIER");
+
+    // Unlisted ad-hoc grid has no label
+    app.setTargetGrid("CM98aa", 700);
+    ASSERT_TRUE(app.resolveTargetLabel(app.getTargetGrid()) == nullptr);
+
+    // 3. Open TargetList modal via Row 2 long-press
+    UserEvent evOpen;
+    evOpen.type = UserEventType::LongPressTargetGridTriggered;
+    app.handleUserEvent(evOpen, 1000);
+    ASSERT_TRUE(app.getUiMode() == UiMode::TargetList);
+    ASSERT_TRUE(app.getSelectedPresetIndex() == 0);
+    ASSERT_TRUE(app.getPresetScrollOffset() == 0);
+
+    // 4. [ + SAVE CURRENT ] saves CM98aa into presets (count becomes 5)
+    UserEvent evSave;
+    evSave.type = UserEventType::SaveTargetTriggered;
+    app.handleUserEvent(evSave, 1200);
+    ASSERT_TRUE(targetMgr.getCount() == 5);
+    int savedIdx = targetMgr.findIndexByGrid("CM98aa");
+    ASSERT_TRUE(savedIdx >= 0);
+    ASSERT_TRUE(app.getSelectedPresetIndex() == static_cast<size_t>(savedIdx));
+
+    // 5. Encoder rotation scrolls selection & scrollOffset across 5 items (3 visible rows)
+    // Start from top
+    UserEvent evCcw;
+    evCcw.type = UserEventType::RotateCounterClockwise;
+    for (int i = 0; i < 6; ++i) {
+        app.handleUserEvent(evCcw, 1300 + i * 10);
+    }
+    ASSERT_TRUE(app.getSelectedPresetIndex() == 0);
+    ASSERT_TRUE(app.getPresetScrollOffset() == 0);
+
+    UserEvent evCw;
+    evCw.type = UserEventType::RotateClockwise;
+    for (int i = 0; i < 4; ++i) {
+        app.handleUserEvent(evCw, 1400 + i * 10);
+    }
+    ASSERT_TRUE(app.getSelectedPresetIndex() == 4);
+    ASSERT_TRUE(app.getPresetScrollOffset() == 2); // visible rows: 2, 3, 4
+
+    // 6. Tap visible row 1 -> selects index (scrollOffset + 1) = 3
+    UserEvent evRow;
+    evRow.type = UserEventType::TargetRowTouched;
+    evRow.gridIndex = 1;
+    app.handleUserEvent(evRow, 1500);
+    ASSERT_TRUE(app.getSelectedPresetIndex() == 3);
+
+    // 7. Delete CM98aa via [ DELETE ITEM ]
+    // Find CM98aa's index and select it via encoder
+    int idxCm98 = targetMgr.findIndexByGrid("CM98aa");
+    ASSERT_TRUE(idxCm98 >= 0);
+    while (app.getSelectedPresetIndex() < static_cast<size_t>(idxCm98)) {
+        app.handleUserEvent(evCw, 1550);
+    }
+    while (app.getSelectedPresetIndex() > static_cast<size_t>(idxCm98)) {
+        app.handleUserEvent(evCcw, 1560);
+    }
+    UserEvent evDel;
+    evDel.type = UserEventType::DeleteTargetTriggered;
+    app.handleUserEvent(evDel, 1600);
+    ASSERT_TRUE(targetMgr.getCount() == 4);
+    ASSERT_TRUE(targetMgr.findIndexByGrid("CM98aa") < 0);
+
+    // 8. Cancel modal returns to Normal
+    UserEvent evCancel;
+    evCancel.type = UserEventType::CancelModalTriggered;
+    app.handleUserEvent(evCancel, 1700);
+    app.update(1850);
+    ASSERT_TRUE(app.getUiMode() == UiMode::Normal);
+
+    // 9. Enter Rover Mode -> Row 2 label is suppressed
+    app.startRoverMode(2000);
+    ASSERT_TRUE(app.isRoverMode());
+    ASSERT_TRUE(app.resolveTargetLabel(app.getTargetGrid()) == nullptr);
+
+    // 10. Open TargetList in Rover Mode -> [ CANCEL ] must preserve Rover Mode
+    app.handleUserEvent(evOpen, 3000);
+    ASSERT_TRUE(app.getUiMode() == UiMode::TargetList);
+    app.handleUserEvent(evCancel, 3100);
+    app.update(3250);
+    ASSERT_TRUE(app.getUiMode() == UiMode::Normal);
+    ASSERT_TRUE(app.isRoverMode());
+
+    // 11. Open TargetList in Rover Mode -> 30s inactivity timeout must preserve Rover Mode
+    app.handleUserEvent(evOpen, 4000);
+    ASSERT_TRUE(app.getUiMode() == UiMode::TargetList);
+    app.update(4000 + TARGET_MODAL_TIMEOUT_MS - 1);
+    ASSERT_TRUE(app.getUiMode() == UiMode::TargetList);
+    app.update(4000 + TARGET_MODAL_TIMEOUT_MS);
+    ASSERT_TRUE(app.getUiMode() == UiMode::Normal);
+    ASSERT_TRUE(app.isRoverMode());
+
+    // 12. Open TargetList in Rover Mode -> [ LOAD / SELECT ] UMUNHUM (CM97be) stops Rover Mode & updates useCount
+    app.handleUserEvent(evOpen, 40000);
+    ASSERT_TRUE(app.getUiMode() == UiMode::TargetList);
+    int umIdx = targetMgr.findIndexByGrid("CM97be");
+    ASSERT_TRUE(umIdx >= 0);
+    while (app.getSelectedPresetIndex() < static_cast<size_t>(umIdx)) {
+        app.handleUserEvent(evCw, 40050);
+    }
+    UserEvent evLoad;
+    evLoad.type = UserEventType::LoadTargetTriggered;
+    app.handleUserEvent(evLoad, 40100);
+
+    ASSERT_TRUE(app.getUiMode() == UiMode::Normal);
+    ASSERT_TRUE(!app.isRoverMode());
+    ASSERT_STR_EQ(app.getTargetGrid(), "CM97be");
+    ASSERT_TRUE(app.resolveTargetLabel("CM97be") != nullptr);
+    ASSERT_STR_EQ(app.resolveTargetLabel("CM97be"), "UMUNHUM");
+    ASSERT_TRUE(targetMgr.getPreset(0) != nullptr);
+    ASSERT_STR_EQ(targetMgr.getPreset(0)->grid, "CM97be");
+    ASSERT_TRUE(targetMgr.getPreset(0)->useCount == 1);
+
+    // 13. EncoderButtonPressed in TargetList also loads selected preset
+    app.handleUserEvent(evOpen, 41000);
+    int diaIdx = targetMgr.findIndexByGrid("CM87vu");
+    ASSERT_TRUE(diaIdx >= 0);
+    while (app.getSelectedPresetIndex() < static_cast<size_t>(diaIdx)) {
+        app.handleUserEvent(evCw, 41050);
+    }
+    UserEvent evEncBtn;
+    evEncBtn.type = UserEventType::EncoderButtonPressed;
+    app.handleUserEvent(evEncBtn, 41100);
+    ASSERT_TRUE(app.getUiMode() == UiMode::Normal);
+    ASSERT_STR_EQ(app.getTargetGrid(), "CM87vu");
+    ASSERT_TRUE(targetMgr.findByGrid("CM87vu")->useCount == 1);
+
+    // 14. [ HOLD TO CLEAR ALL ] wipes list
+    app.handleUserEvent(evOpen, 42000);
+    UserEvent evClear;
+    evClear.type = UserEventType::ClearButtonCommitted;
+    app.handleUserEvent(evClear, 43500);
+    ASSERT_TRUE(targetMgr.isEmpty());
+    ASSERT_TRUE(app.getUiMode() == UiMode::TargetList);
+
+    PASS();
+}
+
 int main() {
     std::cout << "========================================" << std::endl;
     std::cout << "  GNSS Compass Unit Test Suite" << std::endl;
@@ -5941,6 +6120,7 @@ int main() {
     test_target_list_modal_formatters();
     test_display_ui_row2_label_behavior();
     test_input_manager_target_list_hit_testing_and_gestures();
+    test_app_controller_target_list_workflow_e2e();
 
     std::cout << "========================================" << std::endl;
     std::cout << "  All " << tests_passed << " / " << tests_run << " tests PASSED successfully!" << std::endl;

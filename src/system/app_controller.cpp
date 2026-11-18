@@ -50,6 +50,9 @@ AppController::AppController(Board &board,
       isSelfTesting_(false),
       calModalOpenedMillis_(0),
       qsoCardOpenedMillis_(0),
+      targetModalOpenedMillis_(0),
+      selectedPresetIndex_(0),
+      presetScrollOffset_(0),
       pendingModalButtonRelease_(ModalButtonId::None),
       pendingModalButtonReleaseStartMillis_(0)
 {
@@ -69,7 +72,8 @@ void AppController::setTargetGrid(const char *grid, unsigned long nowMs) {
     gridEditor_.setEditing(false);
     gridEditor_.setGrid(grid);
     if (currentUiMode_ == UiMode::Normal) {
-        displayUi_.renderTargetGrid(gridEditor_.getGrid(), gridEditor_.getCursorColumn(), gridEditor_.isEditing());
+        displayUi_.renderTargetGrid(gridEditor_.getGrid(), gridEditor_.getCursorColumn(),
+                                    gridEditor_.isEditing(), resolveTargetLabel(gridEditor_.getGrid()));
     }
     updateNavigation();
     if (lastRenderedMode_ == OperationalMode::Rover) {
@@ -246,6 +250,93 @@ void AppController::setUiMode(UiMode mode) {
     }
 }
 
+const char* AppController::resolveTargetLabel(const char *grid) const {
+    if (!grid || operationalMode_ == OperationalMode::Rover) {
+        return nullptr;
+    }
+    if (targetPresetManagerRef_) {
+        const TargetPreset *preset = targetPresetManagerRef_->findByGrid(grid);
+        if (preset && preset->label[0] != '\0') {
+            return preset->label;
+        }
+    }
+    return TargetPresetManager::lookupRegionalSummit(grid);
+}
+
+uint32_t AppController::currentTimestampSec(unsigned long nowMs) const {
+    uint32_t epoch = gpsManager_.getEpochTime();
+    if (epoch > 0) return epoch;
+    if (hasTime_) return static_cast<uint32_t>(hours_ * 3600 + minutes_ * 60);
+    return static_cast<uint32_t>(nowMs / 1000);
+}
+
+void AppController::clampTargetModalSelection() {
+    size_t count = targetPresetManagerRef_ ? targetPresetManagerRef_->getCount() : 0;
+    if (count == 0) {
+        selectedPresetIndex_ = 0;
+        presetScrollOffset_ = 0;
+        return;
+    }
+    if (selectedPresetIndex_ >= count) {
+        selectedPresetIndex_ = count - 1;
+    }
+    if (selectedPresetIndex_ < presetScrollOffset_) {
+        presetScrollOffset_ = selectedPresetIndex_;
+    } else if (selectedPresetIndex_ >= presetScrollOffset_ + TARGET_LIST_VISIBLE_ROWS) {
+        presetScrollOffset_ = selectedPresetIndex_ - TARGET_LIST_VISIBLE_ROWS + 1;
+    }
+    if (count <= TARGET_LIST_VISIBLE_ROWS) {
+        presetScrollOffset_ = 0;
+    } else if (presetScrollOffset_ > count - TARGET_LIST_VISIBLE_ROWS) {
+        presetScrollOffset_ = count - TARGET_LIST_VISIBLE_ROWS;
+    }
+}
+
+void AppController::drawTargetListModal() {
+    if (!targetPresetManagerRef_) return;
+    const auto &presets = targetPresetManagerRef_->getPresets();
+    displayUi_.getTargetListModal().drawModal(
+        presets.empty() ? nullptr : presets.data(),
+        presets.size(),
+        targetPresetManagerRef_->getMaxTargets(),
+        selectedPresetIndex_,
+        presetScrollOffset_,
+        currentPosition_,
+        hasLocation_);
+}
+
+void AppController::drawTargetListRows() {
+    if (!targetPresetManagerRef_) return;
+    const auto &presets = targetPresetManagerRef_->getPresets();
+    displayUi_.getTargetListModal().drawPresetList(
+        presets.empty() ? nullptr : presets.data(),
+        presets.size(),
+        selectedPresetIndex_,
+        presetScrollOffset_,
+        currentPosition_,
+        hasLocation_);
+}
+
+void AppController::loadSelectedTargetPreset(unsigned long nowMs) {
+    if (!targetPresetManagerRef_) return;
+    const TargetPreset *preset = targetPresetManagerRef_->getPreset(selectedPresetIndex_);
+    if (!preset) return;
+
+    char loadedGrid[7];
+    std::strncpy(loadedGrid, preset->grid, sizeof(loadedGrid) - 1);
+    loadedGrid[sizeof(loadedGrid) - 1] = '\0';
+
+    targetPresetManagerRef_->recordUse(selectedPresetIndex_, currentTimestampSec(nowMs));
+    gridEditor_.setGrid(loadedGrid);
+    gridEditor_.setEditing(false);
+    if (operationalMode_ == OperationalMode::Rover) {
+        stopRoverMode(nowMs);
+    }
+    setUiMode(UiMode::Normal);
+    updateNavigation();
+    redrawMainScreen();
+}
+
 void AppController::setHeadingState(bool hasHeading, BearingQuality quality, unsigned long lastUpdate) {
     hasHeading_ = hasHeading;
     currentBearingQuality_ = quality;
@@ -283,7 +374,8 @@ void AppController::recalculateGeodesy() {
 }
 
 void AppController::renderNavigationRows() {
-    if (currentUiMode_ == UiMode::Calibrating || currentUiMode_ == UiMode::RoverHistory || currentUiMode_ == UiMode::QsoCard) {
+    if (currentUiMode_ == UiMode::Calibrating || currentUiMode_ == UiMode::RoverHistory ||
+        currentUiMode_ == UiMode::QsoCard || currentUiMode_ == UiMode::TargetList) {
         return;
     }
 
@@ -326,6 +418,7 @@ void AppController::redrawMainScreen() {
     MainScreenState s;
     s.myGrid = myGrid_;
     s.targetGrid = gridEditor_.getGrid();
+    s.targetLabel = resolveTargetLabel(gridEditor_.getGrid());
     s.cursorColumn = gridEditor_.getCursorColumn();
     s.isEditing = gridEditor_.isEditing();
     s.targetBearing = bearing_;
@@ -551,7 +644,8 @@ void AppController::begin() {
     displayUi_.renderMyGrid(myGrid_);
 
     gridEditor_.recordActivity(0);
-    displayUi_.renderTargetGrid(gridEditor_.getGrid(), gridEditor_.getCursorColumn(), gridEditor_.isEditing());
+    displayUi_.renderTargetGrid(gridEditor_.getGrid(), gridEditor_.getCursorColumn(),
+                                gridEditor_.isEditing(), resolveTargetLabel(gridEditor_.getGrid()));
     updateNavigation();
 
     displayUi_.renderUtcTime(0, 0, false);
@@ -585,12 +679,21 @@ void AppController::handleUserEvent(const UserEvent &event, unsigned long nowMs)
                 calModalOpenedMillis_ = nowMs;
                 calibration_.adjustProposedOffset(0.1f);
                 displayUi_.getCalModal().drawProposedOffsetRow(calibration_.getProposedOffset());
+            } else if (currentUiMode_ == UiMode::TargetList) {
+                targetModalOpenedMillis_ = nowMs;
+                size_t count = targetPresetManagerRef_ ? targetPresetManagerRef_->getCount() : 0;
+                if (count > 0 && selectedPresetIndex_ + 1 < count) {
+                    selectedPresetIndex_++;
+                    clampTargetModalSelection();
+                    drawTargetListRows();
+                }
             } else if (currentUiMode_ == UiMode::Normal && gridEditor_.isEditing()) {
                 if (operationalMode_ == OperationalMode::Rover) {
                     onTargetEdited(nowMs);
                 }
                 gridEditor_.rollChar(+1, nowMs);
-                displayUi_.renderTargetGrid(gridEditor_.getGrid(), gridEditor_.getCursorColumn(), gridEditor_.isEditing());
+                displayUi_.renderTargetGrid(gridEditor_.getGrid(), gridEditor_.getCursorColumn(),
+                                            gridEditor_.isEditing(), resolveTargetLabel(gridEditor_.getGrid()));
                 updateNavigation();
             }
             break;
@@ -600,17 +703,30 @@ void AppController::handleUserEvent(const UserEvent &event, unsigned long nowMs)
                 calModalOpenedMillis_ = nowMs;
                 calibration_.adjustProposedOffset(-0.1f);
                 displayUi_.getCalModal().drawProposedOffsetRow(calibration_.getProposedOffset());
+            } else if (currentUiMode_ == UiMode::TargetList) {
+                targetModalOpenedMillis_ = nowMs;
+                size_t count = targetPresetManagerRef_ ? targetPresetManagerRef_->getCount() : 0;
+                if (count > 0 && selectedPresetIndex_ > 0) {
+                    selectedPresetIndex_--;
+                    clampTargetModalSelection();
+                    drawTargetListRows();
+                }
             } else if (currentUiMode_ == UiMode::Normal && gridEditor_.isEditing()) {
                 if (operationalMode_ == OperationalMode::Rover) {
                     onTargetEdited(nowMs);
                 }
                 gridEditor_.rollChar(-1, nowMs);
-                displayUi_.renderTargetGrid(gridEditor_.getGrid(), gridEditor_.getCursorColumn(), gridEditor_.isEditing());
+                displayUi_.renderTargetGrid(gridEditor_.getGrid(), gridEditor_.getCursorColumn(),
+                                            gridEditor_.isEditing(), resolveTargetLabel(gridEditor_.getGrid()));
                 updateNavigation();
             }
             break;
 
         case UserEventType::EncoderButtonPressed:
+            if (currentUiMode_ == UiMode::TargetList) {
+                loadSelectedTargetPreset(nowMs);
+                break;
+            }
             // Toggle edit mode on knob press in Normal Bearing Mode only.
             // Disarmed in modals (Calibrating, RoverHistory) to prevent target grid poking through.
             // Locked out in Rover Mode to enforce 2-step natural exit.
@@ -619,7 +735,8 @@ void AppController::handleUserEvent(const UserEvent &event, unsigned long nowMs)
             }
             gridEditor_.setEditing(!gridEditor_.isEditing());
             gridEditor_.recordActivity(nowMs);
-            displayUi_.renderTargetGrid(gridEditor_.getGrid(), gridEditor_.getCursorColumn(), gridEditor_.isEditing());
+            displayUi_.renderTargetGrid(gridEditor_.getGrid(), gridEditor_.getCursorColumn(),
+                                        gridEditor_.isEditing(), resolveTargetLabel(gridEditor_.getGrid()));
             break;
 
         case UserEventType::TouchCalibrationPill:
@@ -664,8 +781,20 @@ void AppController::handleUserEvent(const UserEvent &event, unsigned long nowMs)
             // 2-step natural target exit protection: character touch arms editing and shows cursor,
             // but does NOT exit Rover Mode until the bezel is physically rotated.
             gridEditor_.selectCharacter(event.gridIndex, nowMs);
-            displayUi_.renderTargetGrid(gridEditor_.getGrid(), gridEditor_.getCursorColumn(), gridEditor_.isEditing());
+            displayUi_.renderTargetGrid(gridEditor_.getGrid(), gridEditor_.getCursorColumn(),
+                                        gridEditor_.isEditing(), resolveTargetLabel(gridEditor_.getGrid()));
             updateNavigation();
+            break;
+
+        case UserEventType::LongPressTargetGridTriggered:
+            if (currentUiMode_ != UiMode::Normal) {
+                break;
+            }
+            setUiMode(UiMode::TargetList);
+            targetModalOpenedMillis_ = nowMs;
+            selectedPresetIndex_ = 0;
+            presetScrollOffset_ = 0;
+            drawTargetListModal();
             break;
 
         case UserEventType::TouchVersionFooter:
@@ -692,6 +821,17 @@ void AppController::handleUserEvent(const UserEvent &event, unsigned long nowMs)
                 if (event.buttonId == ModalButtonId::Ok) {
                     displayUi_.getQsoCard().drawOkButton(true);
                 }
+            } else if (currentUiMode_ == UiMode::TargetList) {
+                bool hasItems = targetPresetManagerRef_ && !targetPresetManagerRef_->isEmpty();
+                if (event.buttonId == ModalButtonId::TargetLoad) {
+                    displayUi_.getTargetListModal().drawLoadButton(true, hasItems);
+                } else if (event.buttonId == ModalButtonId::TargetDelete) {
+                    displayUi_.getTargetListModal().drawDeleteButton(true, hasItems);
+                } else if (event.buttonId == ModalButtonId::TargetSave) {
+                    displayUi_.getTargetListModal().drawSaveButton(true);
+                } else if (event.buttonId == ModalButtonId::Cancel) {
+                    displayUi_.getTargetListModal().drawCancelButton(true);
+                }
             }
             break;
 
@@ -705,6 +845,12 @@ void AppController::handleUserEvent(const UserEvent &event, unsigned long nowMs)
                 displayUi_.getRoverHistoryModal().drawCancelButton(false);
             } else if (currentUiMode_ == UiMode::QsoCard) {
                 displayUi_.getQsoCard().drawOkButton(false);
+            } else if (currentUiMode_ == UiMode::TargetList) {
+                bool hasItems = targetPresetManagerRef_ && !targetPresetManagerRef_->isEmpty();
+                displayUi_.getTargetListModal().drawLoadButton(false, hasItems);
+                displayUi_.getTargetListModal().drawDeleteButton(false, hasItems);
+                displayUi_.getTargetListModal().drawSaveButton(false);
+                displayUi_.getTargetListModal().drawCancelButton(false);
             }
             break;
 
@@ -754,11 +900,75 @@ void AppController::handleUserEvent(const UserEvent &event, unsigned long nowMs)
         case UserEventType::CancelModalTriggered:
             if (currentUiMode_ == UiMode::RoverHistory) {
                 displayUi_.getRoverHistoryModal().drawCancelButton(true);
+            } else if (currentUiMode_ == UiMode::TargetList) {
+                displayUi_.getTargetListModal().drawCancelButton(true);
             } else {
                 displayUi_.getCalModal().drawCancelButton(true);
             }
             pendingModalButtonRelease_ = ModalButtonId::Cancel;
             pendingModalButtonReleaseStartMillis_ = nowMs;
+            break;
+
+        case UserEventType::TargetRowTouched:
+            if (currentUiMode_ == UiMode::TargetList && targetPresetManagerRef_ && event.gridIndex >= 0) {
+                targetModalOpenedMillis_ = nowMs;
+                size_t tappedIdx = presetScrollOffset_ + static_cast<size_t>(event.gridIndex);
+                if (tappedIdx < targetPresetManagerRef_->getCount()) {
+                    selectedPresetIndex_ = tappedIdx;
+                    clampTargetModalSelection();
+                    drawTargetListRows();
+                }
+            }
+            break;
+
+        case UserEventType::LoadTargetTriggered:
+            if (currentUiMode_ == UiMode::TargetList) {
+                targetModalOpenedMillis_ = nowMs;
+                loadSelectedTargetPreset(nowMs);
+            }
+            break;
+
+        case UserEventType::DeleteTargetTriggered:
+            if (currentUiMode_ == UiMode::TargetList && targetPresetManagerRef_) {
+                targetModalOpenedMillis_ = nowMs;
+                if (targetPresetManagerRef_->removePreset(selectedPresetIndex_)) {
+                    clampTargetModalSelection();
+                    drawTargetListModal();
+                }
+            }
+            break;
+
+        case UserEventType::SaveTargetTriggered:
+            if (currentUiMode_ == UiMode::TargetList && targetPresetManagerRef_) {
+                targetModalOpenedMillis_ = nowMs;
+                const char *activeGrid = gridEditor_.getGrid();
+                if (targetPresetManagerRef_->addOrUpdatePreset(activeGrid, nullptr, currentTimestampSec(nowMs))) {
+                    int idx = targetPresetManagerRef_->findIndexByGrid(activeGrid);
+                    if (idx >= 0) {
+                        selectedPresetIndex_ = static_cast<size_t>(idx);
+                    }
+                    clampTargetModalSelection();
+                    drawTargetListModal();
+                }
+            }
+            break;
+
+        case UserEventType::HoldClearButtonProgress:
+            if (currentUiMode_ == UiMode::TargetList) {
+                targetModalOpenedMillis_ = nowMs;
+                bool hasItems = targetPresetManagerRef_ && !targetPresetManagerRef_->isEmpty();
+                displayUi_.getTargetListModal().drawClearButton(event.progress > 0.0f, event.progress, hasItems);
+            }
+            break;
+
+        case UserEventType::ClearButtonCommitted:
+            if (currentUiMode_ == UiMode::TargetList && targetPresetManagerRef_) {
+                targetModalOpenedMillis_ = nowMs;
+                targetPresetManagerRef_->clearAll();
+                selectedPresetIndex_ = 0;
+                presetScrollOffset_ = 0;
+                drawTargetListModal();
+            }
             break;
 
         default:
@@ -812,6 +1022,12 @@ void AppController::update(unsigned long nowMs) {
         if (displayUi_.getQsoCard().checkTimeout(nowMs, cardTimeoutMs)) {
             dismissQsoCard();
         }
+    } else if (currentUiMode_ == UiMode::TargetList) {
+        if ((nowMs - targetModalOpenedMillis_) >= TARGET_MODAL_TIMEOUT_MS) {
+            pendingModalButtonRelease_ = ModalButtonId::None;
+            setUiMode(UiMode::Normal);
+            redrawMainScreen();
+        }
     }
 
     // 6. In Rover Mode, evaluate GPS watchdog staleness and warning expiration
@@ -836,7 +1052,8 @@ void AppController::update(unsigned long nowMs) {
     // 7. Edit timeout check
     if (gridEditor_.checkTimeout(nowMs)) {
         if (currentUiMode_ == UiMode::Normal) {
-            displayUi_.renderTargetGrid(gridEditor_.getGrid(), gridEditor_.getCursorColumn(), gridEditor_.isEditing());
+            displayUi_.renderTargetGrid(gridEditor_.getGrid(), gridEditor_.getCursorColumn(),
+                                        gridEditor_.isEditing(), resolveTargetLabel(gridEditor_.getGrid()));
         }
     }
 }

@@ -103,6 +103,8 @@ Displays a summary of available serial commands.
   rover [status|start|stop|history|undo|max|clear]
                         - Rover transit tracking
   target <grid>         - Remote target grid setting (supports phonetics)
+  target [add|save|del|list|max|clear|help]
+                        - Manage NVS target grid presets (up to 500)
   log <call> [band/freq]- Voice-friendly contest QSO logging (10 GHz default)
   log [undo|del|list|stats|export|mycall|default|clear]
                         - QSO log management and contest export
@@ -128,7 +130,7 @@ Displays a summary of available serial commands.
 | **`status`** *(or `gps`)* | None | USB, BLE | Live GNSS receiver stream & link diagnostic, RTK fix health |
 | **`gps`** | `probe` \| `config` \| `check` \| `send <cmd>` \| `help` | USB, BLE | UM982 receiver setup, TX line discovery, in-system config |
 | **`rover`** | `status` \| `start` \| `stop` \| `history` \| `undo` \| `max` \| `clear` \| `help` | USB, BLE | Rover transit tracking (16 km displacement rule & qualification) |
-| **`target`** | `<grid>` *(supports NATO phonetics)* | USB, BLE | Remote target Maidenhead grid locator setting & bearing recalculation |
+| **`target`** | `<grid>` \| `add` \| `save` \| `del` \| `list` \| `max` \| `clear` | USB, BLE | Remote target Maidenhead grid setting & NVS target preset manager |
 | **`log`** | `<call> [band/freq]` *(supports NATO phonetics)* | USB, BLE | Voice-friendly contest QSO logging (10 GHz default, phonetics & band auto-mapping) |
 | **`log`** | `undo` \| `delete <#>` \| `clear` | USB, BLE | Contest QSO log editing, deletion, and rollback |
 | **`log`** | `list` *(or `show`)* \| `stats` \| `help` | USB, BLE | Formatted ASCII log table, contest statistics (DX, bands, grids), and log help |
@@ -552,6 +554,33 @@ If the grid is missing or invalid:
 
 > target ZZ99
 [TARGET ERROR] Invalid Maidenhead grid: 'ZZ99'
+```
+
+#### Target Preset Management Subcommands
+Pre-load contest summit rosters before heading into the field or manage presets over USB-C / BLE UART:
+
+| Subcommand | Description |
+| :--- | :--- |
+| **`target add <GRID> [LABEL...]`** | Add or update a 6-char target preset (spaces allowed in label, max 11 chars; auto-fills regional summit name if omitted). |
+| **`target save [LABEL...]`** | Save the current active target grid into presets (optional label, spaces allowed). |
+| **`target del <INDEX\|GRID>`** | Remove a preset by 1-based list index or 6-char grid. |
+| **`target list`** | Print all saved presets with index, grid, label, use count, and capacity. |
+| **`target max [N]`** | Show or set max preset capacity (`10`–`500`, default `100`). |
+| **`target clear`** | Wipe all saved target presets from NVS. |
+| **`target help`** | Show `target` command help. |
+
+```text
+> target add CM87vu MT DIABLO
+[TARGET] Added #1: CM87vu (MT DIABLO)
+
+> target save
+[TARGET] Saved current target: CM97be (UMUNHUM)
+
+> target list
+=== Saved Target Presets (2/100) ===
+  #1: CM87vu - MT DIABLO (uses: 0)
+  #2: CM97be - UMUNHUM (uses: 0)
+=====================================
 ```
 
 ---

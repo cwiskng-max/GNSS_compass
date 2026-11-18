@@ -76,6 +76,12 @@ public:
     void dismissQsoCard();
     unsigned long getQsoCardOpenedMs() const { return qsoCardOpenedMillis_; }
 
+    // Target List modal state accessors
+    size_t getSelectedPresetIndex() const { return selectedPresetIndex_; }
+    size_t getPresetScrollOffset() const { return presetScrollOffset_; }
+    unsigned long getTargetModalOpenedMs() const { return targetModalOpenedMillis_; }
+    const char* resolveTargetLabel(const char *grid) const;
+
     // State accessors
     OperationalMode getOperationalMode() const { return operationalMode_; }
     void setOperationalMode(OperationalMode mode);
@@ -192,7 +198,16 @@ private:
     bool isSelfTesting_;
     unsigned long calModalOpenedMillis_;
     unsigned long qsoCardOpenedMillis_;
+    unsigned long targetModalOpenedMillis_;
+    size_t selectedPresetIndex_;
+    size_t presetScrollOffset_;
     ModalButtonId pendingModalButtonRelease_;
     unsigned long pendingModalButtonReleaseStartMillis_;
+
+    void clampTargetModalSelection();
+    void drawTargetListModal();
+    void drawTargetListRows();
+    void loadSelectedTargetPreset(unsigned long nowMs);
+    uint32_t currentTimestampSec(unsigned long nowMs) const;
 };
 
