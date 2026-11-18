@@ -130,6 +130,14 @@ On a 480x480 circular panel, the modal card is centered with an inset width of 3
 | **[ HOLD TO CLEAR ALL ]** | $X \in [55, 425]$, $Y \in [324, 368]$ | Dark Red (`0x5000`), Yellow fill bar | 1.5-second hold wipes entire list from NVS |
 | **[ CANCEL ]** | $X \in [150, 330]$, $Y \in [376, 408]$ | Dark Gray (`0x3186`), Font Size 2 | Dismisses modal without changing target or stopping Rover Mode |
 
+### Main Screen Integration: Row 2 Target Label Subtitle
+On the main compass screen (`UiMode::Normal`), `DisplayUi::renderTargetGrid()` currently leaves the caret row directly beneath the 6-character target grid (`REMSTARTY + CHAR_H(REMSIZE)`) blank whenever `isEditing == false`:
+
+* **Bearing Mode (`OperationalMode::Bearing`, `isEditing == false`):** If the active target grid matches a saved preset with a non-empty `label` (or regional summit lookup), render the label centered/left-aligned in that empty caret-row space beneath Row 2.
+* **Target Editing (`isEditing == true`):** Immediately clear the label area so the `^` under-caret and character selection occupy the full space as before.
+* **Touch Hit Zones Unchanged:** All Row 2 touch hitboxes ("hot pixels" for tapping characters to enter edit mode or long-pressing Row 2) remain identical.
+* **Rover Mode (`OperationalMode::Rover`):** Keep the Row 2 subtitle area empty/cleared.
+
 ---
 
 ## 5. Live Geodetic Preview Feature
@@ -374,8 +382,9 @@ When starting a new contest weekend or roving into a completely different divisi
   * API: `begin()`, `addOrUpdatePreset(const char* grid, const char* label = nullptr)`, `recordUse(size_t index, uint32_t nowSec)`, `removePreset(size_t index)`, `removePresetByGrid(const char* grid)`, `clearAll()`, `setMaxTargets(size_t max)`, `getPresets()`, `getCount()`.
 * **`TargetListModal`** (`src/ui/target_list_modal.h/.cpp`):
   * Owns modal rendering (`drawModal()`, `drawPresetRow()`, `drawClearButton()`, `drawCancelButton()`, etc.) and host-testable string formatters (`formatPresetRow()`, `formatHeader()`).
-* **`InputManager` & `AppController`** (`src/ui/input_manager.h/.cpp`, `src/system/app_controller.h/.cpp`):
-  * `InputManager` emits `LongPressTargetGridTriggered`, `TargetRowTouched`, and modal button/hold events (`HoldClearButtonProgress`, `ClearButtonCommitted`).
+* **`InputManager` & `AppController`** (`src/ui/input_manager.h/.cpp`, `src/system/app_controller.h/.cpp`, `src/ui/display_ui.h/.cpp`):
+  * `InputManager` emits `LongPressTargetGridTriggered`, `TargetRowTouched`, and modal button/hold events (`HoldClearButtonProgress`, `ClearButtonCommitted`), keeping all existing Row 2 character touch hitboxes unchanged.
+  * `DisplayUi::renderTargetGrid(grid, cursorCol, isEditing, label)` renders the optional `label` in the empty caret row (`REMSTARTY + CHAR_H(REMSIZE)`) only when `isEditing == false` and not in `OperationalMode::Rover`; entering edit mode clears the label so the `^` caret has the full space.
   * `AppController` coordinates modal state (`selectedPresetIndex_`, `presetScrollOffset_`, `targetModalOpenedMillis_`), 30s inactivity timeout, Rover Mode exit only on `[ LOAD / SELECT ]`, and `SerialCli` callbacks.
 
 ---
