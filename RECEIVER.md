@@ -229,7 +229,17 @@ SAVECONFIG
 ## 5. Antenna Installation & Alignment
 
 * **Mounting Hardware:** Complete parts, sourcing links, and fitment tips for the 1-meter carbon fiber boom, split tube clamps, crossover mast clamp, bulkhead adapters, and RF cables are detailed in **[BOM.md Section 2 (Mast, Mounting & Hardware)](BOM.md#2-mast-mounting--hardware)**.
-* **Separation Baseline:** Mount the two tri-band antennas at least **3 feet (~1 meter)** apart (the 1m carbon fiber tube in the BOM provides this baseline). Longer baselines improve heading accuracy.
+* **Separation Baseline (Flexible):** While the reference BOM uses a **1-meter (~39 in)** carbon fiber boom for maximum precision, antenna spacing is flexible depending on your mast/vehicle constraints and required beamwidth accuracy:
+
+| Antenna Spacing ($L$) | Nominal Heading Accuracy | Typical Use Case |
+| :--- | :---: | :--- |
+| **1.0 m (~39 in)** | **$\sim 0.1^\circ$ – $0.2^\circ$** | **Microwave dishes (10 GHz / 24 GHz / 47 GHz):** Narrow beamwidths ($1^\circ$–$3^\circ$) demanding maximum azimuth precision. |
+| **0.5 m (~20 in)** | **$\sim 0.3^\circ$ – $0.5^\circ$** | **Balanced Rover Setup:** Compromise between high accuracy and a compact boom footprint. |
+| **0.25 m – 0.3 m (~10–12 in)** | **$\sim 0.8^\circ$ – $1.0^\circ$** | **VHF / UHF / Portable Stations:** Convenient, lightweight, and wind-resistant when $\sim 1^\circ$ accuracy is sufficient. |
+
+> [!TIP]
+> **Practical Minimum:** Avoid placing antennas closer than **20–25 cm (~8–10 in)** to prevent mutual RF coupling, near-field phase distortions, and multipath degradation between the antenna elements. If you configure a fixed baseline length (`CONFIG HEADING LENGTH` or `gps config baseline`), make sure the length matches your physical spacing.
+
 * **Orientation:** The baseline between the antennas must be mounted **perpendicular** to the microwave antenna heading direction.
 * **180° Heading Correction:** On first power-up, if the displayed antenna heading is 180° backwards, simply swap the two antenna RF cables at the receiver (or physically swap antenna positions).
 

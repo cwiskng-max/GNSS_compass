@@ -14,7 +14,7 @@
  * @brief Modal dialog presenting the temporary QSO confirmation card on the 480x480 round screen.
  *
  * Displays logged callsign, band & frequency, Maidenhead grids, great-circle distance & bearing,
- * UTC time, and visual confirmation checkmark/badge with a 10-second non-blocking auto-dismiss timer.
+ * UTC time, and visual confirmation checkmark/badge with a configurable non-blocking auto-dismiss timer (default 5s).
  */
 class QsoCard {
 public:
@@ -45,7 +45,7 @@ public:
     bool isVisible() const { return visible_; }
     void show(const QsoEntry &qso, size_t qsoIndex, unsigned long nowMs);
     void dismiss();
-    bool checkTimeout(unsigned long nowMs);
+    bool checkTimeout(unsigned long nowMs, unsigned long timeoutMs = QSO_MODAL_TIMEOUT_MS);
     unsigned long getOpenedMs() const { return openedMs_; }
     const QsoEntry& getActiveQso() const { return activeQso_; }
     size_t getActiveQsoIndex() const { return activeQsoIndex_; }

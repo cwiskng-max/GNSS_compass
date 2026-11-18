@@ -241,6 +241,7 @@
 #define QSO_CFG_KEY_MAX_QSOS         "max_qsos"
 #define QSO_CFG_KEY_DEFAULT_BAND     "def_band"
 #define QSO_CFG_KEY_MY_CALL          "my_call"
+#define QSO_CFG_KEY_CARD_TIMEOUT_S   "card_sec"
 #define QSO_LOG_NAMESPACE            "qso_log"
 #define QSO_LOG_KEY_COUNT            "count"
 
@@ -249,6 +250,9 @@
 #define ABS_MAX_QSOS                 1000
 #define DEFAULT_QSO_BAND             "10 GHz"
 #define DEFAULT_QSO_MY_CALL          "N0CALL"
+#define DEFAULT_QSO_CARD_TIMEOUT_S   5
+#define MIN_QSO_CARD_TIMEOUT_S       1
+#define MAX_QSO_CARD_TIMEOUT_S       60
 
 // QSO Pop-Up Card Modal Dialog Geometry
 #define QSO_MODAL_X                  40
@@ -268,8 +272,8 @@
 #define QSO_TOUCH_OK_Y_MIN           320
 #define QSO_TOUCH_OK_Y_MAX           385
 
-// QSO Pop-Up Card Auto-Dismiss Timeout (10 seconds)
-#define QSO_MODAL_TIMEOUT_MS         10000
+// QSO Pop-Up Card Auto-Dismiss Timeout (default 5 seconds)
+#define QSO_MODAL_TIMEOUT_MS         (DEFAULT_QSO_CARD_TIMEOUT_S * 1000UL)
 
 // Row 5 Rover Qualification Card Layout & Colors (RGB565)
 // Scaled to fit within 480x480 circular screen chord (chord width ~330 px at Y: 374..414)

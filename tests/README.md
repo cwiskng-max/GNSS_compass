@@ -71,17 +71,19 @@ The firmware includes an interactive self-test demo to visually verify LCD rende
 * *(Note: To run only the GPS stream diagnosis without the visual demo, send `status` or `gps` via USB Serial).*
 
 ### Test Sequence
-The test automatically cycles through 7 visual scenarios, displaying the current test name in the bottom footer in cyan/yellow:
+The test automatically cycles through 9 visual scenarios, displaying the current test name in the bottom footer in cyan/yellow:
 
 | Step | Footer Title | Screen State & Verification |
 | :--- | :--- | :--- |
-| **1** | `TEST 1: SAME GRID` | Local grid displays `CM87wa00` and target displays `CM87wa`. Verifies ARRL distance reads **`ARRL    1.0 k  `** (bearing remains White). |
-| **2** | `TEST 2: ROVER < 16K` | Target grid set to adjacent subsquare `CM87wb` ($\sim 4.6\text{ km}$) with rover transit active. Verifies Row 5 turns **RED text on WHITE background**. |
-| **3** | `TEST 3: DIST < 1000K` | Target grid set to `DN13ab` ($\sim 600\text{ km}$). Verifies 3-digit distance formatting. |
-| **4** | `TEST 4: DIST > 1000K` | Target grid set to `EL29ja` ($\sim 2,500\text{ km}$). Verifies 4-digit distance formatting without screen wrapping. |
-| **5** | `TEST 5: GHOST RECOVERY` | Target grid jumps to $> 10,000\text{ km}$ (`ZA00AA`), then drops back to $1.0\text{ km}$ (`CM87wa`). Verifies position 14 is cleanly erased and no ghost `'k'` remains. |
-| **6** | `TEST 6: BEARING / GPS` | Rapidly tests bearing quality colors (1s White $\to$ 1s Yellow $\to$ 1s Red), then evaluates live `Serial2` data stream from UM982 receiver. Displays centered popup card: **`GPS: RTK FIXED (OK)`** (Green), **`GPS: RTK FLOAT (WARN)`** (Yellow), **`GPS: ACQUIRING`** (Yellow), or **`GPS: NO DATA / CABLE`** (Red). Prints full diagnostic report to serial console. |
-| **7** | `TEST 7: CAL MODAL` | Demos antenna calibration status pill (uncalibrated gray vs calibrated +4.2 deg cyan) and displays interactive calibration modal dialog preview. |
+| **1** | `TEST 1: SAME GRID` | Local grid displays `CM87wa00` and target displays `CM87wa`. Verifies same-grid distance reads `1.0 k` (bearing remains White). |
+| **2** | `TEST 2: DIST < 1000K` | Target grid set to `DN13ab` ($\sim 600\text{ km}$). Verifies 3-digit distance formatting. |
+| **3** | `TEST 3: DIST > 1000K` | Target grid set to `EL29ja` ($\sim 2,500\text{ km}$). Verifies 4-digit distance formatting without screen wrapping. |
+| **4** | `TEST 4: GHOST RECOVERY` | Target grid jumps to $> 10,000\text{ km}$ (`ZA00AA`), then drops back to $1.0\text{ km}$ (`CM87wa`). Verifies trailing characters are cleanly erased and no ghost `'k'` remains. |
+| **5** | `TEST 5: BEARING WHITE` / `YELLOW` / `RED` | Rapidly tests bearing quality colors (White $\to$ Yellow $\to$ Red) on Row 3. |
+| **6** | `TEST 6: GPS STREAM` | Evaluates live `Serial2` data stream from UM982 receiver. Displays centered popup card (`GPS: RTK FIXED (OK)`, `GPS: RTK FLOAT (WARN)`, `GPS: ACQUIRING`, or `GPS: NO DATA / CABLE`) and prints full diagnostic report to serial console. |
+| **7** | `TEST 7: CAL PILL OFF` / `+4.2` / `CAL MODAL` | Demos antenna calibration status pill (uncalibrated gray `OFF` vs calibrated `+4.2` cyan) and displays the interactive calibration modal dialog preview. |
+| **8** | `TEST 8: ROVER TRANSIT` / `QUALIFIED` / `REVISIT` / `GPS LOST` | Demos all 4 states of the Row 5 Rover Mode qualification card (`TRANSIT`, `QUALIFIED`, `REVISIT`, `NO GPS`). |
+| **9** | `TEST 9: ROVER MODAL` | Demos the Rover Contest Location History & 1-Touch Undo modal dialog. |
 
 ### Pass/Fail Confirmation & Clean Restoration
 * **Programmatic Assertions:** The firmware validates calculations across all stages (ARRL 1 km minimum rule, Rover <16 km alert threshold, mid/long/extreme distance boundaries, baseline offset geometry, and antenna calibration offset normalization).

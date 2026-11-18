@@ -1,7 +1,7 @@
 # Rover Mode, Transit Tracking, Location History & Modular Geodesics — Technical Design
 
 * **Feature:** Dual Operational Modes (Bearing vs. Rover), Dynamic 16 km Displacement Tracking, Visited Grid History & Duplicate Contact Avoidance, and Modular Geodesic Integration
-* **Status:** Proposed / Ready for Review
+* **Status:** Implemented
 * **Target Hardware:** ESP32-S3 (16 MB Flash, 8 MB OPI PSRAM), 480×480 Round Touch Display (ST7701S RGB + CST8XX I2C Touch), Rotary Encoder with Push-Button (CLK, DT, SW)
 * **Architecture Base:** Implemented Modular C++ Architecture (`src/geo/`, `src/ui/`, `src/gnss/`, `src/protocol/`)
 * **Supersedes:** Earlier v0.2 single-alert design

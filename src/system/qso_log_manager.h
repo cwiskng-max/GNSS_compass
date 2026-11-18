@@ -55,6 +55,12 @@ public:
     std::string getMyCall() const { return myCall_; }
     void setMyCall(const std::string &call, bool persist = true);
 
+    // Pop-up QSO card auto-dismiss timeout in seconds (persisted under "qso_cfg", key "card_sec")
+    uint16_t getCardTimeoutSec() const { return cardTimeoutSec_; }
+    unsigned long getCardTimeoutMs() const { return static_cast<unsigned long>(cardTimeoutSec_) * 1000UL; }
+    void setCardTimeoutSec(uint16_t sec, bool persist = true);
+    static uint16_t clampCardTimeoutSec(uint16_t sec);
+
     // Export & formatting functions
     std::string getEffectiveMyCall(const std::string &myCall = "") const;
     std::string formatCabrillo(const std::string &myCall = "",
@@ -88,6 +94,7 @@ public:
     static size_t getHostStorageMaxQsos();
     static std::string getHostStorageDefaultBand();
     static std::string getHostStorageMyCall();
+    static uint16_t getHostStorageCardTimeoutSec();
 #endif
 
 private:
@@ -96,6 +103,7 @@ private:
     size_t nvsHead_;
     std::string defaultBand_;
     std::string myCall_;
+    uint16_t cardTimeoutSec_;
 
 #if !defined(ARDUINO)
     static std::vector<QsoEntry> s_hostNvsQsos;
@@ -105,6 +113,8 @@ private:
     static bool s_hostNvsDefaultBandStored;
     static std::string s_hostNvsMyCall;
     static bool s_hostNvsMyCallStored;
+    static uint16_t s_hostNvsCardTimeoutSec;
+    static bool s_hostNvsCardTimeoutSecStored;
 #endif
 };
 
