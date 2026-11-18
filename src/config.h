@@ -365,17 +365,17 @@
 // Target Presets Modal Action Buttons
 #define TARGET_BTN_LOAD_X            55
 #define TARGET_BTN_LOAD_Y            270
-#define TARGET_BTN_LOAD_W            115
+#define TARGET_BTN_LOAD_W            116
 #define TARGET_BTN_LOAD_H            44
 
-#define TARGET_BTN_DEL_X             180
+#define TARGET_BTN_DEL_X             182
 #define TARGET_BTN_DEL_Y             270
-#define TARGET_BTN_DEL_W             110
+#define TARGET_BTN_DEL_W             116
 #define TARGET_BTN_DEL_H             44
 
-#define TARGET_BTN_SAVE_X            300
+#define TARGET_BTN_SAVE_X            309
 #define TARGET_BTN_SAVE_Y            270
-#define TARGET_BTN_SAVE_W            125
+#define TARGET_BTN_SAVE_W            116
 #define TARGET_BTN_SAVE_H            44
 
 #define TARGET_BTN_CLEAR_X           55

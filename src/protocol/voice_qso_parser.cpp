@@ -321,68 +321,68 @@ bool VoiceQsoParser::parseBandOrFreq(const std::string &token,
         return true;
     }
 
-    // Standalone and suffixed microwave bands
+    // Standalone and suffixed microwave bands (band-only -> freq_khz = 0)
     if (t == "10" || t == "10g" || t == "10ghz") {
         outBand = "10 GHz";
-        outFreqKhz = 10368100;
+        outFreqKhz = 0;
         outCabrillo = "10G";
         outAdif = "3cm";
         return true;
     }
     if (t == "24" || t == "24g" || t == "24ghz") {
         outBand = "24 GHz";
-        outFreqKhz = 24192100;
+        outFreqKhz = 0;
         outCabrillo = "24G";
         outAdif = "1.2cm";
         return true;
     }
     if (t == "47" || t == "47g" || t == "47ghz") {
         outBand = "47 GHz";
-        outFreqKhz = 47088100;
+        outFreqKhz = 0;
         outCabrillo = "47G";
         outAdif = "6mm";
         return true;
     }
     if (t == "76" || t == "76g" || t == "76ghz" || t == "77.5" || t == "77.5g" || t == "77.5ghz") {
         outBand = "76 GHz";
-        outFreqKhz = 76032100;
+        outFreqKhz = 0;
         outCabrillo = "76G";
         outAdif = "4mm";
         return true;
     }
     if (t == "122" || t == "122g" || t == "122ghz") {
         outBand = "122 GHz";
-        outFreqKhz = 122250100;
+        outFreqKhz = 0;
         outCabrillo = "122G";
         outAdif = "2.5mm";
         return true;
     }
     if (t == "134" || t == "134g" || t == "134ghz") {
         outBand = "134 GHz";
-        outFreqKhz = 134928100;
+        outFreqKhz = 0;
         outCabrillo = "134G";
         outAdif = "2mm";
         return true;
     }
     if (t == "241" || t == "241g" || t == "241ghz") {
         outBand = "241 GHz";
-        outFreqKhz = 241056100;
+        outFreqKhz = 0;
         outCabrillo = "241G";
         outAdif = "1mm";
         return true;
     }
 
-    // Sub-10 GHz & VHF/UHF bands
+    // Sub-10 GHz & VHF/UHF bands (band-only -> freq_khz = 0)
     if (t == "5.7" || t == "5.7g" || t == "5.7ghz" || t == "5760") {
         outBand = "5.7 GHz";
-        outFreqKhz = 5760100;
+        outFreqKhz = 0;
         outCabrillo = "5.7G";
         outAdif = "6cm";
         return true;
     }
     if (t == "3.4" || t == "3.4g" || t == "3.4ghz" || t == "3456" || t == "3400") {
         outBand = "3.4 GHz";
-        outFreqKhz = 3456100;
+        outFreqKhz = 0;
         outCabrillo = "3.4G";
         outAdif = "9cm";
         return true;
@@ -390,49 +390,49 @@ bool VoiceQsoParser::parseBandOrFreq(const std::string &token,
     if (t == "2.3" || t == "2.3g" || t == "2.3ghz" || t == "2.4" || t == "2.4g" || t == "2.4ghz" ||
         t == "2304" || t == "2400") {
         outBand = "2.3 GHz";
-        outFreqKhz = 2304100;
+        outFreqKhz = 0;
         outCabrillo = "2.3G";
         outAdif = "13cm";
         return true;
     }
     if (t == "1.2" || t == "1.2g" || t == "1.2ghz" || t == "1296") {
         outBand = "1.2 GHz";
-        outFreqKhz = 1296100;
+        outFreqKhz = 0;
         outCabrillo = "1.2G";
         outAdif = "23cm";
         return true;
     }
     if (t == "902" || t == "903" || t == "902m" || t == "902mhz" || t == "33cm") {
         outBand = "902 MHz";
-        outFreqKhz = 902100;
+        outFreqKhz = 0;
         outCabrillo = "902";
         outAdif = "33cm";
         return true;
     }
     if (t == "432" || t == "432m" || t == "432mhz" || t == "70cm") {
         outBand = "432 MHz";
-        outFreqKhz = 432100;
+        outFreqKhz = 0;
         outCabrillo = "432";
         outAdif = "70cm";
         return true;
     }
     if (t == "222" || t == "222m" || t == "222mhz" || t == "1.25m") {
         outBand = "222 MHz";
-        outFreqKhz = 222100;
+        outFreqKhz = 0;
         outCabrillo = "222";
         outAdif = "1.25m";
         return true;
     }
     if (t == "144" || t == "144m" || t == "144mhz" || t == "2m") {
         outBand = "144 MHz";
-        outFreqKhz = 144200;
+        outFreqKhz = 0;
         outCabrillo = "144";
         outAdif = "2m";
         return true;
     }
     if (t == "50" || t == "50m" || t == "50mhz" || t == "6m") {
         outBand = "50 MHz";
-        outFreqKhz = 50100;
+        outFreqKhz = 0;
         outCabrillo = "50";
         outAdif = "6m";
         return true;
@@ -891,7 +891,7 @@ bool VoiceQsoParser::parseQso(const std::string &input,
     if (!bandFound) {
         if (!parseBandOrFreq(defaultBand, out.band, out.freq_khz, out.cabrillo_band, out.adif_band)) {
             out.band = "10 GHz";
-            out.freq_khz = 10368100;
+            out.freq_khz = 0;
             out.cabrillo_band = "10G";
             out.adif_band = "3cm";
         }

@@ -4001,13 +4001,13 @@ void test_voice_qso_parser() {
 
     ASSERT_TRUE(VoiceQsoParser::parseBandOrFreq("10", band, freq_khz, cabrillo, adif));
     ASSERT_STR_EQ(band.c_str(), "10 GHz");
-    ASSERT_TRUE(freq_khz == 10368100);
+    ASSERT_TRUE(freq_khz == 0);
     ASSERT_STR_EQ(cabrillo.c_str(), "10G");
     ASSERT_STR_EQ(adif.c_str(), "3cm");
 
     ASSERT_TRUE(VoiceQsoParser::parseBandOrFreq("24", band, freq_khz, cabrillo, adif));
     ASSERT_STR_EQ(band.c_str(), "24 GHz");
-    ASSERT_TRUE(freq_khz == 24192100);
+    ASSERT_TRUE(freq_khz == 0);
     ASSERT_STR_EQ(cabrillo.c_str(), "24G");
     ASSERT_STR_EQ(adif.c_str(), "1.2cm");
 
@@ -4106,7 +4106,7 @@ void test_voice_qso_parser() {
     ASSERT_TRUE(VoiceQsoParser::parseQso("log k6mg 10", q));
     ASSERT_STR_EQ(q.callsign.c_str(), "K6MG");
     ASSERT_STR_EQ(q.band.c_str(), "10 GHz");
-    ASSERT_TRUE(q.freq_khz == 10368100);
+    ASSERT_TRUE(q.freq_khz == 0);
 
     // Flexible order (band first)
     ASSERT_TRUE(VoiceQsoParser::parseQso("log 24 k6mg", q));
@@ -4123,7 +4123,7 @@ void test_voice_qso_parser() {
     ASSERT_TRUE(VoiceQsoParser::parseQso("log k6mg", q));
     ASSERT_STR_EQ(q.callsign.c_str(), "K6MG");
     ASSERT_STR_EQ(q.band.c_str(), "10 GHz");
-    ASSERT_TRUE(q.freq_khz == 10368100);
+    ASSERT_TRUE(q.freq_khz == 0);
 
     // Direct without "log" prefix
     ASSERT_TRUE(VoiceQsoParser::parseQso("k6mg", q));
@@ -4758,13 +4758,13 @@ void test_serial_cli_log_commands() {
     cli.executeCommand("log k6mg 10", 1000);
     ASSERT_TRUE(qsoCardTriggered);
     ASSERT_TRUE(qsoLog.getQsoCount() == 1);
-    ASSERT_TRUE(cliOutput.find("[QSO LOGGED #1] K6MG | 10 GHz (10368.100 MHz) | 21:34z | CM87wa -> CM88qk (163.7 km @ 345 deg)") != std::string::npos);
+    ASSERT_TRUE(cliOutput.find("[QSO LOGGED #1] K6MG | 10 GHz | 21:34z | CM87wa -> CM88qk (163.7 km @ 345 deg)") != std::string::npos);
 
     const QsoEntry *e1 = qsoLog.getQso(0);
     ASSERT_TRUE(e1 != nullptr);
     ASSERT_STR_EQ(e1->callsign, "K6MG");
     ASSERT_STR_EQ(e1->band, "10 GHz");
-    ASSERT_TRUE(e1->freq_khz == 10368100);
+    ASSERT_TRUE(e1->freq_khz == 0);
     ASSERT_STR_EQ(e1->my_grid, "CM87wa");
     ASSERT_STR_EQ(e1->his_grid, "CM88qk");
     ASSERT_NEAR(e1->distance_km, 163.7f, 0.5f);
@@ -4774,7 +4774,7 @@ void test_serial_cli_log_commands() {
     cliOutput.clear();
     cli.executeCommand("log w6op/r 24", 2000);
     ASSERT_TRUE(qsoLog.getQsoCount() == 2);
-    ASSERT_TRUE(cliOutput.find("[QSO LOGGED #2] W6OP/R | 24 GHz (24192.100 MHz)") != std::string::npos);
+    ASSERT_TRUE(cliOutput.find("[QSO LOGGED #2] W6OP/R | 24 GHz |") != std::string::npos);
 
     // 3. Exact frequency in digits: log <call> 10368.1
     cliOutput.clear();
@@ -4786,13 +4786,13 @@ void test_serial_cli_log_commands() {
     cliOutput.clear();
     cli.executeCommand("log kilo six mike golf 47", 4000);
     ASSERT_TRUE(qsoLog.getQsoCount() == 4);
-    ASSERT_TRUE(cliOutput.find("[QSO LOGGED #4] K6MG | 47 GHz (47088.100 MHz)") != std::string::npos);
+    ASSERT_TRUE(cliOutput.find("[QSO LOGGED #4] K6MG | 47 GHz |") != std::string::npos);
 
     // 5. Default band applied when band omitted: log n6jv
     cliOutput.clear();
     cli.executeCommand("log n6jv", 5000);
     ASSERT_TRUE(qsoLog.getQsoCount() == 5);
-    ASSERT_TRUE(cliOutput.find("[QSO LOGGED #5] N6JV | 10 GHz (10368.100 MHz)") != std::string::npos);
+    ASSERT_TRUE(cliOutput.find("[QSO LOGGED #5] N6JV | 10 GHz |") != std::string::npos);
 
     // 6. Incomplete input prompt and hotword "cancel"
     cliOutput.clear();
@@ -4813,7 +4813,7 @@ void test_serial_cli_log_commands() {
     cliOutput.clear();
     cli.executeCommand("w6yx", 7100);
     ASSERT_TRUE(qsoLog.getQsoCount() == 6);
-    ASSERT_TRUE(cliOutput.find("[QSO LOGGED #6] W6YX | 10 GHz (10368.100 MHz)") != std::string::npos);
+    ASSERT_TRUE(cliOutput.find("[QSO LOGGED #6] W6YX | 10 GHz |") != std::string::npos);
 
     // 8. log undo
     cliOutput.clear();
@@ -4838,7 +4838,7 @@ void test_serial_cli_log_commands() {
     cli.executeCommand("log list", 10000);
     ASSERT_TRUE(cliOutput.find("K6MG") != std::string::npos);
     ASSERT_TRUE(cliOutput.find("10368.100 MHz") != std::string::npos);
-    ASSERT_TRUE(cliOutput.find("47088.100 MHz") != std::string::npos);
+    ASSERT_TRUE(cliOutput.find("47 GHz") != std::string::npos);
 
     // 11. log stats
     cliOutput.clear();
@@ -4876,7 +4876,7 @@ void test_serial_cli_log_commands() {
     // Next log without band uses new default
     cliOutput.clear();
     cli.executeCommand("log k6mg", 13100);
-    ASSERT_TRUE(cliOutput.find("[QSO LOGGED #5] K6MG | 24 GHz (24192.100 MHz)") != std::string::npos);
+    ASSERT_TRUE(cliOutput.find("[QSO LOGGED #5] K6MG | 24 GHz |") != std::string::npos);
 
     // Reset default band to 10 GHz
     cli.executeCommand("log default band 10 GHz", 13200);
@@ -5101,7 +5101,7 @@ void test_voice_logging_contest_session_e2e() {
     cliOutput.clear();
     cli.executeCommand("log k6mg/r 10", 2000);
     app.update(2000);
-    ASSERT_TRUE(cliOutput.find("[QSO LOGGED #1] K6MG/R | 10 GHz (10368.100 MHz)") != std::string::npos);
+    ASSERT_TRUE(cliOutput.find("[QSO LOGGED #1] K6MG/R | 10 GHz |") != std::string::npos);
     ASSERT_TRUE(app.getUiMode() == UiMode::QsoCard);
     ASSERT_TRUE(display.getQsoCard().isVisible());
     ASSERT_STR_EQ(display.getQsoCard().getActiveQso().callsign, "K6MG/R");
@@ -5117,7 +5117,7 @@ void test_voice_logging_contest_session_e2e() {
     cliOutput.clear();
     cli.executeCommand("log 24 k6mg/r", 4000);
     app.update(4000);
-    ASSERT_TRUE(cliOutput.find("[QSO LOGGED #2] K6MG/R | 24 GHz (24192.100 MHz)") != std::string::npos);
+    ASSERT_TRUE(cliOutput.find("[QSO LOGGED #2] K6MG/R | 24 GHz |") != std::string::npos);
     ASSERT_TRUE(app.getUiMode() == UiMode::QsoCard);
 
     // Let 10s auto-dismiss timer expire
@@ -5128,7 +5128,7 @@ void test_voice_logging_contest_session_e2e() {
     cliOutput.clear();
     cli.executeCommand("log k6mg/r 47", 15000);
     app.update(15000);
-    ASSERT_TRUE(cliOutput.find("[QSO LOGGED #3] K6MG/R | 47 GHz (47088.100 MHz)") != std::string::npos);
+    ASSERT_TRUE(cliOutput.find("[QSO LOGGED #3] K6MG/R | 47 GHz |") != std::string::npos);
     // Dismiss via rotary knob press
     input.injectEncoderButton(true);
     app.update(15100);
@@ -5138,7 +5138,7 @@ void test_voice_logging_contest_session_e2e() {
     cliOutput.clear();
     cli.executeCommand("log k6mg/r 122", 16000);
     app.update(16000);
-    ASSERT_TRUE(cliOutput.find("[QSO LOGGED #4] K6MG/R | 122 GHz (122250.100 MHz)") != std::string::npos);
+    ASSERT_TRUE(cliOutput.find("[QSO LOGGED #4] K6MG/R | 122 GHz |") != std::string::npos);
     app.update(26001); // 10s auto-dismiss
 
     // 6. QSO 5: Band escalation to Laser / Light
@@ -5157,7 +5157,7 @@ void test_voice_logging_contest_session_e2e() {
     cliOutput.clear();
     cli.executeCommand("log kilo six echo mike echo 10", 41000);
     app.update(41000);
-    ASSERT_TRUE(cliOutput.find("[QSO LOGGED #6] K6EME | 10 GHz (10368.100 MHz)") != std::string::npos);
+    ASSERT_TRUE(cliOutput.find("[QSO LOGGED #6] K6EME | 10 GHz |") != std::string::npos);
     app.update(51001); // 10s auto-dismiss
 
     // 9. Accidental entry & undo verification

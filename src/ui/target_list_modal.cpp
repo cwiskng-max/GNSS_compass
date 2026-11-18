@@ -218,7 +218,7 @@ void TargetListModal::drawSaveButton(bool highlighted) {
     gfx_->fillRoundRect(TARGET_BTN_SAVE_X, TARGET_BTN_SAVE_Y, TARGET_BTN_SAVE_W, TARGET_BTN_SAVE_H, 8, bg);
     gfx_->drawRoundRect(TARGET_BTN_SAVE_X, TARGET_BTN_SAVE_Y, TARGET_BTN_SAVE_W, TARGET_BTN_SAVE_H, 8, BUTTON_CYAN_BORDER);
 
-    const char *lbl = "[ + SAVE ]";
+    const char *lbl = "[ ADD ]";
     int lw = static_cast<int>(std::strlen(lbl)) * CHAR_W(2);
     gfx_->setTextSize(2);
     gfx_->setTextColor(fg, bg);
@@ -240,14 +240,14 @@ void TargetListModal::drawClearButton(bool isHolding, float progress, bool enabl
         int fillW = static_cast<int>((TARGET_BTN_CLEAR_W - 4) * progress);
         if (fillW > TARGET_BTN_CLEAR_W - 4) fillW = TARGET_BTN_CLEAR_W - 4;
         if (fillW > 0) {
-            gfx_->fillRoundRect(TARGET_BTN_CLEAR_X + 2, TARGET_BTN_CLEAR_Y + 2, fillW, TARGET_BTN_CLEAR_H - 4, 6, YELLOW);
+            gfx_->fillRoundRect(TARGET_BTN_CLEAR_X + 2, TARGET_BTN_CLEAR_Y + 2, fillW, TARGET_BTN_CLEAR_H - 4, 6, RED);
         }
     }
 
     const char *lbl = (enabled && isHolding) ? "HOLDING TO CLEAR..." : "[ HOLD TO CLEAR ALL ]";
     int lw = static_cast<int>(std::strlen(lbl)) * CHAR_W(2);
-    uint16_t fg = !enabled ? DIM_GRAY_TEXT : ((isHolding && progress > 0.5f) ? BLACK : WHITE);
-    uint16_t textBg = (enabled && isHolding && progress > 0.5f) ? YELLOW : bg;
+    uint16_t fg = !enabled ? DIM_GRAY_TEXT : WHITE;
+    uint16_t textBg = (enabled && isHolding && progress > 0.5f) ? RED : bg;
     gfx_->setTextSize(2);
     gfx_->setTextColor(fg, textBg);
     gfx_->setCursor(TARGET_BTN_CLEAR_X + (TARGET_BTN_CLEAR_W - lw) / 2, TARGET_BTN_CLEAR_Y + 14);
