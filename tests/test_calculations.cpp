@@ -4193,6 +4193,8 @@ void test_voice_qso_parser() {
     ASSERT_TRUE(!VoiceQsoParser::parseQso("", q));
     ASSERT_TRUE(!VoiceQsoParser::parseQso("log 12345 10", q)); // No letters
     ASSERT_TRUE(!VoiceQsoParser::parseQso("log ABCDEF 10", q)); // No digits
+    ASSERT_TRUE(!VoiceQsoParser::parseQso("log af9s 47381.1", q)); // Out-of-band frequency must not glue onto callsign
+    ASSERT_TRUE(q.error_message.find("frequency") != std::string::npos);
     ASSERT_TRUE(!VoiceQsoParser::parseQso("log N9 10", q));     // Too short
 
     PASS();
@@ -5059,6 +5061,19 @@ void test_serial_cli_log_commands() {
     cliOutput.clear();
     cli.executeCommand("log timeout reset", 17700);
     ASSERT_TRUE(cliOutput.find("Pop-up card timeout reset to 5 s") != std::string::npos);
+    ASSERT_TRUE(qsoLog.getCardTimeoutSec() == 5);
+
+    // Gboard voice split: "log time out" and "log time out 10"
+    cliOutput.clear();
+    cli.executeCommand("log time out", 17750);
+    ASSERT_TRUE(cliOutput.find("Current pop-up card timeout: 5 s") != std::string::npos);
+
+    cliOutput.clear();
+    cli.executeCommand("log time out 10", 17800);
+    ASSERT_TRUE(cliOutput.find("Pop-up card timeout set to 10 s") != std::string::npos);
+    ASSERT_TRUE(qsoLog.getCardTimeoutSec() == 10);
+
+    cli.executeCommand("log time out reset", 17850);
     ASSERT_TRUE(qsoLog.getCardTimeoutSec() == 5);
 
     PASS();

@@ -1481,8 +1481,9 @@ void SerialCli::handleLogCommand(const char *arg, unsigned long nowMs) {
         }
         return;
     }
-    if (equalsIgnoreCase(arg, "timeout") || startsWithIgnoreCase(arg, "timeout ")) {
-        const char *p = arg + 7;
+    if (equalsIgnoreCase(arg, "timeout") || startsWithIgnoreCase(arg, "timeout ") ||
+        equalsIgnoreCase(arg, "time out") || startsWithIgnoreCase(arg, "time out ")) {
+        const char *p = arg + (startsWithIgnoreCase(arg, "timeout") ? 7 : 8);
         while (*p == ' ' || *p == '\t') p++;
         if (!*p) {
             uint16_t curSec = qsoLogManager_ ? qsoLogManager_->getCardTimeoutSec() : DEFAULT_QSO_CARD_TIMEOUT_S;

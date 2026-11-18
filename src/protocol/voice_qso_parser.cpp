@@ -140,6 +140,33 @@ void appendPhoneticToken(const std::vector<std::string> &words, size_t &i,
     }
 }
 
+bool looksLikeFrequencyToken(const std::string &word) {
+    if (word.empty()) return false;
+    std::string s;
+    s.reserve(word.size());
+    for (char c : word) {
+        s.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+    }
+    if (s.size() > 3 && (s.substr(s.size() - 3) == "mhz" || s.substr(s.size() - 3) == "ghz")) {
+        s.resize(s.size() - 3);
+    } else if (s.size() > 1 && (s.back() == 'm' || s.back() == 'g')) {
+        s.pop_back();
+    }
+    if (s.empty()) return false;
+    size_t digits = 0;
+    size_t dots = 0;
+    for (char c : s) {
+        if (std::isdigit(static_cast<unsigned char>(c))) {
+            digits++;
+        } else if (c == '.') {
+            dots++;
+        } else {
+            return false;
+        }
+    }
+    return digits > 0 && dots <= 1 && (dots == 1 || digits >= 3);
+}
+
 } // anonymous namespace
 
 std::string VoiceQsoParser::stripPunctuation(const std::string &input) {
@@ -882,6 +909,9 @@ bool VoiceQsoParser::parseQso(const std::string &input,
             out.cabrillo_band = cab;
             out.adif_band = adif;
             bandFound = true;
+        } else if (looksLikeFrequencyToken(word)) {
+            out.error_message = "Invalid or out-of-band frequency: " + word;
+            return false;
         } else {
             remainingWords.push_back(word);
         }
