@@ -21,6 +21,7 @@ g++ -O2 -Wall -Wextra -I"$REPO_DIR" \
     "$REPO_DIR/src/system/calibration.cpp" \
     "$REPO_DIR/src/system/rover_log_manager.cpp" \
     "$REPO_DIR/src/system/qso_log_manager.cpp" \
+    "$REPO_DIR/src/system/target_preset_manager.cpp" \
     "$REPO_DIR/src/system/self_test.cpp" \
     "$REPO_DIR/src/system/app_controller.cpp" \
     "$REPO_DIR/src/gnss/simulator.cpp" \

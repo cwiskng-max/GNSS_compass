@@ -22,6 +22,7 @@
 #include "../src/system/rover_log_manager.h"
 #include "../src/system/qso_entry.h"
 #include "../src/system/qso_log_manager.h"
+#include "../src/system/target_preset_manager.h"
 #include "../src/protocol/voice_qso_parser.h"
 #include "../src/protocol/ble_serial_manager.h"
 #include "../src/protocol/line_buffer.h"
@@ -5304,6 +5305,212 @@ void test_qso_critical_fixes_regression() {
     PASS();
 }
 
+void test_target_preset_validation_and_summits() {
+    TEST("TargetPresetManager Maidenhead validation, normalization, and regional summits");
+    TargetPresetManager::resetHostStorage();
+
+    ASSERT_TRUE(TargetPresetManager::isValidGrid6("CM87vu"));
+    ASSERT_TRUE(TargetPresetManager::isValidGrid6("cm87VU"));
+    ASSERT_TRUE(TargetPresetManager::isValidGrid6("AA00aa"));
+    ASSERT_TRUE(TargetPresetManager::isValidGrid6("RR99xx"));
+
+    ASSERT_TRUE(!TargetPresetManager::isValidGrid6(nullptr));
+    ASSERT_TRUE(!TargetPresetManager::isValidGrid6(""));
+    ASSERT_TRUE(!TargetPresetManager::isValidGrid6("CM87"));
+    ASSERT_TRUE(!TargetPresetManager::isValidGrid6("CM87vu12"));
+    ASSERT_TRUE(!TargetPresetManager::isValidGrid6("ZA00AA"));
+    ASSERT_TRUE(!TargetPresetManager::isValidGrid6("SS00aa"));
+    ASSERT_TRUE(!TargetPresetManager::isValidGrid6("CM87yz"));
+    ASSERT_TRUE(!TargetPresetManager::isValidGrid6("CMabvu"));
+
+    char norm[7] = {0};
+    ASSERT_TRUE(TargetPresetManager::normalizeGrid("cm87VU", norm));
+    ASSERT_STR_EQ(norm, "CM87vu");
+    ASSERT_TRUE(!TargetPresetManager::normalizeGrid("ZA00AA", norm));
+
+    ASSERT_STR_EQ(TargetPresetManager::lookupRegionalSummit("cm87VU"), "DIABLO");
+    ASSERT_STR_EQ(TargetPresetManager::lookupRegionalSummit("CM97be"), "UMUNHUM");
+    ASSERT_TRUE(TargetPresetManager::lookupRegionalSummit("CM98aa") == nullptr);
+
+    TargetPresetManager mgr;
+    mgr.begin();
+    ASSERT_TRUE(!mgr.addOrUpdatePreset("INVALID", "BAD"));
+    ASSERT_TRUE(!mgr.addOrUpdatePreset("CM87", "SHORT"));
+    ASSERT_TRUE(mgr.isEmpty());
+
+    // Regional summit auto-label when no label provided
+    ASSERT_TRUE(mgr.addOrUpdatePreset("cm87VU"));
+    ASSERT_TRUE(mgr.getCount() == 1);
+    ASSERT_STR_EQ(mgr.getPreset(0)->grid, "CM87vu");
+    ASSERT_STR_EQ(mgr.getPreset(0)->label, "DIABLO");
+
+    // Unknown grid without label leaves label empty
+    ASSERT_TRUE(mgr.addOrUpdatePreset("CM98aa"));
+    ASSERT_TRUE(mgr.getCount() == 2);
+    ASSERT_STR_EQ(mgr.findByGrid("CM98AA")->label, "");
+
+    PASS();
+}
+
+void test_target_preset_dedup_and_labels() {
+    TEST("TargetPresetManager deduplication and labels with spaces");
+    TargetPresetManager::resetHostStorage();
+
+    TargetPresetManager mgr;
+    mgr.begin();
+
+    // Label with spaces up to MAX_TARGET_LABEL_LEN - 1 (11 chars)
+    ASSERT_TRUE(mgr.addOrUpdatePreset("CM97bb", "LOMA PRIETA", 100));
+    ASSERT_TRUE(mgr.getCount() == 1);
+    ASSERT_STR_EQ(mgr.getPreset(0)->grid, "CM97bb");
+    ASSERT_STR_EQ(mgr.getPreset(0)->label, "LOMA PRIETA");
+
+    // Duplicate grid (different case) updates timestamp without duplicating, preserves label & useCount
+    ASSERT_TRUE(mgr.recordUse(0, 150));
+    ASSERT_TRUE(mgr.addOrUpdatePreset("cm97BB", nullptr, 200));
+    ASSERT_TRUE(mgr.getCount() == 1);
+    ASSERT_STR_EQ(mgr.getPreset(0)->label, "LOMA PRIETA");
+    ASSERT_TRUE(mgr.getPreset(0)->useCount == 1);
+    ASSERT_TRUE(mgr.getPreset(0)->lastUsedTime == 200);
+
+    // Explicit new label updates label and truncates safely at 11 chars
+    ASSERT_TRUE(mgr.addOrUpdatePreset("CM97bb", "VERY LONG SUMMIT NAME", 250));
+    ASSERT_TRUE(mgr.getCount() == 1);
+    ASSERT_TRUE(std::strlen(mgr.getPreset(0)->label) == MAX_TARGET_LABEL_LEN - 1);
+    ASSERT_STR_EQ(mgr.getPreset(0)->label, "VERY LONG S");
+    ASSERT_TRUE(mgr.getPreset(0)->useCount == 1);
+
+    PASS();
+}
+
+void test_target_preset_sorting_and_usage() {
+    TEST("TargetPresetManager frequency-first sorting and lastUsedTime tie-breaker");
+    TargetPresetManager::resetHostStorage();
+
+    TargetPresetManager mgr;
+    mgr.begin();
+
+    ASSERT_TRUE(mgr.addOrUpdatePreset("CM87vu", "DIABLO", 100));
+    ASSERT_TRUE(mgr.addOrUpdatePreset("CM97be", "UMUNHUM", 200));
+    ASSERT_TRUE(mgr.addOrUpdatePreset("CM88no", "ST HELN", 150));
+
+    // All useCount == 0 -> sorted by lastUsedTime descending: UMUNHUM (200), ST HELN (150), DIABLO (100)
+    ASSERT_STR_EQ(mgr.getPreset(0)->grid, "CM97be");
+    ASSERT_STR_EQ(mgr.getPreset(1)->grid, "CM88no");
+    ASSERT_STR_EQ(mgr.getPreset(2)->grid, "CM87vu");
+
+    // Record use on DIABLO (index 2) -> useCount becomes 1, moves to top
+    ASSERT_TRUE(mgr.recordUse(2, 300));
+    ASSERT_STR_EQ(mgr.getPreset(0)->grid, "CM87vu");
+    ASSERT_TRUE(mgr.getPreset(0)->useCount == 1);
+    ASSERT_TRUE(mgr.getPreset(0)->lastUsedTime == 300);
+
+    // Record use twice on ST HELN (now index 2) -> useCount 2, moves to top
+    int stIdx = mgr.findIndexByGrid("CM88no");
+    ASSERT_TRUE(stIdx == 2);
+    ASSERT_TRUE(mgr.recordUse(static_cast<size_t>(stIdx), 400));
+    stIdx = mgr.findIndexByGrid("CM88no");
+    ASSERT_TRUE(mgr.recordUse(static_cast<size_t>(stIdx), 500));
+    ASSERT_STR_EQ(mgr.getPreset(0)->grid, "CM88no");
+    ASSERT_STR_EQ(mgr.getPreset(1)->grid, "CM87vu");
+    ASSERT_STR_EQ(mgr.getPreset(2)->grid, "CM97be");
+
+    // Out-of-bounds recordUse returns false
+    ASSERT_TRUE(!mgr.recordUse(99, 600));
+
+    PASS();
+}
+
+void test_target_preset_capacity_eviction_and_nvs() {
+    TEST("TargetPresetManager capacity clamping (10-500), eviction, and NVS round-trip");
+    TargetPresetManager::resetHostStorage();
+
+    ASSERT_TRUE(TargetPresetManager::clampMaxTargets(0) == MIN_TARGET_PRESETS);
+    ASSERT_TRUE(TargetPresetManager::clampMaxTargets(5) == MIN_TARGET_PRESETS);
+    ASSERT_TRUE(TargetPresetManager::clampMaxTargets(10) == 10);
+    ASSERT_TRUE(TargetPresetManager::clampMaxTargets(250) == 250);
+    ASSERT_TRUE(TargetPresetManager::clampMaxTargets(999) == ABS_MAX_TARGET_PRESETS);
+
+    TargetPresetManager mgr;
+    mgr.begin();
+    ASSERT_TRUE(mgr.getMaxTargets() == DEFAULT_MAX_TARGET_PRESETS);
+
+    mgr.setMaxTargets(3); // Clamped to MIN_TARGET_PRESETS (10)
+    ASSERT_TRUE(mgr.getMaxTargets() == 10);
+    ASSERT_TRUE(mgr.getHostStorageMaxTargets() == 10);
+
+    // Fill 10 presets with distinct timestamps
+    for (int i = 0; i < 10; ++i) {
+        char grid[7];
+        std::snprintf(grid, sizeof(grid), "CM8%dAA", i);
+        ASSERT_TRUE(mgr.addOrUpdatePreset(grid, nullptr, static_cast<uint32_t>(100 + i)));
+    }
+    ASSERT_TRUE(mgr.getCount() == 10);
+
+    // Bump usage of the oldest one (CM80aa, now at index 9) so CM81aa becomes least-used/oldest
+    int idx0 = mgr.findIndexByGrid("CM80aa");
+    ASSERT_TRUE(idx0 == 9);
+    ASSERT_TRUE(mgr.recordUse(static_cast<size_t>(idx0), 50));
+
+    // Adding an 11th preset evicts CM81aa (useCount=0, oldest timestamp=101)
+    ASSERT_TRUE(mgr.addOrUpdatePreset("DM04ms", "FRAZIER", 200));
+    ASSERT_TRUE(mgr.getCount() == 10);
+    ASSERT_TRUE(mgr.findByGrid("CM81aa") == nullptr);
+    ASSERT_TRUE(mgr.findByGrid("CM80aa") != nullptr);
+    ASSERT_TRUE(mgr.findByGrid("DM04ms") != nullptr);
+
+    // Fresh manager instance loads persisted presets and maxTargets from NVS mock
+    TargetPresetManager reloaded;
+    reloaded.begin();
+    ASSERT_TRUE(reloaded.getMaxTargets() == 10);
+    ASSERT_TRUE(reloaded.getCount() == 10);
+    ASSERT_STR_EQ(reloaded.getPreset(0)->grid, "CM80aa");
+    ASSERT_TRUE(reloaded.getPreset(0)->useCount == 1);
+    ASSERT_TRUE(reloaded.findByGrid("DM04ms") != nullptr);
+
+    PASS();
+}
+
+void test_target_preset_deletion_and_clear() {
+    TEST("TargetPresetManager item deletion, shift, and clearAll");
+    TargetPresetManager::resetHostStorage();
+
+    TargetPresetManager mgr;
+    mgr.begin();
+
+    ASSERT_TRUE(mgr.addOrUpdatePreset("CM87vu", "DIABLO", 300));
+    ASSERT_TRUE(mgr.addOrUpdatePreset("CM97be", "UMUNHUM", 200));
+    ASSERT_TRUE(mgr.addOrUpdatePreset("CM88no", "ST HELN", 100));
+    ASSERT_TRUE(mgr.getCount() == 3);
+
+    // Remove middle item by index
+    ASSERT_TRUE(mgr.removePreset(1));
+    ASSERT_TRUE(mgr.getCount() == 2);
+    ASSERT_STR_EQ(mgr.getPreset(0)->grid, "CM87vu");
+    ASSERT_STR_EQ(mgr.getPreset(1)->grid, "CM88no");
+    ASSERT_TRUE(mgr.getHostStorageCount() == 2);
+
+    // Remove by grid (case-insensitive)
+    ASSERT_TRUE(mgr.removePresetByGrid("cm88NO"));
+    ASSERT_TRUE(mgr.getCount() == 1);
+    ASSERT_STR_EQ(mgr.getPreset(0)->grid, "CM87vu");
+
+    // Non-existent removals return false
+    ASSERT_TRUE(!mgr.removePreset(5));
+    ASSERT_TRUE(!mgr.removePresetByGrid("DM99zz"));
+
+    // clearAll wipes memory and NVS
+    mgr.clearAll();
+    ASSERT_TRUE(mgr.isEmpty());
+    ASSERT_TRUE(mgr.getHostStorageCount() == 0);
+
+    TargetPresetManager reloaded;
+    reloaded.begin();
+    ASSERT_TRUE(reloaded.isEmpty());
+
+    PASS();
+}
+
 int main() {
     std::cout << "========================================" << std::endl;
     std::cout << "  GNSS Compass Unit Test Suite" << std::endl;
@@ -5369,6 +5576,11 @@ int main() {
     test_serial_cli_log_commands();
     test_voice_logging_contest_session_e2e();
     test_qso_critical_fixes_regression();
+    test_target_preset_validation_and_summits();
+    test_target_preset_dedup_and_labels();
+    test_target_preset_sorting_and_usage();
+    test_target_preset_capacity_eviction_and_nvs();
+    test_target_preset_deletion_and_clear();
 
     std::cout << "========================================" << std::endl;
     std::cout << "  All " << tests_passed << " / " << tests_run << " tests PASSED successfully!" << std::endl;
