@@ -13,12 +13,12 @@ In amateur radio VHF/UHF and microwave weak-signal operations (specifically the 
 ### Operational Context & The Rover Problem
 1. **Fixed Targets vs. Moving Rover:** While the rover moves from one operating grid/summit to the next, the distant mountain-top stations (e.g., Mt. Diablo, Mt. Umunhum, Loma Prieta, Mt. Saint Helena) remain geographically fixed.
 2. **Asynchronous Readiness:** Mountain-top stations are not ready in a predetermined or sequential order. Station readiness depends on weather, equipment setup, microwave band coordination over a 2-meter liaison frequency, and local operating queues:
-   > *"Mt. Umunhum is on 10368.100 MHz now! Work him first! Mt. Diablo is still tuning their feed horn and will be ready in 15 minutes."*
-3. **Setup Friction in the Field:** Under high sun glare, freezing wind, or night operations with gloves, manually dialing a 6-character Maidenhead locator (e.g., `C-M-8-7-v-u`) on a touchscreen for every target transition is slow, error-prone, and frustrating.
-4. **Relocation Lifecycle:** When the rover completes contacts at Location A, they pack up the vehicle and drive 20+ km to Location B. When they arrive at Location B and power the compass back on:
+   > *"Mt. Umunhum is on 10368.100 MHz now. Work him first. Mt. Diablo is still working someone else and will be ready in 15 minutes."*
+3. **Setup Friction in the Field:** Under high sun glare, freezing wind, operations with gloves, manually dialing a 6-character Maidenhead locator (e.g., `C-M-8-7-v-u`) on a touchscreen for every target transition is slow, error-prone, and frustrating.
+4. **Relocation Lifecycle:** When the rover completes contacts at Location A, they pack up the vehicle and drive 20+ km to Location B. When they arrive at Location B and are ready to switch from rover mode:
    - The distant mountain tops have not moved.
    - The operator needs instant recall of previously dialed summits without re-entering them.
-   - The operator needs to see live azimuths and distances from the *new* location to each target before aiming the mast.
+   - The operator needs to see live azimuths (distances are nice to have) from the *new* location to each target before aiming the mast.
    - Once a contest weekend ends or the rover enters an entirely new operating division, the operator needs a clean, safe method to clear the preset list.
 
 ---
@@ -29,19 +29,23 @@ The Target Grid Preset & History Manager introduces an on-device preset cache ba
 
 ```mermaid
 flowchart TD
-    A["Rover at Site A<br>(e.g. CM87wa)"] --> B["Enter Target Grids<br>(CM87vu, CM97be, CM88no)"]
-    B --> C["Work Contacts on Dish<br>Presets saved to NVS"]
-    C --> D["Pack up & Drive to Site B<br>(Power Cycled)"]
-    D --> E["Arrive at Site B (CM88ec)<br>GPS acquires new position"]
-    E --> F["Open Target Presets Modal<br>(Long-press Target or Encoder Button)"]
-    F --> G["Live Dynamic Preview<br>Shows bearing & distance from Site B to each summit"]
-    G --> H{"Liaison Radio:<br>Who is ready?"}
-    H -- "Mt. Umunhum ready" --> I["Select CM97be<br>Dish aimed to 142 deg"]
-    H -- "Mt. Diablo ready next" --> J["Select CM87vu<br>Dish aimed to 048 deg"]
-    I --> K["Work Contact"]
-    J --> K
-    K --> L["Contest Concluded"]
-    L --> M["Protected Hold-to-Clear<br>Reset list for next contest"]
+    P0["Pre-Contest Prep (Home / Bench)<br>Pre-load known summits via USB/BLE CLI<br>(CM87vu DIABLO, CM97be UMUNHUM, etc.)"] --> P1["Presets saved to NVS"]
+    P1 --> A["Arrive at Site A (e.g. CM87wa)<br>GPS acquires position"]
+    A --> B["Open Target Presets Modal<br>(Long-press Row 2)"]
+    B --> C["Live Dynamic Preview<br>Shows bearing & distance from Site A to each summit"]
+    C --> D{"Liaison Radio:<br>Who is ready?"}
+    D -- "Known summit ready" --> E["Select Preset (e.g. CM97be)<br>Dish aimed to 142 deg"]
+    D -- "New station not in list" --> F["Dial grid manually via Touch/Knob<br>(or 'target <grid>' over BLE)"]
+    F --> G["Save into Pre-Loaded List<br>([ + SAVE CURRENT ] -> NVS)"]
+    E --> H["Work Contact"]
+    G --> H
+    H --> I["Pack up & Drive to Site B<br>(Rover Mode / Power Cycled)"]
+    I --> J["Arrive at Site B (CM88ec)<br>GPS acquires new position"]
+    J --> K["Open Target Presets Modal<br>All pre-loaded + newly saved targets retained"]
+    K --> L["Live Dynamic Preview<br>Updated bearings & distances from Site B"]
+    L --> M["Select & Work Contacts"]
+    M --> N["Contest Concluded"]
+    N --> O["Protected Hold-to-Clear<br>Reset list for next contest"]
 ```
 
 ---
@@ -77,12 +81,13 @@ There is **no restrictive hardware memory limit** on the ESP32-S3:
 * **Contest Realism:** Expanding to **20 named presets** provides complete coverage for a multi-day rover weekend spanning 15–20 regional mountain summits, microwave beacons, and frequent contest contacts across multiple grid squares.
 
 ### Flash Wear Mitigation & Write Gating
-NOR flash wear leveling is handled automatically by ESP-IDF NVS. To further minimize flash writes:
-* Presets are committed to NVS **only** when modified:
-  1. An explicit `[ SAVE CURRENT ]` action occurs.
-  2. The target editor auto-locks on a new unique grid.
-  3. An entry is deleted or the entire list is cleared.
-* Writes are bypassed if the current active target already matches an existing preset.
+NOR flash wear leveling is handled automatically by ESP-IDF NVS. To further minimize flash writes and keep a pre-loaded contest roster clean:
+* Presets are committed to NVS **only** on explicit modification:
+  1. An explicit `[ + SAVE CURRENT ]` action in the Target Presets modal (or `target save [LABEL]` via CLI).
+  2. A CLI provisioning command (`target add`, `target del`, `target clear`) over USB Serial or BLE UART.
+  3. An entry is deleted (`[ DELETE ITEM ]`) or the entire list is cleared (`[ HOLD TO CLEAR ALL ]`).
+* Auto-locking the target editor after 5 seconds does **not** automatically bookmark transient/exploratory grids into the preset list.
+* Writes are bypassed if the current active target already matches an existing preset (unless promoting/updating label).
 
 ```cpp
 void saveTargetPresetsToNVS(const TargetPresetList& list) {
@@ -161,14 +166,14 @@ Instead, as the modal renders each preset, it dynamically calculates:
 2. **Line-of-Sight Distance:** Great-circle distance in kilometers.
 
 ```cpp
-void drawPresetRow(int index, const TargetPreset& preset, bool isSelected, int yPos) {
-  double tgtLat, tgtLon;
-  calcLatLon(preset.grid, &tgtLat, &tgtLon);
-  
-  double distMeters, fwdAzimuth, revAzimuth;
-  calculateWGS84(mylatitude, mylongitude, tgtLat, tgtLon, &distMeters, &fwdAzimuth, &revAzimuth);
-  
-  int distKm = (int)round(distMeters / 1000.0);
+void drawPresetRow(int index, const TargetPreset& preset, const GeoPoint& currentPos, bool isSelected, int yPos) {
+  GeoPoint tgtPt;
+  gridToGeoPoint(preset.grid, tgtPt);
+
+  double distMeters = 0.0, fwdAzimuth = 0.0;
+  calculateWgs84(currentPos, tgtPt, distMeters, fwdAzimuth);
+
+  int distKm = static_cast<int>(std::round(distMeters / 1000.0));
   
   // Format: "1. CM87vu DIABLO  048° 42k" (Font Size 2, 12px per char, 28 chars = 336px)
   char lineBuf[36];
@@ -203,13 +208,15 @@ This gives the rover instant situational awareness: when arriving at a new summi
 
 Because typing text with gloves on a small round screen can be tedious, names are entered through three complementary mechanisms:
 
-#### 1. USB Serial CLI Provisioning & Batch File Streaming (Primary Pre-Contest Method)
-Before heading into the field, operators can connect the compass to a laptop or phone via USB-C serial (`/dev/ttyACM0` at `115200` baud) and configure their weekend target list in seconds.
+#### 1. USB Serial & BLE UART CLI Provisioning & Batch File Streaming (Primary Pre-Contest Method)
+Before heading into the field, operators can connect the compass to a laptop or phone via USB-C serial (`/dev/ttyACM0` at `115200` baud) or BLE UART and configure their weekend target list in seconds. These subcommands extend the existing `target <grid>` command in `SerialCli::handleTargetCommand()` (which continues to set the active target grid directly when given a Maidenhead locator or NATO phonetics):
 
 ##### Interactive Serial Commands
 ```text
 === Target Preset Serial Commands ===
-target add <GRID> [LABEL]   - Add or update a target (e.g., "target add CM87vu DIABLO")
+target <GRID>               - Set active target grid directly (existing voice/CLI command)
+target add <GRID> [LABEL]   - Add or update a target preset (e.g., "target add CM87vu DIABLO")
+target save [LABEL]         - Save the current active target grid into presets (optional label)
 target del <INDEX|GRID>     - Remove a specific target by 1-based index or grid
 target list                 - Print all saved targets with index, grid, label, and NVS slot
 target clear                - Wipe all target presets
@@ -316,16 +323,14 @@ Both capacitive touch and the rotary encoder are fully supported to accommodate 
 
 ```mermaid
 stateDiagram-v2
-    [*] --> UI_MODE_NORMAL
-    
-    UI_MODE_NORMAL --> UI_MODE_TARGET_LIST : Long-Press Row 2 (> 500 ms)
-    UI_MODE_NORMAL --> UI_MODE_TARGET_LIST : Press Encoder Switch (PCF8574 P5)
-    
-    state UI_MODE_TARGET_LIST {
+    [*] --> Normal
+    Normal --> TargetList : Long-Press Row 2 (> 500 ms)
+
+    state TargetList {
         [*] --> Browsing
         Browsing --> Browsing : Rotate Knob (Scroll Up / Down)
         Browsing --> Browsing : Tap Row Directly (Select)
-        Browsing --> LoadTarget : Tap [ LOAD / SELECT ]
+        Browsing --> LoadTarget : Tap [ LOAD / SELECT ] or EncoderButtonPressed
         Browsing --> DeleteItem : Tap [ DELETE ITEM ]
         DeleteItem --> Browsing : Item removed, count decremented, NVS updated
         Browsing --> SaveTarget : Tap [ + SAVE CURRENT ]
@@ -334,26 +339,24 @@ stateDiagram-v2
         HoldingClear --> Cleared : Hold reaches 1,500 ms
         Cleared --> Browsing : List cleared (count=0), NVS wiped
     }
-    
-    LoadTarget --> UI_MODE_NORMAL : Apply new remote & recalc
-    Browsing --> UI_MODE_NORMAL : Tap [ CLOSE ] or Inactivity Timeout (30s)
+
+    LoadTarget --> Normal : Apply target to GridEditor & updateNavigation()
+    Browsing --> Normal : Tap [ CLOSE ] or Inactivity Timeout (30s)
 ```
 
 ### 1. Opening the Modal
-* **Touch:** Long-press anywhere on the Target Grid (Row 2, $Y \in [70, 235]$) for $\ge 500\text{ ms}$. (A short tap $< 500\text{ ms}$ retains existing character edit behavior).
-* **Rotary Switch:** Press the encoder push-button (`pcf8574.pinMode(P5)`).
+* **Touch:** Long-press anywhere on the Target Grid (Row 2, $Y \in [70, 235]$) for $\ge 500\text{ ms}$. (A short tap $< 500\text{ ms}$ retains existing character edit behavior, and pressing the rotary encoder switch in `UiMode::Normal` retains its existing edit-mode toggle).
 
 ### 2. Navigating Presets
-* **Rotary Encoder:** Turning the knob increments/decrements the selected index ($0$ to $\text{count} - 1$) with audible clicks and responsive visual highlight scrolling.
+* **Rotary Encoder:** Turning the knob increments/decrements the selected index ($0$ to $\text{count} - 1$) with responsive visual highlight scrolling.
 * **Direct Touch:** Tapping any visible row immediately sets it as the selected index.
 
 ### 3. Loading a Target
-* Tapping `[ LOAD / SELECT ]` (or clicking the encoder switch while an item is highlighted):
-  1. Copies `preset.grid` into active `remote`.
-  2. Updates `remlatitude` and `remlongitude`.
-  3. Resets `rovdist = false` (exits rover origin tracking).
-  4. Recalculates bearings and distances via `updateBearings()`.
-  5. Exits modal back to `UI_MODE_NORMAL`.
+* Tapping `[ LOAD / SELECT ]` (or pressing the encoder switch while `UiMode::TargetList` is active):
+  1. Loads `preset.grid` into `GridEditor` (`setGrid(...)`) and disarms character editing.
+  2. If `operationalMode_ == OperationalMode::Rover`, calls `onTargetEdited(nowMs)` to perform the standard Rover-to-Bearing transition.
+  3. Recalculates bearings and distances via `updateNavigation()`.
+  4. Exits modal back to `UiMode::Normal`.
 
 ### 4. Deleting an Individual Item (Accidental Entry Removal)
 If an operator accidentally bookmarks a typo (e.g., `CM87aa` instead of `CM87wa`) or no longer needs a specific summit in their roster:
@@ -391,49 +394,34 @@ When starting a new contest weekend or roving into a completely different divisi
 
 ---
 
-## 7. Firmware Data Structures & Functions
+## 7. Firmware Data Structures & Modular Architecture
 
-### New Enums & Global Variables
-```cpp
-enum UiMode {
-  UI_MODE_NORMAL = 0,
-  UI_MODE_CALIBRATING = 1,
-  UI_MODE_TARGET_LIST = 2
-};
-
-TargetPresetList targetPresets;
-int selectedPresetIndex = 0;   // 0 to count-1 (up to 19)
-int presetScrollOffset = 0;    // Top visible item index (0 to count-3)
-bool holdingClearBtn = false;
-unsigned long clearBtnHoldStartTime = 0;
-#define CLEAR_HOLD_MS 1500
-#define PRESET_MODAL_TIMEOUT_MS 30000
-unsigned long presetModalOpenedMillis = 0;
-```
-
-### Core API Functions
-* `void initTargetPresets()`: Loads preset blob from NVS at boot.
-* `void addTargetPreset(const char* grid)`: Adds or promotes grid with deduplication (up to 20 items).
-* `void removeTargetPreset(int index)`: Deletes individual preset.
-* `void clearAllTargetPresets()`: Resets list and writes clean state to NVS.
-* `void drawTargetListModal()`: Full canvas rendering of presets, scroll track, buttons, and live bearings.
-* `void handleTargetListTouch(CST_TS_Point p, bool isDown, unsigned long duration)`: Touch arbitration for modal.
-* `void handleTargetListEncoder(int direction)`: Rotary scrolling through preset items with automatic viewport adjustment.
+### New Modules & Enum Extensions
+* **`UiMode::TargetList`** added to `enum class UiMode` in `src/system/app_controller.h` (alongside `Normal`, `Calibrating`, `RoverHistory`, and `QsoCard`).
+* **`TargetPresetManager`** (`src/system/target_preset_manager.h/.cpp`):
+  * Manages `TargetPresetList` persistence in NVS (`"targets"` / `"preset_blob"` under `#if defined(ARDUINO)`), with static host-test mock storage under `#if !defined(ARDUINO)` (matching `RoverLogManager` and `QsoLogManager`).
+  * API: `begin()`, `addOrPromotePreset(const char* grid, const char* label = nullptr)`, `removePreset(size_t index)`, `removePresetByGrid(const char* grid)`, `clearAll()`, `getPresets()`, `getCount()`.
+* **`TargetListModal`** (`src/ui/target_list_modal.h/.cpp`):
+  * Owns modal rendering (`drawModal()`, `drawPresetRow()`, `drawClearButton()`, etc.) and host-testable string formatters (`formatPresetRow()`, `formatHeader()`).
+* **`InputManager` & `AppController`** (`src/ui/input_manager.h/.cpp`, `src/system/app_controller.h/.cpp`):
+  * `InputManager` emits `LongPressTargetGridTriggered`, `TargetRowTouched`, and modal button/hold events (`HoldClearButtonProgress`, `ClearButtonCommitted`).
+  * `AppController` coordinates modal state (`selectedPresetIndex_`, `presetScrollOffset_`, `targetModalOpenedMillis_`), 30s inactivity timeout, and `SerialCli` callbacks.
 
 ---
 
 ## 8. Verification & Test Plan
 
-### Automated Host Unit Tests (`tests/test_target_history.cpp`)
+### Automated Host Unit Tests (`tests/test_calculations.cpp` via `tests/run_tests.sh`)
 1. **Deduplication Verification:** Adding `CM87vu` twice results in `count == 1` with the entry promoted to index 0.
 2. **Capacity & Overflow Handling:** Adding 21 unique grids into a 20-slot list evicts the oldest entry and preserves the 20 most recent.
 3. **Individual Item Deletion & Shift:** Deleting an entry from the middle of a list (e.g., removing item at index 2 of 5) correctly shifts subsequent items up, sets `count = 4`, and updates NVS.
 4. **Format & Bounds Checking:** Rejection of non-Maidenhead or malformed strings.
 5. **Hold-to-Clear Timing Logic:** Asserts that hold durations $< 1,500\text{ ms}$ reject clearing, while $\ge 1,500\text{ ms}$ commit an empty list.
 6. **NVS Blob Serialization:** Byte-for-byte fidelity of 423-byte list serialization and deserialization.
+7. **CLI Integration (`SerialCli`):** Tests `target add`, `target save`, `target del`, `target list`, `target clear`, and ensures `target <grid>` continues to set the active target directly.
 
 ### On-Device Hardware & Visual Self-Test
-* Extend `runVisualSelfTest()` to include an interactive demo of the Target Presets modal with simulated mountain tops (e.g., Mt. Diablo, Mt. Umunhum, Mt. Tamalpais), demonstrating knob navigation and selection.
+* Extend `SelfTest` (`src/system/self_test.cpp`) to include preset manager invariant checks and optional visual modal verification.
 
 ---
 
