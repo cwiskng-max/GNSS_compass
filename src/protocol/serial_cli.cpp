@@ -52,12 +52,13 @@ static bool startsWithIgnoreCase(const char *str, const char *prefix) {
 
 SerialCli::SerialCli(GpsManager &gpsManager, Calibration &calibration, GpsSimulator &simulator,
                      RoverLogManager *roverLogManager, BleSerialManager *bleManager,
-                     QsoLogManager *qsoLogManager)
+                     QsoLogManager *qsoLogManager, TargetPresetManager *targetPresetManager)
     : gpsManager_(gpsManager),
       calibration_(calibration),
       simulator_(simulator),
       roverLogManager_(roverLogManager),
       qsoLogManager_(qsoLogManager),
+      targetPresetManager_(targetPresetManager),
       bleManager_(bleManager),
       activeSource_(CLI_SOURCE_USB),
       navContextFn_(nullptr),
@@ -1052,7 +1053,9 @@ void SerialCli::printHelp() {
     println("                        - UM982 GNSS receiver setup and diagnostics");
     println("  rover [status|start|stop|history|undo|max|clear]");
     println("                        - Rover transit tracking");
-    println("  target <grid>         - Remote target grid setting (supports phonetics)");
+    println("  target <grid>         - Set active target grid (supports phonetics)");
+    println("  target [add|save|del|list|max|clear]");
+    println("                        - Manage saved target grid presets");
     println("  log <call> [band/freq]- Voice-friendly contest QSO logging (10 GHz default)");
     println("  log [undo|del|list|stats|export|mycall|default|clear]");
     println("                        - QSO log management and contest export");
@@ -1072,10 +1075,256 @@ void SerialCli::printHelp() {
     println();
 }
 
+void SerialCli::printTargetHelp() {
+    println();
+    println("=== Target Preset Commands ===");
+    println("  target <GRID>             - Set active target grid (supports NATO phonetics)");
+    println("  target add <GRID> [LABEL] - Add or update preset (spaces allowed in label)");
+    println("  target save [LABEL]       - Save current active target grid as preset");
+    println("  target del <INDEX|GRID>   - Delete preset by 1-based index or 6-char grid");
+    println("  target list               - List all saved target presets");
+    println("  target max [N]            - Show or set max capacity (10-500, default 100)");
+    println("  target clear              - Wipe all saved target presets");
+    println("==============================");
+    println();
+}
+
+static bool hasSubcommandPrefix(const char *arg, const char *cmd) {
+    if (!arg || !cmd) return false;
+    size_t len = std::strlen(cmd);
+    if (!startsWithIgnoreCase(arg, cmd)) return false;
+    char next = arg[len];
+    return (next == '\0' || next == ' ' || next == '\t');
+}
+
 void SerialCli::handleTargetCommand(const char *arg, unsigned long nowMs) {
     while (arg && (*arg == ' ' || *arg == '\t')) arg++;
     if (!arg || *arg == '\0') {
         println("[TARGET ERROR] Missing grid square. Usage: target <grid> (e.g. 'target CM88qk' or 'target charlie mike 88 quebec kilo')");
+        return;
+    }
+
+    if (equalsIgnoreCase(arg, "help") || std::strcmp(arg, "?") == 0) {
+        printTargetHelp();
+        return;
+    }
+
+    uint32_t nowSec = 0;
+    if (gpsManager_.hasTime() && gpsManager_.getEpochTime() > 0) {
+        nowSec = gpsManager_.getEpochTime();
+    } else if (nowMs > 0) {
+        nowSec = static_cast<uint32_t>(nowMs / 1000);
+    }
+
+    if (hasSubcommandPrefix(arg, "add")) {
+        if (!targetPresetManager_) {
+            println("[TARGET] Target preset manager not available.");
+            return;
+        }
+        const char *p = arg + 3;
+        while (*p == ' ' || *p == '\t') p++;
+        if (*p == '\0') {
+            println("[TARGET ERROR] Usage: target add <GRID> [LABEL]");
+            return;
+        }
+
+        // Extract first whitespace-delimited token as grid
+        char gridToken[32];
+        size_t gLen = 0;
+        while (p[gLen] && p[gLen] != ' ' && p[gLen] != '\t' && gLen < sizeof(gridToken) - 1) {
+            gridToken[gLen] = p[gLen];
+            gLen++;
+        }
+        gridToken[gLen] = '\0';
+
+        char normGrid[7];
+        if (!TargetPresetManager::normalizeGrid(gridToken, normGrid)) {
+            printFormat("[TARGET ERROR] Invalid 6-char Maidenhead grid: '%s'\r\n", gridToken);
+            return;
+        }
+
+        // Remainder (if any) is the optional label (spaces allowed)
+        const char *lblStart = p + gLen;
+        while (*lblStart == ' ' || *lblStart == '\t') lblStart++;
+        char labelBuf[64];
+        size_t lLen = 0;
+        while (lblStart[lLen] && lLen < sizeof(labelBuf) - 1) {
+            labelBuf[lLen] = lblStart[lLen];
+            lLen++;
+        }
+        while (lLen > 0 && (labelBuf[lLen - 1] == ' ' || labelBuf[lLen - 1] == '\t')) {
+            lLen--;
+        }
+        labelBuf[lLen] = '\0';
+
+        bool existed = (targetPresetManager_->findIndexByGrid(normGrid) >= 0);
+        if (!targetPresetManager_->addOrUpdatePreset(normGrid, lLen > 0 ? labelBuf : nullptr, nowSec)) {
+            printFormat("[TARGET ERROR] Failed to add preset '%s'.\r\n", normGrid);
+            return;
+        }
+
+        int idx = targetPresetManager_->findIndexByGrid(normGrid);
+        const TargetPreset *preset = (idx >= 0) ? targetPresetManager_->getPreset(static_cast<size_t>(idx)) : nullptr;
+        const char *verb = existed ? "Updated" : "Added";
+        if (preset && preset->label[0] != '\0') {
+            printFormat("[TARGET] %s #%d: %s (%s)\r\n", verb, idx + 1, preset->grid, preset->label);
+        } else {
+            printFormat("[TARGET] %s #%d: %s\r\n", verb, idx + 1, normGrid);
+        }
+        return;
+    }
+
+    if (hasSubcommandPrefix(arg, "save")) {
+        if (!targetPresetManager_) {
+            println("[TARGET] Target preset manager not available.");
+            return;
+        }
+        const char *p = arg + 4;
+        while (*p == ' ' || *p == '\t') p++;
+        char labelBuf[64];
+        size_t lLen = 0;
+        while (p[lLen] && lLen < sizeof(labelBuf) - 1) {
+            labelBuf[lLen] = p[lLen];
+            lLen++;
+        }
+        while (lLen > 0 && (labelBuf[lLen - 1] == ' ' || labelBuf[lLen - 1] == '\t')) {
+            lLen--;
+        }
+        labelBuf[lLen] = '\0';
+
+        CliNavContext nctx = getNavContext();
+        char normGrid[7];
+        if (!TargetPresetManager::normalizeGrid(nctx.targetGrid, normGrid)) {
+            println("[TARGET ERROR] No valid 6-char active target grid to save.");
+            return;
+        }
+
+        if (!targetPresetManager_->addOrUpdatePreset(normGrid, lLen > 0 ? labelBuf : nullptr, nowSec)) {
+            printFormat("[TARGET ERROR] Failed to save preset '%s'.\r\n", normGrid);
+            return;
+        }
+
+        int idx = targetPresetManager_->findIndexByGrid(normGrid);
+        const TargetPreset *preset = (idx >= 0) ? targetPresetManager_->getPreset(static_cast<size_t>(idx)) : nullptr;
+        if (preset && preset->label[0] != '\0') {
+            printFormat("[TARGET] Saved #%d: %s (%s)\r\n", idx + 1, preset->grid, preset->label);
+        } else {
+            printFormat("[TARGET] Saved #%d: %s\r\n", idx + 1, normGrid);
+        }
+        return;
+    }
+
+    if (hasSubcommandPrefix(arg, "del") || hasSubcommandPrefix(arg, "delete")) {
+        if (!targetPresetManager_) {
+            println("[TARGET] Target preset manager not available.");
+            return;
+        }
+        const char *p = arg + (startsWithIgnoreCase(arg, "delete") ? 6 : 3);
+        while (*p == ' ' || *p == '\t') p++;
+        if (*p == '\0') {
+            println("[TARGET ERROR] Usage: target del <INDEX|GRID>");
+            return;
+        }
+
+        char token[32];
+        size_t tLen = 0;
+        while (p[tLen] && p[tLen] != ' ' && p[tLen] != '\t' && tLen < sizeof(token) - 1) {
+            token[tLen] = p[tLen];
+            tLen++;
+        }
+        token[tLen] = '\0';
+
+        int index1Based = 0;
+        if (parseStrictPositiveInt(token, index1Based)) {
+            size_t count = targetPresetManager_->getCount();
+            if (count == 0) {
+                println("[TARGET ERROR] Preset list is empty.");
+                return;
+            }
+            if (index1Based < 1 || static_cast<size_t>(index1Based) > count) {
+                printFormat("[TARGET ERROR] Preset #%d out of range (1-%zu).\r\n", index1Based, count);
+                return;
+            }
+            const TargetPreset *existing = targetPresetManager_->getPreset(static_cast<size_t>(index1Based - 1));
+            char deletedGrid[7] = {0};
+            if (existing) {
+                std::snprintf(deletedGrid, sizeof(deletedGrid), "%s", existing->grid);
+            }
+            targetPresetManager_->removePreset(static_cast<size_t>(index1Based - 1));
+            printFormat("[TARGET] Deleted #%d: %s\r\n", index1Based, deletedGrid);
+            return;
+        }
+
+        char normGrid[7];
+        if (TargetPresetManager::normalizeGrid(token, normGrid)) {
+            int idx = targetPresetManager_->findIndexByGrid(normGrid);
+            if (idx < 0) {
+                printFormat("[TARGET ERROR] Preset '%s' not found.\r\n", normGrid);
+                return;
+            }
+            targetPresetManager_->removePresetByGrid(normGrid);
+            printFormat("[TARGET] Deleted #%d: %s\r\n", idx + 1, normGrid);
+            return;
+        }
+
+        printFormat("[TARGET ERROR] Invalid preset index or grid: '%s'\r\n", token);
+        return;
+    }
+
+    if (hasSubcommandPrefix(arg, "list") || hasSubcommandPrefix(arg, "show")) {
+        if (!targetPresetManager_) {
+            println("[TARGET] Target preset manager not available.");
+            return;
+        }
+        size_t count = targetPresetManager_->getCount();
+        size_t maxTargets = targetPresetManager_->getMaxTargets();
+        printFormat("=== Saved Target Presets (%zu/%zu) ===\r\n", count, maxTargets);
+        if (count == 0) {
+            println("  (No saved target presets)");
+        } else {
+            for (size_t i = 0; i < count; ++i) {
+                const TargetPreset *p = targetPresetManager_->getPreset(i);
+                if (!p) continue;
+                const char *lbl = (p->label[0] != '\0') ? p->label : "(none)";
+                printFormat("  #%zu: %s - %-11s (uses: %u, slot: t%zu)\r\n",
+                            i + 1, p->grid, lbl,
+                            static_cast<unsigned>(p->useCount), i);
+            }
+        }
+        println("===================================");
+        return;
+    }
+
+    if (hasSubcommandPrefix(arg, "max")) {
+        if (!targetPresetManager_) {
+            println("[TARGET] Target preset manager not available.");
+            return;
+        }
+        const char *p = arg + 3;
+        while (*p == ' ' || *p == '\t') p++;
+        if (*p == '\0') {
+            printFormat("[TARGET] Max presets capacity: %zu (range: %u-%u)\r\n",
+                        targetPresetManager_->getMaxTargets(), MIN_TARGET_PRESETS, ABS_MAX_TARGET_PRESETS);
+            return;
+        }
+        int val = 0;
+        if (!parseStrictPositiveInt(p, val)) {
+            printFormat("[TARGET ERROR] Invalid capacity. Range: %u-%u.\r\n",
+                        MIN_TARGET_PRESETS, ABS_MAX_TARGET_PRESETS);
+            return;
+        }
+        targetPresetManager_->setMaxTargets(static_cast<size_t>(val), true);
+        printFormat("[TARGET] Max presets capacity set to %zu\r\n", targetPresetManager_->getMaxTargets());
+        return;
+    }
+
+    if (hasSubcommandPrefix(arg, "clear")) {
+        if (!targetPresetManager_) {
+            println("[TARGET] Target preset manager not available.");
+            return;
+        }
+        targetPresetManager_->clearAll();
+        println("[TARGET] Cleared all presets.");
         return;
     }
 

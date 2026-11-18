@@ -15,7 +15,8 @@ AppController::AppController(Board &board,
                              SerialCli &serialCli,
                              RoverLogManager *roverLogManager,
                              BleSerialManager *bleManager,
-                             QsoLogManager *qsoLogManager)
+                             QsoLogManager *qsoLogManager,
+                             TargetPresetManager *targetPresetManager)
     : board_(board),
       displayUi_(displayUi),
       inputManager_(inputManager),
@@ -25,6 +26,7 @@ AppController::AppController(Board &board,
       serialCli_(serialCli),
       roverLogManagerRef_(roverLogManager ? roverLogManager : &roverLogManagerOwned_),
       qsoLogManagerRef_(qsoLogManager ? qsoLogManager : &qsoLogManagerOwned_),
+      targetPresetManagerRef_(targetPresetManager ? targetPresetManager : &targetPresetManagerOwned_),
       bleManager_(bleManager),
       bleConnected_(false),
       hasLocation_(false),
@@ -380,6 +382,7 @@ void AppController::begin() {
     calibration_.begin();
     roverLogManagerRef_->begin();
     qsoLogManagerRef_->begin();
+    targetPresetManagerRef_->begin();
 
     gpsManager_.setSimulator(&gpsSimulator_);
 #if defined(ARDUINO)
@@ -427,6 +430,7 @@ void AppController::begin() {
     }
     serialCli_.setRoverLogManager(roverLogManagerRef_);
     serialCli_.setQsoLogManager(qsoLogManagerRef_);
+    serialCli_.setTargetPresetManager(targetPresetManagerRef_);
     serialCli_.setQsoLoggedCallback([](const QsoEntry &entry, size_t qsoIndex, unsigned long nowMs, void *ctx) {
         auto *self = static_cast<AppController*>(ctx);
         if (self) self->showQsoCard(entry, qsoIndex, nowMs);

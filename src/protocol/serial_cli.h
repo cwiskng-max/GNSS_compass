@@ -10,6 +10,7 @@
 #include "../system/rover_log_manager.h"
 #include "../system/qso_entry.h"
 #include "../system/qso_log_manager.h"
+#include "../system/target_preset_manager.h"
 #include "ble_serial_manager.h"
 #include "line_buffer.h"
 
@@ -60,7 +61,8 @@ public:
     SerialCli(GpsManager &gpsManager, Calibration &calibration, GpsSimulator &simulator,
               RoverLogManager *roverLogManager = nullptr,
               BleSerialManager *bleManager = nullptr,
-              QsoLogManager *qsoLogManager = nullptr);
+              QsoLogManager *qsoLogManager = nullptr,
+              TargetPresetManager *targetPresetManager = nullptr);
 
     // Initializes CLI state
     void begin();
@@ -136,6 +138,10 @@ public:
     void setQsoLogManager(QsoLogManager *mgr) { qsoLogManager_ = mgr; }
     QsoLogManager* getQsoLogManager() const { return qsoLogManager_; }
 
+    // Target Presets
+    void setTargetPresetManager(TargetPresetManager *mgr) { targetPresetManager_ = mgr; }
+    TargetPresetManager* getTargetPresetManager() const { return targetPresetManager_; }
+
     void setQsoLoggedCallback(CliQsoLoggedCallback cb, void *context = nullptr) {
         qsoLoggedCb_ = cb;
         qsoLoggedContext_ = context;
@@ -177,6 +183,7 @@ public:
     void handleLogDefault(const char *arg);
     void handleLogCall(const char *arg);
     void printLogHelp();
+    void printTargetHelp();
     void printGpsHelp();
     void printSimHelp();
     void printCalHelp();
@@ -263,6 +270,7 @@ private:
     GpsSimulator &simulator_;
     RoverLogManager *roverLogManager_;
     QsoLogManager *qsoLogManager_;
+    TargetPresetManager *targetPresetManager_;
     BleSerialManager *bleManager_;
     CliSource activeSource_;
 

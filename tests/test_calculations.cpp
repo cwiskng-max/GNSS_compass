@@ -5511,6 +5511,172 @@ void test_target_preset_deletion_and_clear() {
     PASS();
 }
 
+void test_serial_cli_target_presets_usb_and_ble() {
+    TEST("SerialCli target preset subcommands over USB and BLE + AppController wiring");
+    TargetPresetManager::resetHostStorage();
+
+    Board board;
+    DisplayUi display;
+    InputManager input;
+    GpsManager gps;
+    Calibration cal;
+    GpsSimulator sim;
+    RoverLogManager roverLog;
+    QsoLogManager qsoLog;
+    TargetPresetManager presetMgr;
+    BleSerialManager ble;
+    SerialCli cli(gps, cal, sim, &roverLog, &ble, &qsoLog, &presetMgr);
+    AppController app(board, display, input, gps, cal, sim, cli, &roverLog, &ble, &qsoLog, &presetMgr);
+
+    app.begin();
+    app.setMyGrid("CM87wa");
+
+    std::string usbOut;
+    cli.setOutputHandler([](const char *str, void *ctx) {
+        auto *out = static_cast<std::string*>(ctx);
+        if (out && str) out->append(str);
+    }, &usbOut);
+
+    // 1. USB: target list when empty
+    usbOut.clear();
+    cli.executeCommand("target list", 1000, CLI_SOURCE_USB);
+    ASSERT_TRUE(usbOut.find("Saved Target Presets (0/100)") != std::string::npos);
+    ASSERT_TRUE(usbOut.find("(No saved target presets)") != std::string::npos);
+
+    // 2. USB: target add with label containing spaces
+    usbOut.clear();
+    cli.executeCommand("target add CM97bb LOMA PRIETA", 2000, CLI_SOURCE_USB);
+    ASSERT_TRUE(usbOut.find("[TARGET] Added #1: CM97bb (LOMA PRIETA)") != std::string::npos);
+    ASSERT_TRUE(presetMgr.getCount() == 1);
+    ASSERT_STR_EQ(presetMgr.getPreset(0)->grid, "CM97bb");
+    ASSERT_STR_EQ(presetMgr.getPreset(0)->label, "LOMA PRIETA");
+
+    // 3. USB: target add without label uses regional summit lookup
+    usbOut.clear();
+    cli.executeCommand("target add cm87VU", 3000, CLI_SOURCE_USB);
+    ASSERT_TRUE(usbOut.find("[TARGET] Added #1: CM87vu (DIABLO)") != std::string::npos);
+    ASSERT_TRUE(presetMgr.getCount() == 2);
+
+    // 4. USB: target add duplicate grid updates existing without duplicating
+    usbOut.clear();
+    cli.executeCommand("target add cm97BB MT LOMA", 4000, CLI_SOURCE_USB);
+    ASSERT_TRUE(usbOut.find("[TARGET] Updated #") != std::string::npos);
+    ASSERT_TRUE(usbOut.find("CM97bb (MT LOMA)") != std::string::npos);
+    ASSERT_TRUE(presetMgr.getCount() == 2);
+
+    // 5. USB: target add error cases (missing args, invalid grid)
+    usbOut.clear();
+    cli.executeCommand("target add", 4100, CLI_SOURCE_USB);
+    ASSERT_TRUE(usbOut.find("[TARGET ERROR]") != std::string::npos);
+    usbOut.clear();
+    cli.executeCommand("target add BADGRID TEST", 4200, CLI_SOURCE_USB);
+    ASSERT_TRUE(usbOut.find("[TARGET ERROR] Invalid 6-char Maidenhead grid") != std::string::npos);
+
+    // 6. USB: target <grid> (plain & NATO phonetics) still sets active target directly
+    usbOut.clear();
+    cli.executeCommand("target CM88no", 5000, CLI_SOURCE_USB);
+    ASSERT_TRUE(usbOut.find("[TARGET] Target set to CM88no") != std::string::npos);
+    ASSERT_STR_EQ(app.getTargetGrid(), "CM88no");
+
+    // 7. USB: target save [LABEL...] saves current active target grid (CM88no -> ST HELN or custom)
+    usbOut.clear();
+    cli.executeCommand("target save MT ST HELEN", 6000, CLI_SOURCE_USB);
+    ASSERT_TRUE(usbOut.find("[TARGET] Saved #") != std::string::npos);
+    ASSERT_TRUE(usbOut.find("CM88no (MT ST HELEN)") != std::string::npos);
+    ASSERT_TRUE(presetMgr.getCount() == 3);
+
+    // 8. USB: target list prints index, grid, label, use count, and NVS slot
+    usbOut.clear();
+    cli.executeCommand("target list", 7000, CLI_SOURCE_USB);
+    ASSERT_TRUE(usbOut.find("Saved Target Presets (3/100)") != std::string::npos);
+    ASSERT_TRUE(usbOut.find("CM88no") != std::string::npos);
+    ASSERT_TRUE(usbOut.find("MT ST HELEN") != std::string::npos);
+    ASSERT_TRUE(usbOut.find("uses: 0, slot: t0") != std::string::npos);
+
+    // 9. USB: target max [N] query, set, clamp, and invalid input rejection
+    usbOut.clear();
+    cli.executeCommand("target max", 7100, CLI_SOURCE_USB);
+    ASSERT_TRUE(usbOut.find("Max presets capacity: 100") != std::string::npos);
+
+    usbOut.clear();
+    cli.executeCommand("target max 25", 7200, CLI_SOURCE_USB);
+    ASSERT_TRUE(usbOut.find("Max presets capacity set to 25") != std::string::npos);
+    ASSERT_TRUE(presetMgr.getMaxTargets() == 25);
+
+    usbOut.clear();
+    cli.executeCommand("target max -5", 7300, CLI_SOURCE_USB);
+    ASSERT_TRUE(usbOut.find("[TARGET ERROR]") != std::string::npos);
+    ASSERT_TRUE(presetMgr.getMaxTargets() == 25);
+
+    usbOut.clear();
+    cli.executeCommand("target max abc", 7400, CLI_SOURCE_USB);
+    ASSERT_TRUE(usbOut.find("[TARGET ERROR]") != std::string::npos);
+    ASSERT_TRUE(presetMgr.getMaxTargets() == 25);
+
+    // 10. USB: target del by 1-based index and by grid
+    usbOut.clear();
+    cli.executeCommand("target del 1", 7500, CLI_SOURCE_USB);
+    ASSERT_TRUE(usbOut.find("[TARGET] Deleted #1: CM88no") != std::string::npos);
+    ASSERT_TRUE(presetMgr.getCount() == 2);
+
+    usbOut.clear();
+    cli.executeCommand("target del cm87vu", 7600, CLI_SOURCE_USB);
+    ASSERT_TRUE(usbOut.find("[TARGET] Deleted #") != std::string::npos);
+    ASSERT_TRUE(usbOut.find("CM87vu") != std::string::npos);
+    ASSERT_TRUE(presetMgr.getCount() == 1);
+
+    usbOut.clear();
+    cli.executeCommand("target del 99", 7700, CLI_SOURCE_USB);
+    ASSERT_TRUE(usbOut.find("[TARGET ERROR]") != std::string::npos);
+
+    usbOut.clear();
+    cli.executeCommand("target del DM99zz", 7800, CLI_SOURCE_USB);
+    ASSERT_TRUE(usbOut.find("[TARGET ERROR]") != std::string::npos);
+
+    // 11. USB: target clear wipes immediately (batch provisioning friendly)
+    usbOut.clear();
+    cli.executeCommand("target clear", 7900, CLI_SOURCE_USB);
+    ASSERT_TRUE(usbOut.find("[TARGET] Cleared all presets.") != std::string::npos);
+    ASSERT_TRUE(presetMgr.isEmpty());
+
+    // 12. BLE path: batch provisioning & subcommands over BLE UART
+    ble.setConnected(true);
+    ble.setSubscribed(true);
+    ble.clearTxBuffer();
+
+    const char *bleScript =
+        "target clear\n"
+        "target add CM87vu DIABLO\n"
+        "target add CM97be UMUNHUM\n"
+        "target add CM97bb LOMA PRIETA\n"
+        "target charlie mike eight eight quebec kilo\n"
+        "target save\n"
+        "target max 30\n"
+        "target list\n"
+        "target del 2\n";
+    ble.simulateRx(bleScript, std::strlen(bleScript));
+    for (unsigned long t = 8000; t < 9000; t += 20) {
+        cli.update(t);
+    }
+
+    const std::string &bleOut = ble.getTxBuffer();
+    ASSERT_TRUE(bleOut.find("[TARGET] Cleared all presets.") != std::string::npos);
+    ASSERT_TRUE(bleOut.find("[TARGET] Added #1: CM87vu (DIABLO)") != std::string::npos);
+    ASSERT_TRUE(bleOut.find("[TARGET] Added #2: CM97be (UMUNHUM)") != std::string::npos);
+    ASSERT_TRUE(bleOut.find("[TARGET] Added #3: CM97bb (LOMA PRIETA)") != std::string::npos);
+    ASSERT_TRUE(bleOut.find("[TARGET] Target set to CM88qk") != std::string::npos);
+    ASSERT_STR_EQ(app.getTargetGrid(), "CM88qk");
+    ASSERT_TRUE(bleOut.find("[TARGET] Saved #") != std::string::npos);
+    ASSERT_TRUE(bleOut.find("CM88qk") != std::string::npos);
+    ASSERT_TRUE(bleOut.find("Max presets capacity set to 30") != std::string::npos);
+    ASSERT_TRUE(bleOut.find("Saved Target Presets (4/30)") != std::string::npos);
+    ASSERT_TRUE(bleOut.find("[TARGET] Deleted #2:") != std::string::npos);
+    ASSERT_TRUE(presetMgr.getCount() == 3);
+    ASSERT_TRUE(presetMgr.getMaxTargets() == 30);
+
+    PASS();
+}
+
 int main() {
     std::cout << "========================================" << std::endl;
     std::cout << "  GNSS Compass Unit Test Suite" << std::endl;
@@ -5581,6 +5747,7 @@ int main() {
     test_target_preset_sorting_and_usage();
     test_target_preset_capacity_eviction_and_nvs();
     test_target_preset_deletion_and_clear();
+    test_serial_cli_target_presets_usb_and_ble();
 
     std::cout << "========================================" << std::endl;
     std::cout << "  All " << tests_passed << " / " << tests_run << " tests PASSED successfully!" << std::endl;

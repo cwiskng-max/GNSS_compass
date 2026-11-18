@@ -18,6 +18,7 @@
 #include "../protocol/ble_serial_manager.h"
 #include "rover_log_manager.h"
 #include "qso_log_manager.h"
+#include "target_preset_manager.h"
 #include "../ui/rover_card.h"
 #include "../ui/rover_history_modal.h"
 #include "../ui/qso_card.h"
@@ -49,7 +50,8 @@ public:
                   SerialCli &serialCli,
                   RoverLogManager *roverLogManager = nullptr,
                   BleSerialManager *bleManager = nullptr,
-                  QsoLogManager *qsoLogManager = nullptr);
+                  QsoLogManager *qsoLogManager = nullptr,
+                  TargetPresetManager *targetPresetManager = nullptr);
 
     void begin();
     void update(unsigned long nowMs = 0);
@@ -92,6 +94,8 @@ public:
     const RoverLogManager& getRoverLogManager() const { return *roverLogManagerRef_; }
     QsoLogManager& getQsoLogManager() { return *qsoLogManagerRef_; }
     const QsoLogManager& getQsoLogManager() const { return *qsoLogManagerRef_; }
+    TargetPresetManager& getTargetPresetManager() { return *targetPresetManagerRef_; }
+    const TargetPresetManager& getTargetPresetManager() const { return *targetPresetManagerRef_; }
     GridEditor& getGridEditor() { return gridEditor_; }
     const GridEditor& getGridEditor() const { return gridEditor_; }
     const char* getTargetGrid() const { return gridEditor_.getGrid(); }
@@ -151,6 +155,8 @@ private:
     RoverLogManager *roverLogManagerRef_;
     QsoLogManager qsoLogManagerOwned_;
     QsoLogManager *qsoLogManagerRef_;
+    TargetPresetManager targetPresetManagerOwned_;
+    TargetPresetManager *targetPresetManagerRef_;
     BleSerialManager *bleManager_;
     bool bleConnected_;
 
