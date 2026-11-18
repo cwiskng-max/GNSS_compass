@@ -52,70 +52,45 @@ flowchart TD
 
 ## 3. Storage Architecture: ESP32 NVS (`Preferences.h`)
 
-### Non-Volatile Data Scheme & Memory Sizing
-The target list is stored in a dedicated NVS namespace (`"targets"`) using a fixed-capacity, structured array. This guarantees that targets survive power cycles, vehicle transit shutdowns, and firmware updates.
+### Non-Volatile Data Scheme, Configurable Capacity, & Shared NVS Helper
+The target list is stored in NVS using the same indexed-key architecture as `RoverLogManager` (`target_log` / `target_cfg` namespaces), managed through a lightweight shared helper (`src/system/nvs_store.h` providing `NvsConfig` and `NvsListStore<T>`) so new NVS-backed managers avoid duplicating `#if defined(ARDUINO)` / host-mock persistence boilerplate. (Existing `RoverLogManager` and `QsoLogManager` remain untouched for MVP.)
 
-#### Memory & Flash Budget Analysis
-There is **no restrictive hardware memory limit** on the ESP32-S3:
-* **Hardware Specs:** ESP32-S3 features 16 MB NOR Flash, 8 MB OPI PSRAM, and 512 KB internal SRAM.
-* **Struct Footprint with Summit Names:** Each preset contains a 6-character Maidenhead locator, an optional 9-character human-readable summit/callsign label (e.g. `"DIABLO"`, `"UMUNHUM"`, `"BEACON"`), and a timestamp:
+#### Capacity & Struct Footprint
+* **Configurable Max Size:** Like Rover History (`DEFAULT_MAX_ROVER_STOPS = 100`, `10–500`), Target Presets supports a configurable capacity `maxTargets_` (**default `100`**, clamped **`10–500`**) persisted under `"target_cfg"` (`"max_targets"`), adjustable via `target max <n>`.
+* **Indexed NVS Keys:** Storing entries as indexed keys (`t0`, `t1`, ...) with `count` avoids the ~4 KB ESP-IDF single-blob limit, scaling cleanly up to 500 presets with automatic orphan cleanup if capacity is reduced.
+* **Struct Footprint (`TargetPreset`):** Each preset contains a 6-character Maidenhead locator, an optional 11-character human-readable label (spaces allowed, e.g. `"MT DIABLO"`, `"LOMA PRIETA"`), a usage counter for frequency-first sorting, and a timestamp:
   ```cpp
-  #define MAX_TARGET_PRESETS 20
-  #define MAX_LABEL_LEN 10
+  #define DEFAULT_MAX_TARGET_PRESETS 100
+  #define MIN_TARGET_PRESETS         10
+  #define ABS_MAX_TARGET_PRESETS     500
+  #define MAX_TARGET_LABEL_LEN       12
 
+  #pragma pack(push, 1)
   struct TargetPreset {
-    char grid[7];              // "CM87vu" (6 chars + null)
-    char label[MAX_LABEL_LEN]; // "DIABLO" (up to 9 chars + null)
-    uint32_t lastUsedTime;     // Unix timestamp or sequence counter
+    char     grid[7];                      // "CM87vu" (6 chars + null)
+    char     label[MAX_TARGET_LABEL_LEN];  // "MT DIABLO" (up to 11 chars + null, spaces allowed)
+    uint16_t useCount;                     // Incremented on [ LOAD / SELECT ] for frequency sorting
+    uint32_t lastUsedTime;                 // Unix timestamp or sequence counter (tie-breaker)
   };
-
-  struct TargetPresetList {
-    uint8_t count;
-    TargetPreset items[MAX_TARGET_PRESETS];
-    uint16_t checksum;
-  };
+  #pragma pack(pop)
   ```
-* **Total Storage Size:** For **20 presets with labels**, the entire `TargetPresetList` occupies only **423 bytes**:
-  $$\text{Size} = 1\text{ byte (count)} + (20 \times 21\text{ bytes}) + 2\text{ bytes (checksum)} = 423\text{ bytes}$$
-* **NVS Partition Fit:** Standard ESP-IDF NVS flash pages are 4,096 bytes, and individual NVS blobs comfortably hold up to 4,000 bytes. At 423 bytes, the 20-preset roster consumes $\approx 10\%$ of a single NVS page and negligible RAM ($< 0.1\%$).
-* **Contest Realism:** Expanding to **20 named presets** provides complete coverage for a multi-day rover weekend spanning 15–20 regional mountain summits, microwave beacons, and frequent contest contacts across multiple grid squares.
+* **Sorting (MVP):** Presets are sorted by **usage frequency (`useCount` descending)**, with `lastUsedTime` descending as a tie-breaker so the most frequently worked summits always appear at the top.
 
 ### Flash Wear Mitigation & Write Gating
 NOR flash wear leveling is handled automatically by ESP-IDF NVS. To further minimize flash writes and keep a pre-loaded contest roster clean:
 * Presets are committed to NVS **only** on explicit modification:
-  1. An explicit `[ + SAVE CURRENT ]` action in the Target Presets modal (or `target save [LABEL]` via CLI).
-  2. A CLI provisioning command (`target add`, `target del`, `target clear`) over USB Serial or BLE UART.
-  3. An entry is deleted (`[ DELETE ITEM ]`) or the entire list is cleared (`[ HOLD TO CLEAR ALL ]`).
+  1. An explicit `[ + SAVE CURRENT ]` action in the Target Presets modal (or `target save [LABEL...]` via CLI).
+  2. Loading a preset via `[ LOAD / SELECT ]` (updates `useCount` and `lastUsedTime`).
+  3. A CLI provisioning command (`target add`, `target del`, `target clear`, `target max`) over USB Serial or BLE UART.
+  4. An entry is deleted (`[ DELETE ITEM ]`) or the entire list is cleared (`[ HOLD TO CLEAR ALL ]`).
 * Auto-locking the target editor after 5 seconds does **not** automatically bookmark transient/exploratory grids into the preset list.
-* Writes are bypassed if the current active target already matches an existing preset (unless promoting/updating label).
-
-```cpp
-void saveTargetPresetsToNVS(const TargetPresetList& list) {
-  Preferences prefs;
-  prefs.begin("targets", false);
-  prefs.putBytes("preset_blob", &list, sizeof(TargetPresetList));
-  prefs.end();
-}
-
-bool loadTargetPresetsFromNVS(TargetPresetList& list) {
-  Preferences prefs;
-  prefs.begin("targets", true);
-  size_t len = prefs.getBytes("preset_blob", &list, sizeof(TargetPresetList));
-  prefs.end();
-  
-  if (len != sizeof(TargetPresetList) || list.count > MAX_TARGET_PRESETS) {
-    list.count = 0; // Initialize empty on first boot or corruption
-    return false;
-  }
-  return true;
-}
-```
+* Entries are overwritten in place via `NvsListStore<TargetPreset>` without calling `clear()` mid-write, protecting against power loss.
 
 ---
 
 ## 4. UI Layout & Circular Display Specifications (480x480)
 
-The target list interface uses a dedicated modal view (`UI_MODE_TARGET_LIST`), visually consistent with the Antenna Calibration modal (`UI_MODE_CALIBRATING`).
+The target list interface uses a dedicated modal view (`UiMode::TargetList`), visually consistent with the Antenna Calibration and Rover History modals.
 
 ### Circular Geometry & Chord Constraints
 On a 480x480 circular panel, the modal card is centered with an inset width of 380 px ($X \in [50, 430]$) and height of 350 px ($Y \in [65, 415]$), preventing bezel clipping at all four corners.
@@ -125,15 +100,15 @@ On a 480x480 circular panel, the modal card is centered with an inset width of 3
             .-'     '-.
           .'   Row 1   '.     Y=35: Live Local Grid (mygrid) & UTC
          / +---------------+ \
-        |  | TARGET PRESETS|  | Y=75: Modal Header with count (X/20)
+        |  | TARGET PRESETS|  | Y=75: Modal Header with count (X/100)
         |  +---------------+  |
         |  |1.CM87vu DIABLO 048°|#| Y=125: Item 1 (Active) [Scroll Track]
         |  |2.CM97be UMUNHUM142°|#| Y=175: Item 2          [Thumb #    ]
-        |  |3.CM88no ST_HELN338°| | Y=225: Item 3          [Track      ]
+        |  |3.CM88no ST HELN338°| | Y=225: Item 3          [Track      ]
         |  +---------------+  |
         |  |[LOAD] [DEL] [+SAVE]| Y=272: Load Selected / Delete Item / Save Current
         |  | [HOLD TO CLEAR ALL]| Y=324: 1.5s Hold-to-Clear Safety Bar (Wipe All)
-         \ +---------------+ /  Y=376: Cancel / Back Button
+         \ +---------------+ /  Y=376: [ CANCEL ] Button
           '.   Row 6   .'
             '-.     .-'
                '---' (Y = 480)
@@ -144,16 +119,16 @@ On a 480x480 circular panel, the modal card is centered with an inset width of 3
 | Component | Coordinates | Visual Styling | Function / Interaction |
 | :--- | :--- | :--- | :--- |
 | **Modal Background** | $X \in [45, 435]$, $Y \in [65, 415]$ | Dark Slate (`0x10A2`), 12px rounded corner | Modal background container |
-| **Header Bar** | $X \in [60, 420]$, $Y \in [75, 105]$ | Yellow (`0xFFE0`), Font Size 2 | `"SAVED TARGET GRIDS (3/20)"` |
-| **List Entry 1** | $X \in [60, 408]$, $Y \in [115, 160]$ | Cyan border if selected, Font Size 3 | Visible item 1 (Grid locator, live azimuth & distance) |
+| **Header Bar** | $X \in [60, 420]$, $Y \in [75, 105]$ | Yellow (`0xFFE0`), Font Size 2 | `"SAVED TARGET GRIDS (3/100)"` |
+| **List Entry 1** | $X \in [60, 408]$, $Y \in [115, 160]$ | Cyan border if selected, Font Size 3 | Visible item 1 (Grid locator, label, live azimuth & distance) |
 | **List Entry 2** | $X \in [60, 408]$, $Y \in [165, 210]$ | Gray border, Font Size 3 | Visible item 2 |
 | **List Entry 3** | $X \in [60, 408]$, $Y \in [215, 260]$ | Gray border, Font Size 3 | Visible item 3 |
-| **Scroll Indicator** | $X \in [414, 422]$, $Y \in [115, 260]$ | Gray track, White thumb bar | Proportional scroll position indicator (0 to 19) |
-| **[ LOAD / SELECT ]** | $X \in [55, 170]$, $Y \in [270, 314]$ | Emerald Green (`0x0540`), Font Size 2 | Tap activates highlighted preset as active `remote` |
-| **[ DELETE ITEM ]** | $X \in [180, 290]$, $Y \in [270, 314]$ | Crimson Red (`0x9800`), Font Size 2 | Tap removes only the selected preset item |
-| **[ + SAVE CURRENT ]** | $X \in [300, 425]$, $Y \in [270, 314]$ | Cobalt Blue (`0x2945`), Font Size 2 | Tap bookmarks current active target into list |
+| **Scroll Indicator** | $X \in [414, 422]$, $Y \in [115, 260]$ | Gray track, White thumb bar | Proportional scroll position indicator (`0` to `count - 1`) |
+| **[ LOAD / SELECT ]** | $X \in [55, 170]$, $Y \in [270, 314]$ | Emerald Green (`0x0540`), Font Size 2 | Activates preset as target, increments `useCount`, **stops Rover Mode** |
+| **[ DELETE ITEM ]** | $X \in [180, 290]$, $Y \in [270, 314]$ | Crimson Red (`0x9800`), Font Size 2 | Removes only the selected preset item |
+| **[ + SAVE CURRENT ]** | $X \in [300, 425]$, $Y \in [270, 314]$ | Cobalt Blue (`0x2945`), Font Size 2 | Bookmarks current active target into list |
 | **[ HOLD TO CLEAR ALL ]** | $X \in [55, 425]$, $Y \in [324, 368]$ | Dark Red (`0x5000`), Yellow fill bar | 1.5-second hold wipes entire list from NVS |
-| **[ CLOSE ]** | $X \in [150, 330]$, $Y \in [376, 408]$ | Dark Gray (`0x3186`), Font Size 2 | Tap dismisses modal without changes |
+| **[ CANCEL ]** | $X \in [150, 330]$, $Y \in [376, 408]$ | Dark Gray (`0x3186`), Font Size 2 | Dismisses modal without changing target or stopping Rover Mode |
 
 ---
 
@@ -215,10 +190,11 @@ Before heading into the field, operators can connect the compass to a laptop or 
 ```text
 === Target Preset Serial Commands ===
 target <GRID>               - Set active target grid directly (existing voice/CLI command)
-target add <GRID> [LABEL]   - Add or update a target preset (e.g., "target add CM87vu DIABLO")
-target save [LABEL]         - Save the current active target grid into presets (optional label)
+target add <GRID> [LABEL]   - Add or update a target preset (spaces allowed, e.g. "target add CM97bb LOMA PRIETA")
+target save [LABEL]         - Save the current active target grid into presets (optional label, spaces allowed)
 target del <INDEX|GRID>     - Remove a specific target by 1-based index or grid
-target list                 - Print all saved targets with index, grid, label, and NVS slot
+target list                 - Print all saved targets with index, grid, label, use count, and NVS slot
+target max [N]              - Show or set max preset capacity (10-500, default 100)
 target clear                - Wipe all target presets
 ```
 
@@ -340,46 +316,40 @@ stateDiagram-v2
         Cleared --> Browsing : List cleared (count=0), NVS wiped
     }
 
-    LoadTarget --> Normal : Apply target to GridEditor & updateNavigation()
-    Browsing --> Normal : Tap [ CLOSE ] or Inactivity Timeout (30s)
+    LoadTarget --> Normal : Apply target, stop Rover Mode if active, & updateNavigation()
+    Browsing --> Normal : Tap [ CANCEL ] or Inactivity Timeout (30s) (Rover Mode unchanged)
 ```
 
 ### 1. Opening the Modal
 * **Touch:** Long-press anywhere on the Target Grid (Row 2, $Y \in [70, 235]$) for $\ge 500\text{ ms}$. (A short tap $< 500\text{ ms}$ retains existing character edit behavior, and pressing the rotary encoder switch in `UiMode::Normal` retains its existing edit-mode toggle).
+* **Rover Mode Behavior:** Opening the modal, scrolling, saving, deleting, or dismissing via **`[ CANCEL ]`** (or the 30-second timeout) **does NOT stop Rover Mode**.
 
 ### 2. Navigating Presets
 * **Rotary Encoder:** Turning the knob increments/decrements the selected index ($0$ to $\text{count} - 1$) with responsive visual highlight scrolling.
 * **Direct Touch:** Tapping any visible row immediately sets it as the selected index.
 
-### 3. Loading a Target
-* Tapping `[ LOAD / SELECT ]` (or pressing the encoder switch while `UiMode::TargetList` is active):
-  1. Loads `preset.grid` into `GridEditor` (`setGrid(...)`) and disarms character editing.
-  2. If `operationalMode_ == OperationalMode::Rover`, calls `onTargetEdited(nowMs)` to perform the standard Rover-to-Bearing transition.
-  3. Recalculates bearings and distances via `updateNavigation()`.
-  4. Exits modal back to `UiMode::Normal`.
+### 3. Loading a Target (and Stopping Rover Mode)
+* Tapping **`[ LOAD / SELECT ]`** (or pressing the encoder switch while `UiMode::TargetList` is active):
+  1. Increments `preset.useCount`, updates `preset.lastUsedTime`, and re-sorts/saves to NVS.
+  2. Loads `preset.grid` into `GridEditor` (`setGrid(...)`) and disarms character editing.
+  3. **If `operationalMode_ == OperationalMode::Rover`, calls `stopRoverMode(nowMs)`** (which logs the transit stop via `onTargetEdited(nowMs)` and transitions to `OperationalMode::Bearing`).
+  4. Recalculates bearings and distances via `updateNavigation()` and exits modal back to `UiMode::Normal`.
 
 ### 4. Deleting an Individual Item (Accidental Entry Removal)
 If an operator accidentally bookmarks a typo (e.g., `CM87aa` instead of `CM87wa`) or no longer needs a specific summit in their roster:
 * Highlight the target using the rotary knob or direct row tap.
 * Tap the red **`[ DELETE ITEM ]`** button.
 * **Action:**
-  1. Removes that specific entry at `selectedPresetIndex`.
-  2. Shifts all subsequent items down by one position:
-     ```cpp
-     for (int i = index; i < targetPresets.count - 1; i++) {
-       targetPresets.items[i] = targetPresets.items[i + 1];
-     }
-     targetPresets.count--;
-     ```
-  3. Clamps `selectedPresetIndex` within $[0, \text{count} - 1]$.
-  4. Commits the updated 20-item list to NVS immediately.
-  5. Redraws the list in place without closing the modal.
+  1. Removes that specific entry at `selectedPresetIndex_`.
+  2. Clamps `selectedPresetIndex_` within $[0, \text{count} - 1]$.
+  3. Commits the updated list to NVS immediately via `NvsListStore`.
+  4. Redraws the list in place without closing the modal.
 
 ### 5. Adding / Bookmarking Current Target
 * Tapping `[ + SAVE CURRENT ]`:
-  1. Validates that `remote` is a complete 6-character Maidenhead locator.
-  2. Checks for duplicates: if already present, moves the entry to the top (MRU promotion).
-  3. If new and list is full ($20/20$), evicts the oldest unselected entry (FIFO/LRU).
+  1. Validates that `gridEditor_.getGrid()` is a complete 6-character Maidenhead locator.
+  2. Checks for duplicates: if already present, updates `lastUsedTime` (and preserves existing label/useCount).
+  3. If new and list is at `maxTargets_`, evicts the least-used / oldest entry.
   4. Commits to NVS and redraws modal with updated count.
 
 ### 6. Safe Reset / Hold-to-Clear All Architecture (Full List Wipe)
@@ -388,9 +358,8 @@ When starting a new contest weekend or roving into a completely different divisi
 * **Accidental Tap Protection:** Requires a continuous **1,500 ms long-press** with an animated yellow progress bar filling from left to right across the button.
 * If the finger drifts off or is released before 1,500 ms, the wipe is aborted with no changes.
 * Once the 1,500 ms hold completes:
-  1. `targetPresets.count = 0;`
-  2. Commits the empty list struct to NVS.
-  3. The display redraws showing `"SAVED TARGET GRIDS (0/20)"` with an `"Empty List"` placeholder.
+  1. Clears all items (`count = 0`) and commits to NVS.
+  2. The display redraws showing `"SAVED TARGET GRIDS (0/100)"` (using configured `maxTargets_`) with an `"Empty List"` placeholder.
 
 ---
 
@@ -398,27 +367,30 @@ When starting a new contest weekend or roving into a completely different divisi
 
 ### New Modules & Enum Extensions
 * **`UiMode::TargetList`** added to `enum class UiMode` in `src/system/app_controller.h` (alongside `Normal`, `Calibrating`, `RoverHistory`, and `QsoCard`).
+* **`NvsConfig` & `NvsListStore<T>`** (`src/system/nvs_store.h`):
+  * Shared header-only abstraction for scalar NVS config keys and indexed NVS item lists (`count` + `t0`, `t1`, ... with orphan cleanup and `#if !defined(ARDUINO)` host test mock storage).
 * **`TargetPresetManager`** (`src/system/target_preset_manager.h/.cpp`):
-  * Manages `TargetPresetList` persistence in NVS (`"targets"` / `"preset_blob"` under `#if defined(ARDUINO)`), with static host-test mock storage under `#if !defined(ARDUINO)` (matching `RoverLogManager` and `QsoLogManager`).
-  * API: `begin()`, `addOrPromotePreset(const char* grid, const char* label = nullptr)`, `removePreset(size_t index)`, `removePresetByGrid(const char* grid)`, `clearAll()`, `getPresets()`, `getCount()`.
+  * Uses `NvsConfig` and `NvsListStore<TargetPreset>` for persistence, configurable `maxTargets_` (`10–500`, default `100`), and frequency-first sorting (`useCount` descending, `lastUsedTime` tie-breaker).
+  * API: `begin()`, `addOrUpdatePreset(const char* grid, const char* label = nullptr)`, `recordUse(size_t index, uint32_t nowSec)`, `removePreset(size_t index)`, `removePresetByGrid(const char* grid)`, `clearAll()`, `setMaxTargets(size_t max)`, `getPresets()`, `getCount()`.
 * **`TargetListModal`** (`src/ui/target_list_modal.h/.cpp`):
-  * Owns modal rendering (`drawModal()`, `drawPresetRow()`, `drawClearButton()`, etc.) and host-testable string formatters (`formatPresetRow()`, `formatHeader()`).
+  * Owns modal rendering (`drawModal()`, `drawPresetRow()`, `drawClearButton()`, `drawCancelButton()`, etc.) and host-testable string formatters (`formatPresetRow()`, `formatHeader()`).
 * **`InputManager` & `AppController`** (`src/ui/input_manager.h/.cpp`, `src/system/app_controller.h/.cpp`):
   * `InputManager` emits `LongPressTargetGridTriggered`, `TargetRowTouched`, and modal button/hold events (`HoldClearButtonProgress`, `ClearButtonCommitted`).
-  * `AppController` coordinates modal state (`selectedPresetIndex_`, `presetScrollOffset_`, `targetModalOpenedMillis_`), 30s inactivity timeout, and `SerialCli` callbacks.
+  * `AppController` coordinates modal state (`selectedPresetIndex_`, `presetScrollOffset_`, `targetModalOpenedMillis_`), 30s inactivity timeout, Rover Mode exit only on `[ LOAD / SELECT ]`, and `SerialCli` callbacks.
 
 ---
 
 ## 8. Verification & Test Plan
 
 ### Automated Host Unit Tests (`tests/test_calculations.cpp` via `tests/run_tests.sh`)
-1. **Deduplication Verification:** Adding `CM87vu` twice results in `count == 1` with the entry promoted to index 0.
-2. **Capacity & Overflow Handling:** Adding 21 unique grids into a 20-slot list evicts the oldest entry and preserves the 20 most recent.
-3. **Individual Item Deletion & Shift:** Deleting an entry from the middle of a list (e.g., removing item at index 2 of 5) correctly shifts subsequent items up, sets `count = 4`, and updates NVS.
-4. **Format & Bounds Checking:** Rejection of non-Maidenhead or malformed strings.
-5. **Hold-to-Clear Timing Logic:** Asserts that hold durations $< 1,500\text{ ms}$ reject clearing, while $\ge 1,500\text{ ms}$ commit an empty list.
-6. **NVS Blob Serialization:** Byte-for-byte fidelity of 423-byte list serialization and deserialization.
-7. **CLI Integration (`SerialCli`):** Tests `target add`, `target save`, `target del`, `target list`, `target clear`, and ensures `target <grid>` continues to set the active target directly.
+1. **Deduplication & Labels with Spaces:** Adding `CM87vu` twice updates without duplicating; `target add CM97bb LOMA PRIETA` preserves spaces up to `MAX_TARGET_LABEL_LEN - 1`.
+2. **Frequency-First Sorting:** Loading a preset increments `useCount` and moves higher-frequency targets to the top (with `lastUsedTime` tie-breaker).
+3. **Configurable Capacity & Eviction:** Clamps `maxTargets_` to `10–500` (default `100`), persists via `NvsConfig`, and evicts least-used/oldest entry when full.
+4. **Individual Item Deletion & Shift:** Deleting an entry removes it cleanly, shifts subsequent items, and updates NVS.
+5. **Format & Bounds Checking:** Rejection of non-Maidenhead or malformed strings.
+6. **Hold-to-Clear Timing Logic:** Asserts that hold durations $< 1,500\text{ ms}$ reject clearing, while $\ge 1,500\text{ ms}$ commit an empty list.
+7. **Rover Mode Stop Semantics:** Asserts that opening the modal, scrolling, saving, deleting, or tapping `[ CANCEL ]` / timing out leaves `OperationalMode::Rover` active, whereas `[ LOAD / SELECT ]` stops Rover Mode and logs the stop.
+8. **CLI Integration (`SerialCli`):** Tests `target add`, `target save`, `target del`, `target list`, `target max`, `target clear`, and ensures `target <grid>` continues to set the active target directly.
 
 ### On-Device Hardware & Visual Self-Test
 * Extend `SelfTest` (`src/system/self_test.cpp`) to include preset manager invariant checks and optional visual modal verification.
@@ -427,7 +399,8 @@ When starting a new contest weekend or roving into a completely different divisi
 
 ## 9. Future Extensibility
 
-* **Azimuth Quick-Sort:** Option to sort presets dynamically by relative clockwise bearing from current mast heading.
+* **Configurable Sort Modes (CLI):** Add `target sort <freq|bearing|grid|name>` persisted in NVS to switch between usage frequency, clockwise bearing from current heading, alphabetical grid, and alphabetical label. *(An on-screen sort-mode UI control is considered even further out and intentionally omitted to keep the 480×480 modal uncluttered.)*
+* **Shared NVS Store Adoption:** Migrate `RoverLogManager` and `QsoLogManager` onto `src/system/nvs_store.h` to eliminate existing NVS boilerplate duplication.
 * **Elevation Tilt Calculation:** Storing target elevation (meters ASL) to calculate dish vertical tilt angle in addition to true azimuth.
 * **WebBluetooth / Mobile Companion:** Import and export preset rosters directly from contest logging software via BLE.
 
