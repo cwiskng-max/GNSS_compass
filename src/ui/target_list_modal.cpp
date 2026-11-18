@@ -170,7 +170,7 @@ void TargetListModal::drawLoadButton(bool highlighted, bool enabled) {
     gfx_->fillRoundRect(TARGET_BTN_LOAD_X, TARGET_BTN_LOAD_Y, TARGET_BTN_LOAD_W, TARGET_BTN_LOAD_H, 8, bg);
     gfx_->drawRoundRect(TARGET_BTN_LOAD_X, TARGET_BTN_LOAD_Y, TARGET_BTN_LOAD_W, TARGET_BTN_LOAD_H, 8, border);
 
-    const char *lbl = "[ LOAD ]";
+    const char *lbl = "[ USE ]";
     int lw = static_cast<int>(std::strlen(lbl)) * CHAR_W(2);
     gfx_->setTextSize(2);
     gfx_->setTextColor(fg, bg);
@@ -250,7 +250,7 @@ void TargetListModal::drawCancelButton(bool highlighted) {
     gfx_->fillRoundRect(TARGET_BTN_CANCEL_X, TARGET_BTN_CANCEL_Y, TARGET_BTN_CANCEL_W, TARGET_BTN_CANCEL_H, 8, bg);
     gfx_->drawRoundRect(TARGET_BTN_CANCEL_X, TARGET_BTN_CANCEL_Y, TARGET_BTN_CANCEL_W, TARGET_BTN_CANCEL_H, 8, DARK_GRAY_BORDER);
 
-    const char *lbl = "[ CANCEL ]";
+    const char *lbl = "[ CLOSE ]";
     int lw = static_cast<int>(std::strlen(lbl)) * CHAR_W(2);
     gfx_->setTextSize(2);
     gfx_->setTextColor(fg, bg);

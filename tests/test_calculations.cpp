@@ -6043,6 +6043,21 @@ void test_app_controller_target_list_workflow_e2e() {
     ASSERT_TRUE(targetMgr.isEmpty());
     ASSERT_TRUE(app.getUiMode() == UiMode::TargetList);
 
+    // 15. Touch-driven [ + SAVE ] -> [ CANCEL ] (including padded Cancel hitbox) returns to Normal
+    input.injectTouch(true, TARGET_BTN_SAVE_X + 10, TARGET_BTN_SAVE_Y + 10, 44000);
+    app.update(44000);
+    input.injectTouch(false, 0, 0, 44080);
+    app.update(44080);
+    ASSERT_TRUE(targetMgr.getCount() == 1);
+    ASSERT_TRUE(app.getUiMode() == UiMode::TargetList);
+
+    input.injectTouch(true, TARGET_BTN_CANCEL_X - 10, TARGET_BTN_CANCEL_Y + TARGET_BTN_CANCEL_H + 6, 44250);
+    app.update(44250);
+    input.injectTouch(false, 0, 0, 44330);
+    app.update(44330);
+    app.update(44460); // >= 120 ms pendingModalButtonRelease_
+    ASSERT_TRUE(app.getUiMode() == UiMode::Normal);
+
     PASS();
 }
 

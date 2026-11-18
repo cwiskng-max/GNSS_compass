@@ -75,12 +75,12 @@ For rapid switching between pre-loaded contest summits or previously dialed grid
 2. **Live Geodetic Preview:** Each row displays its index, 6-character grid, label, and live true azimuth + distance in km calculated from your current GPS position. Presets are sorted by usage frequency (`useCount` descending, then most recently used).
 3. **Browse & Select:**
    * **Rotate Bezel** or **tap a visible row** to highlight a preset.
-   * **Tap `[ LOAD ]`** (or **press the rotary knob**) to load the selected grid as your active target, increment its usage count, and close the modal. *(If Rover Mode is active, loading a preset stops Rover Mode just like manual target changes.)*
-4. **Save, Delete, Clear, or Cancel:**
+   * **Tap `[ USE ]`** (or **press the rotary knob**) to load the selected grid as your active target, increment its usage count, and close the modal. *(If Rover Mode is active, selecting a preset stops Rover Mode just like manual target changes.)*
+4. **Save, Delete, Clear, or Close:**
    * **`[ + SAVE ]`:** Bookmarks the current active target grid into NVS (auto-assigning a regional summit name if matched).
    * **`[ DEL ]`:** Removes only the currently highlighted preset.
    * **`[ HOLD TO CLEAR ALL ]`:** Press and **hold for 1.5 seconds** (yellow progress bar) to wipe the entire preset list from NVS.
-   * **`[ CANCEL ]`** (or **30 seconds** of inactivity): Closes the modal without changing your target or stopping Rover Mode.
+   * **`[ CLOSE ]`** (or **30 seconds** of inactivity): Closes the modal without changing your target or stopping Rover Mode.
 
 *(Presets can also be pre-loaded or managed over USB-C / BLE UART using `target add|save|del|list|max|clear`; see [SERIAL.md](SERIAL.md#311-remote-target-setting-target-grid).)*
 

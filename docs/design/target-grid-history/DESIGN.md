@@ -124,11 +124,11 @@ On a 480x480 circular panel, the modal card is centered with an inset width of 3
 | **List Entry 2** | $X \in [60, 408]$, $Y \in [165, 210]$ | Gray border, Font Size 3 | Visible item 2 |
 | **List Entry 3** | $X \in [60, 408]$, $Y \in [215, 260]$ | Gray border, Font Size 3 | Visible item 3 |
 | **Scroll Indicator** | $X \in [414, 422]$, $Y \in [115, 260]$ | Gray track, White thumb bar | Proportional scroll position indicator (`0` to `count - 1`) |
-| **[ LOAD / SELECT ]** | $X \in [55, 170]$, $Y \in [270, 314]$ | Emerald Green (`0x0540`), Font Size 2 | Activates preset as target, increments `useCount`, **stops Rover Mode** |
-| **[ DELETE ITEM ]** | $X \in [180, 290]$, $Y \in [270, 314]$ | Crimson Red (`0x9800`), Font Size 2 | Removes only the selected preset item |
-| **[ + SAVE CURRENT ]** | $X \in [300, 425]$, $Y \in [270, 314]$ | Cobalt Blue (`0x2945`), Font Size 2 | Bookmarks current active target into list |
-| **[ HOLD TO CLEAR ALL ]** | $X \in [55, 425]$, $Y \in [324, 368]$ | Dark Red (`0x5000`), Yellow fill bar | 1.5-second hold wipes entire list from NVS |
-| **[ CANCEL ]** | $X \in [150, 330]$, $Y \in [376, 408]$ | Dark Gray (`0x3186`), Font Size 2 | Dismisses modal without changing target or stopping Rover Mode |
+| **`[ USE ]`** | $X \in [55, 170]$, $Y \in [270, 314]$ | Emerald Green (`0x0540`), Font Size 2 | Activates preset as target, increments `useCount`, **stops Rover Mode** |
+| **`[ DEL ]`** | $X \in [180, 290]$, $Y \in [270, 314]$ | Crimson Red (`0x9800`), Font Size 2 | Removes only the selected preset item |
+| **`[ + SAVE ]`** | $X \in [300, 425]$, $Y \in [270, 314]$ | Cobalt Blue (`0x2945`), Font Size 2 | Bookmarks current active target into list |
+| **`[ HOLD TO CLEAR ALL ]`** | $X \in [55, 425]$, $Y \in [324, 368]$ | Dark Red (`0x5000`), Yellow fill bar | 1.5-second hold wipes entire list from NVS |
+| **`[ CLOSE ]`** | $X \in [150, 330]$, $Y \in [376, 408]$ | Dark Gray (`0x3186`), Font Size 2 | Dismisses modal without changing target or stopping Rover Mode |
 
 ### Main Screen Integration: Row 2 Target Label Subtitle
 On the main compass screen (`UiMode::Normal`), `DisplayUi::renderTargetGrid()` currently leaves the caret row directly beneath the 6-character target grid (`REMSTARTY + CHAR_H(REMSIZE)`) blank whenever `isEditing == false`:

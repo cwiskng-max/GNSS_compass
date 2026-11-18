@@ -181,8 +181,8 @@ ModalButtonId InputManager::getTargetModalButtonFromTouch(int16_t x, int16_t y) 
         y >= TARGET_BTN_CLEAR_Y && y <= (TARGET_BTN_CLEAR_Y + TARGET_BTN_CLEAR_H)) {
         return ModalButtonId::TargetClear;
     }
-    if (x >= TARGET_BTN_CANCEL_X && x <= (TARGET_BTN_CANCEL_X + TARGET_BTN_CANCEL_W) &&
-        y >= TARGET_BTN_CANCEL_Y && y <= (TARGET_BTN_CANCEL_Y + TARGET_BTN_CANCEL_H)) {
+    if (x >= (TARGET_BTN_CANCEL_X - 20) && x <= (TARGET_BTN_CANCEL_X + TARGET_BTN_CANCEL_W + 20) &&
+        y >= (TARGET_BTN_CANCEL_Y - 6) && y <= (TARGET_BTN_CANCEL_Y + TARGET_BTN_CANCEL_H + 12)) {
         return ModalButtonId::Cancel;
     }
     return ModalButtonId::None;
