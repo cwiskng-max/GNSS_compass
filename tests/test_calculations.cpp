@@ -5697,18 +5697,18 @@ void test_target_list_modal_formatters() {
     TargetPreset diablo("CM87vu", "DIABLO", 2, 100);
     TargetListModal::formatPresetRow(0, diablo, here, true, buf, sizeof(buf));
     ASSERT_TRUE(std::strncmp(buf, "1. CM87vu DIABLO ", 17) == 0);
-    ASSERT_TRUE(std::strchr(buf, '\xf7') != nullptr);
+    ASSERT_TRUE(std::strchr(buf, '\xf8') != nullptr);
     ASSERT_TRUE(std::strstr(buf, "---") == nullptr);
     ASSERT_TRUE(buf[std::strlen(buf) - 1] == 'k');
 
     // No GPS -> placeholder bearing and distance
     TargetListModal::formatPresetRow(0, diablo, here, false, buf, sizeof(buf));
-    ASSERT_STR_EQ(buf, "1. CM87vu DIABLO  ---\xf7 ---k");
+    ASSERT_STR_EQ(buf, "1. CM87vu DIABLO  ---\xf8 ---k");
 
     // Empty label -> spaces keep columns aligned
     TargetPreset noLabel("CM97be", "", 0, 0);
     TargetListModal::formatPresetRow(3, noLabel, here, false, buf, sizeof(buf));
-    ASSERT_STR_EQ(buf, "4. CM97be         ---\xf7 ---k");
+    ASSERT_STR_EQ(buf, "4. CM97be         ---\xf8 ---k");
 
     PASS();
 }

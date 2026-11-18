@@ -37,14 +37,14 @@ void TargetListModal::formatPresetRow(size_t index,
         if (lblW < 3) lblW = 3;
         if (lblW > 7) lblW = 7;
 
-        std::snprintf(outBuf, bufSize, "%zu. %s %-*.*s %03d\xf7 %3dk",
+        std::snprintf(outBuf, bufSize, "%zu. %s %-*.*s %03d\xf8 %3dk",
                       idxNum, preset.grid, lblW, lblW, lbl, azDeg, distKm);
     } else {
         int lblW = 27 - (idxChars + 7 + 5 + 4 + 1);
         if (lblW < 3) lblW = 3;
         if (lblW > 7) lblW = 7;
 
-        std::snprintf(outBuf, bufSize, "%zu. %s %-*.*s ---\xf7 ---k",
+        std::snprintf(outBuf, bufSize, "%zu. %s %-*.*s ---\xf8 ---k",
                       idxNum, preset.grid, lblW, lblW, lbl);
     }
 }

@@ -912,6 +912,7 @@ void AppController::handleUserEvent(const UserEvent &event, unsigned long nowMs)
             if (currentUiMode_ == UiMode::RoverHistory) {
                 displayUi_.getRoverHistoryModal().drawCancelButton(true);
             } else if (currentUiMode_ == UiMode::TargetList) {
+                targetModalOpenedMillis_ = nowMs;
                 displayUi_.getTargetListModal().drawCancelButton(true);
             } else {
                 displayUi_.getCalModal().drawCancelButton(true);
