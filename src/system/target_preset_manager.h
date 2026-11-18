@@ -13,7 +13,7 @@
 #pragma pack(push, 1)
 struct TargetPreset {
     char     grid[7];                      // "CM87vu" (6 chars + null)
-    char     label[MAX_TARGET_LABEL_LEN];  // "MT DIABLO" (up to 11 chars + null, spaces allowed)
+    char     label[MAX_TARGET_LABEL_LEN];  // "Mt Diablo" (up to 16 chars + null, spaces allowed)
     uint16_t useCount;                     // Incremented on [ LOAD / SELECT ] for frequency sorting
     uint32_t lastUsedTime;                 // Unix timestamp or sequence counter (tie-breaker)
 

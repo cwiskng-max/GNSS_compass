@@ -5359,7 +5359,7 @@ void test_target_preset_dedup_and_labels() {
     TargetPresetManager mgr;
     mgr.begin();
 
-    // Label with spaces up to MAX_TARGET_LABEL_LEN - 1 (11 chars)
+    // Label with spaces up to MAX_TARGET_LABEL_LEN - 1 (16 chars)
     ASSERT_TRUE(mgr.addOrUpdatePreset("CM97bb", "LOMA PRIETA", 100));
     ASSERT_TRUE(mgr.getCount() == 1);
     ASSERT_STR_EQ(mgr.getPreset(0)->grid, "CM97bb");
@@ -5373,11 +5373,11 @@ void test_target_preset_dedup_and_labels() {
     ASSERT_TRUE(mgr.getPreset(0)->useCount == 1);
     ASSERT_TRUE(mgr.getPreset(0)->lastUsedTime == 200);
 
-    // Explicit new label updates label and truncates safely at 11 chars
+    // Explicit new label updates label and truncates safely at 16 chars
     ASSERT_TRUE(mgr.addOrUpdatePreset("CM97bb", "VERY LONG SUMMIT NAME", 250));
     ASSERT_TRUE(mgr.getCount() == 1);
     ASSERT_TRUE(std::strlen(mgr.getPreset(0)->label) == MAX_TARGET_LABEL_LEN - 1);
-    ASSERT_STR_EQ(mgr.getPreset(0)->label, "VERY LONG S");
+    ASSERT_STR_EQ(mgr.getPreset(0)->label, "VERY LONG SUMMIT");
     ASSERT_TRUE(mgr.getPreset(0)->useCount == 1);
 
     PASS();
@@ -5722,9 +5722,9 @@ void test_display_ui_row2_label_behavior() {
     DisplayUi::formatTargetLabel("MT DIABLO", false, false, buf, sizeof(buf));
     ASSERT_STR_EQ(buf, "MT DIABLO");
 
-    // Truncates to MAX_TARGET_LABEL_LEN - 1 (11 chars)
+    // Truncates to MAX_TARGET_LABEL_LEN - 1 (16 chars)
     DisplayUi::formatTargetLabel("LOMA PRIETA SUMMIT", false, false, buf, sizeof(buf));
-    ASSERT_STR_EQ(buf, "LOMA PRIETA");
+    ASSERT_STR_EQ(buf, "LOMA PRIETA SUMM");
 
     // Editing mode -> cleared so '^' caret has full space
     DisplayUi::formatTargetLabel("MT DIABLO", true, false, buf, sizeof(buf));

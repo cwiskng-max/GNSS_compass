@@ -1324,7 +1324,7 @@ void SerialCli::handleTargetCommand(const char *arg, unsigned long nowMs) {
                 const TargetPreset *p = targetPresetManager_->getPreset(i);
                 if (!p) continue;
                 const char *lbl = (p->label[0] != '\0') ? p->label : "(none)";
-                printFormat("  #%zu: %s - %-11s (uses: %u, slot: t%zu)\r\n",
+                printFormat("  #%zu: %s - %-16s (uses: %u, slot: t%zu)\r\n",
                             i + 1, p->grid, lbl,
                             static_cast<unsigned>(p->useCount), i);
             }

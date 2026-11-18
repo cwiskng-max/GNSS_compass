@@ -330,7 +330,7 @@
 #define DEFAULT_MAX_TARGET_PRESETS   100
 #define MIN_TARGET_PRESETS           10
 #define ABS_MAX_TARGET_PRESETS       500
-#define MAX_TARGET_LABEL_LEN         12
+#define MAX_TARGET_LABEL_LEN         17
 
 #define TARGET_CLEAR_HOLD_MS         1500
 #define TARGET_MODAL_TIMEOUT_MS      30000

@@ -561,7 +561,7 @@ Pre-load contest summit rosters before heading into the field or manage presets 
 
 | Subcommand | Description |
 | :--- | :--- |
-| **`target add <GRID> [LABEL...]`** | Add or update a 6-char target preset (spaces allowed in label, max 11 chars; auto-fills regional summit name if omitted). |
+| **`target add <GRID> [LABEL...]`** | Add or update a 6-char target preset (spaces allowed in label, max 16 chars, truncated if longer; auto-fills regional summit name if omitted). |
 | **`target save [LABEL...]`** | Save the current active target grid into presets (optional label, spaces allowed). |
 | **`target del <INDEX\|GRID>`** | Remove a preset by 1-based list index or 6-char grid. |
 | **`target list`** | Print all saved presets with index, grid, label, use count, and capacity. |

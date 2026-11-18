@@ -58,17 +58,17 @@ The target list is stored in NVS using the same indexed-key architecture as `Rov
 #### Capacity & Struct Footprint
 * **Configurable Max Size:** Like Rover History (`DEFAULT_MAX_ROVER_STOPS = 100`, `10–500`), Target Presets supports a configurable capacity `maxTargets_` (**default `100`**, clamped **`10–500`**) persisted under `"target_cfg"` (`"max_targets"`), adjustable via `target max <n>`.
 * **Indexed NVS Keys:** Storing entries as indexed keys (`t0`, `t1`, ...) with `count` avoids the ~4 KB ESP-IDF single-blob limit, scaling cleanly up to 500 presets with automatic orphan cleanup if capacity is reduced.
-* **Struct Footprint (`TargetPreset`):** Each preset contains a 6-character Maidenhead locator, an optional 11-character human-readable label (spaces allowed, e.g. `"Mt Diablo"`, `"Loma Prieta"`), a usage counter for frequency-first sorting, and a timestamp:
+* **Struct Footprint (`TargetPreset`):** Each preset contains a 6-character Maidenhead locator, an optional 16-character human-readable label (spaces allowed, e.g. `"Mt Diablo"`, `"Loma Prieta"`), a usage counter for frequency-first sorting, and a timestamp:
   ```cpp
   #define DEFAULT_MAX_TARGET_PRESETS 100
   #define MIN_TARGET_PRESETS         10
   #define ABS_MAX_TARGET_PRESETS     500
-  #define MAX_TARGET_LABEL_LEN       12
+  #define MAX_TARGET_LABEL_LEN       17
 
   #pragma pack(push, 1)
   struct TargetPreset {
     char     grid[7];                      // "CM87vu" (6 chars + null)
-    char     label[MAX_TARGET_LABEL_LEN];  // "Mt Diablo" (up to 11 chars + null, spaces allowed)
+    char     label[MAX_TARGET_LABEL_LEN];  // "Mt Diablo" (up to 16 chars + null, spaces allowed)
     uint16_t useCount;                     // Incremented on [ LOAD / SELECT ] for frequency sorting
     uint32_t lastUsedTime;                 // Unix timestamp or sequence counter (tie-breaker)
   };
