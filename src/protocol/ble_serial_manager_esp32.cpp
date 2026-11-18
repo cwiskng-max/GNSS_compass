@@ -4,7 +4,7 @@
 #if BLE_SERIAL_HW
 
 #include <Arduino.h>
-#include <Preferences.h>
+#include "../system/nvs_store.h"
 #include <BLEDevice.h>
 #include <BLEServer.h>
 #include <BLEUtils.h>
@@ -99,12 +99,9 @@ bool BleSerialManager::platformBegin(bool haveCustomName) {
     }
 
     if (!haveCustomName) {
-        Preferences prefs;
-        prefs.begin("compass", true);
-        String savedSuffix = prefs.getString("ble_suffix", "");
-        prefs.end();
+        std::string savedSuffix = NvsConfig("compass").getString("ble_suffix", "");
 
-        if (savedSuffix.length() > 0 && savedSuffix.length() <= kMaxSuffixLength) {
+        if (!savedSuffix.empty() && savedSuffix.length() <= kMaxSuffixLength) {
             std::strncpy(deviceSuffix_, savedSuffix.c_str(), sizeof(deviceSuffix_) - 1);
             deviceSuffix_[sizeof(deviceSuffix_) - 1] = '\0';
         } else {
@@ -353,14 +350,12 @@ void BleSerialManager::platformUpdateDeviceName() {
 }
 
 void BleSerialManager::platformSaveSuffix(const char *suffix) {
-    Preferences prefs;
-    prefs.begin("compass", false);
+    NvsConfig cfg("compass");
     if (suffix && suffix[0]) {
-        prefs.putString("ble_suffix", suffix);
+        cfg.putString("ble_suffix", suffix);
     } else {
-        prefs.remove("ble_suffix");
+        cfg.remove("ble_suffix");
     }
-    prefs.end();
 }
 
 #endif // BLE_SERIAL_HW

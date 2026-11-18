@@ -4653,6 +4653,10 @@ void test_app_controller_qso_card_interaction() {
     ASSERT_TRUE(app.getUiMode() == UiMode::QsoCard);
     ASSERT_TRUE(display.getQsoCard().isVisible());
     ASSERT_TRUE(app.getQsoCardOpenedMs() == 1000);
+    ASSERT_TRUE(display.getQsoCard().getTimeoutSec() == DEFAULT_QSO_CARD_TIMEOUT_S);
+    char okLbl[24];
+    QsoCard::formatOkButtonLabel(display.getQsoCard().getTimeoutSec(), okLbl, sizeof(okLbl));
+    ASSERT_STR_EQ(okLbl, "OK (Auto 5s)");
 
     // 2. Default 5-second non-blocking auto-dismiss
     app.update(5000);
@@ -4666,6 +4670,9 @@ void test_app_controller_qso_card_interaction() {
     // 2b. Configurable 10-second auto-dismiss via QsoLogManager
     qsoLog.setCardTimeoutSec(10);
     app.showQsoCard(q, 1, 7000);
+    ASSERT_TRUE(display.getQsoCard().getTimeoutSec() == 10);
+    QsoCard::formatOkButtonLabel(display.getQsoCard().getTimeoutSec(), okLbl, sizeof(okLbl));
+    ASSERT_STR_EQ(okLbl, "OK (Auto 10s)");
     app.update(12000); // 5s elapsed: still visible
     ASSERT_TRUE(app.getUiMode() == UiMode::QsoCard);
     app.update(17000); // 10s elapsed: dismissed
@@ -6224,6 +6231,116 @@ void test_target_preset_review_fixes() {
     PASS();
 }
 
+void test_migrated_nvs_stores() {
+    TEST("Migrated NvsConfig/NvsListStore paths for RoverLogManager and QsoLogManager");
+
+    // 1. RoverLogManager explicit max_stops flag, truncation, popLastStop, and reload
+    RoverLogManager::resetHostStorage();
+    ASSERT_TRUE(!RoverLogManager::isHostStorageMaxStopsExplicit());
+    ASSERT_TRUE(RoverLogManager::getHostStorageCount() == 0);
+
+    RoverLogManager r1;
+    r1.begin();
+    r1.setMaxStops(12, true);
+    ASSERT_TRUE(RoverLogManager::isHostStorageMaxStopsExplicit());
+    ASSERT_TRUE(RoverLogManager::getHostStorageMaxStops() == 12);
+
+    for (int i = 0; i < 14; ++i) {
+        char grid[9];
+        snprintf(grid, sizeof(grid), "CM87wa%02d", i);
+        r1.appendStop(RoverStop(1000 + i, 37.0 + i * 0.01, -122.0, grid, 20.0f, true));
+    }
+    ASSERT_TRUE(r1.getStopCount() == 12);
+    ASSERT_TRUE(RoverLogManager::getHostStorageCount() == 12);
+    ASSERT_STR_EQ(r1.getStop(0)->grid, "CM87wa02");
+    ASSERT_STR_EQ(r1.getLastStop()->grid, "CM87wa13");
+
+    ASSERT_TRUE(r1.popLastStop());
+    ASSERT_TRUE(RoverLogManager::getHostStorageCount() == 11);
+
+    RoverLogManager r2;
+    r2.begin();
+    ASSERT_TRUE(r2.getMaxStops() == 12);
+    ASSERT_TRUE(r2.getStopCount() == 11);
+    ASSERT_STR_EQ(r2.getStop(0)->grid, "CM87wa02");
+    ASSERT_STR_EQ(r2.getLastStop()->grid, "CM87wa12");
+
+    r2.setMaxStops(10, true);
+    ASSERT_TRUE(r2.getStopCount() == 10);
+    ASSERT_TRUE(RoverLogManager::getHostStorageCount() == 10);
+    ASSERT_STR_EQ(r2.getStop(0)->grid, "CM87wa03");
+
+    r2.clearHistory();
+    ASSERT_TRUE(RoverLogManager::getHostStorageCount() == 0);
+
+    // 2. QsoLogManager ring-buffer rollover persistence, O(1) head-delete, middle-delete, popLastQso
+    QsoLogManager::resetHostStorage();
+    QsoLogManager q1;
+    q1.begin();
+    q1.setMaxQsos(10, true);
+    q1.setDefaultBand("24 GHz", true);
+    q1.setMyCall("K6MG/R", true);
+    q1.setCardTimeoutSec(15, true);
+
+    for (int i = 0; i < 15; ++i) {
+        char call[12];
+        snprintf(call, sizeof(call), "W%dAW", i);
+        q1.appendQso(QsoEntry(2000 + i, call, "10 GHz", 10368100, "CM87wa", "CM88qk", 10.0f + i, 90.0f));
+    }
+    ASSERT_TRUE(q1.getQsoCount() == 10);
+    ASSERT_TRUE(QsoLogManager::getHostStorageCount() == 10);
+
+    // Reload from ring-buffered NVS (nvsHead_ == 5)
+    QsoLogManager q2;
+    q2.begin();
+    ASSERT_TRUE(q2.getMaxQsos() == 10);
+    ASSERT_STR_EQ(q2.getDefaultBand().c_str(), "24 GHz");
+    ASSERT_STR_EQ(q2.getMyCall().c_str(), "K6MG/R");
+    ASSERT_TRUE(q2.getCardTimeoutSec() == 15);
+    ASSERT_TRUE(q2.getQsoCount() == 10);
+    ASSERT_STR_EQ(q2.getQso(0)->callsign, "W5AW");
+    ASSERT_STR_EQ(q2.getQso(9)->callsign, "W14AW");
+
+    // O(1) delete of oldest entry (index 1) after rollover, then reload
+    ASSERT_TRUE(q2.deleteQsoByIndex(1));
+    ASSERT_TRUE(q2.getQsoCount() == 9);
+    QsoLogManager q3;
+    q3.begin();
+    ASSERT_TRUE(q3.getQsoCount() == 9);
+    ASSERT_STR_EQ(q3.getQso(0)->callsign, "W6AW");
+    ASSERT_STR_EQ(q3.getQso(8)->callsign, "W14AW");
+
+    // Middle delete (index 4 -> W9AW) with trailing shift, then reload
+    ASSERT_TRUE(q3.deleteQsoByIndex(4));
+    QsoLogManager q4;
+    q4.begin();
+    ASSERT_TRUE(q4.getQsoCount() == 8);
+    ASSERT_STR_EQ(q4.getQso(2)->callsign, "W8AW");
+    ASSERT_STR_EQ(q4.getQso(3)->callsign, "W10AW");
+
+    // popLastQso after rollover, then reload
+    ASSERT_TRUE(q4.popLastQso());
+    QsoLogManager q5;
+    q5.begin();
+    ASSERT_TRUE(q5.getQsoCount() == 7);
+    ASSERT_STR_EQ(q5.getLastQso()->callsign, "W13AW");
+
+    // 3. Legacy unversioned QsoEntry fallback & CRC corruption rejection
+    QsoLogManager::resetHostStorage();
+    QsoEntry legacyQso(3000, "N6LEGACY", "10 GHz", 10368100, "CM87wa", "CM88qk", 50.0f, 180.0f);
+    QsoLogManager::seedHostRawSlot(0, &legacyQso, sizeof(QsoEntry), 2, 0);
+    uint8_t corruptBuf[62]; // sizeof(NvsQsoRecord) with bad magic/CRC
+    std::memset(corruptBuf, 0xAA, sizeof(corruptBuf));
+    QsoLogManager::seedHostRawSlot(1, corruptBuf, sizeof(corruptBuf), 2, 0);
+
+    QsoLogManager qLegacy;
+    qLegacy.begin();
+    ASSERT_TRUE(qLegacy.getQsoCount() == 1);
+    ASSERT_STR_EQ(qLegacy.getQso(0)->callsign, "N6LEGACY");
+
+    PASS();
+}
+
 int main() {
     std::cout << "========================================" << std::endl;
     std::cout << "  GNSS Compass Unit Test Suite" << std::endl;
@@ -6300,6 +6417,7 @@ int main() {
     test_input_manager_target_list_hit_testing_and_gestures();
     test_app_controller_target_list_workflow_e2e();
     test_target_preset_review_fixes();
+    test_migrated_nvs_stores();
 
     std::cout << "========================================" << std::endl;
     std::cout << "  All " << tests_passed << " / " << tests_run << " tests PASSED successfully!" << std::endl;

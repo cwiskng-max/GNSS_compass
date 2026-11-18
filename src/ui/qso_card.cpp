@@ -49,16 +49,23 @@ void QsoCard::formatTime(uint32_t timestamp, char *outBuf, size_t bufSize) {
     }
 }
 
+void QsoCard::formatOkButtonLabel(uint16_t timeoutSec, char *outBuf, size_t bufSize) {
+    if (!outBuf || bufSize == 0) return;
+    uint16_t sec = (timeoutSec > 0) ? timeoutSec : DEFAULT_QSO_CARD_TIMEOUT_S;
+    snprintf(outBuf, bufSize, "OK (Auto %us)", static_cast<unsigned int>(sec));
+}
+
 bool QsoCard::isOkButtonTouched(int16_t x, int16_t y) {
     return (x >= QSO_TOUCH_OK_X_MIN && x <= QSO_TOUCH_OK_X_MAX &&
             y >= QSO_TOUCH_OK_Y_MIN && y <= QSO_TOUCH_OK_Y_MAX);
 }
 
-void QsoCard::show(const QsoEntry &qso, size_t qsoIndex, unsigned long nowMs) {
+void QsoCard::show(const QsoEntry &qso, size_t qsoIndex, unsigned long nowMs, uint16_t timeoutSec) {
     visible_ = true;
     activeQso_ = qso;
     activeQsoIndex_ = qsoIndex;
     openedMs_ = nowMs;
+    timeoutSec_ = (timeoutSec > 0) ? timeoutSec : DEFAULT_QSO_CARD_TIMEOUT_S;
 }
 
 void QsoCard::dismiss() {
@@ -74,7 +81,10 @@ bool QsoCard::checkTimeout(unsigned long nowMs, unsigned long timeoutMs) {
 }
 
 #if defined(ARDUINO)
-void QsoCard::drawModal(const QsoEntry &qso, size_t qsoIndex) {
+void QsoCard::drawModal(const QsoEntry &qso, size_t qsoIndex, uint16_t timeoutSec) {
+    if (timeoutSec > 0) {
+        timeoutSec_ = timeoutSec;
+    }
     if (!gfx_) return;
 
     // Outer modal card with green visual confirmation border
@@ -157,7 +167,8 @@ void QsoCard::drawOkButton(bool highlighted) {
     gfx_->fillRoundRect(QSO_BTN_OK_X, QSO_BTN_OK_Y, QSO_BTN_OK_W, QSO_BTN_OK_H, 8, bg);
     gfx_->drawRoundRect(QSO_BTN_OK_X, QSO_BTN_OK_Y, QSO_BTN_OK_W, QSO_BTN_OK_H, 8, border);
 
-    const char *lbl = "OK (Auto 10s)";
+    char lbl[24];
+    formatOkButtonLabel(timeoutSec_, lbl, sizeof(lbl));
     int lw = strlen(lbl) * CHAR_W(2);
     gfx_->setTextSize(2);
     gfx_->setTextColor(WHITE, bg);
@@ -165,6 +176,10 @@ void QsoCard::drawOkButton(bool highlighted) {
     gfx_->print(lbl);
 }
 #else
-void QsoCard::drawModal(const QsoEntry &, size_t) {}
+void QsoCard::drawModal(const QsoEntry &, size_t, uint16_t timeoutSec) {
+    if (timeoutSec > 0) {
+        timeoutSec_ = timeoutSec;
+    }
+}
 void QsoCard::drawOkButton(bool) {}
 #endif

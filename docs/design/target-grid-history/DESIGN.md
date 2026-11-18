@@ -409,7 +409,7 @@ When starting a new contest weekend or roving into a completely different divisi
 ## 9. Future Extensibility
 
 * **Configurable Sort Modes (CLI):** Add `target sort <freq|bearing|grid|name>` persisted in NVS to switch between usage frequency, clockwise bearing from current heading, alphabetical grid, and alphabetical label. *(An on-screen sort-mode UI control is considered even further out and intentionally omitted to keep the 480×480 modal uncluttered.)*
-* **Shared NVS Store Adoption:** Migrate `RoverLogManager` and `QsoLogManager` onto `src/system/nvs_store.h` to eliminate existing NVS boilerplate duplication.
+* **Shared NVS Store Adoption (Completed):** `TargetPresetManager`, `RoverLogManager`, `QsoLogManager`, `Calibration`, and `BleSerialManager` all use `src/system/nvs_store.h` (`NvsConfig` / `NvsListStore<T>`), eliminating duplicated NVS boilerplate.
 * **Elevation Tilt Calculation:** Storing target elevation (meters ASL) to calculate dish vertical tilt angle in addition to true azimuth.
 * **WebBluetooth / Mobile Companion:** Import and export preset rosters directly from contest logging software via BLE.
 

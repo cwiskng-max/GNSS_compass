@@ -6,6 +6,7 @@
 #include <vector>
 #include <string>
 #include "qso_entry.h"
+#include "nvs_store.h"
 #include "../config.h"
 
 /**
@@ -95,26 +96,30 @@ public:
     static std::string getHostStorageDefaultBand();
     static std::string getHostStorageMyCall();
     static uint16_t getHostStorageCardTimeoutSec();
+    static void seedHostRawSlot(size_t slot, const void *data, size_t len, size_t count, size_t head = 0);
 #endif
 
 private:
+#pragma pack(push, 1)
+    struct NvsQsoRecord {
+        uint32_t magic;
+        uint16_t version;
+        uint16_t crc16;
+        QsoEntry entry;
+    };
+#pragma pack(pop)
+
+    static NvsQsoRecord makeNvsRecord(const QsoEntry &qso);
+    static bool validateNvsRecord(const NvsQsoRecord &rec);
+
     std::vector<QsoEntry> qsos_;
     size_t maxQsos_;
     size_t nvsHead_;
     std::string defaultBand_;
     std::string myCall_;
     uint16_t cardTimeoutSec_;
-
-#if !defined(ARDUINO)
-    static std::vector<QsoEntry> s_hostNvsQsos;
-    static size_t s_hostNvsMaxQsos;
-    static bool s_hostNvsMaxQsosStored;
-    static std::string s_hostNvsDefaultBand;
-    static bool s_hostNvsDefaultBandStored;
-    static std::string s_hostNvsMyCall;
-    static bool s_hostNvsMyCallStored;
-    static uint16_t s_hostNvsCardTimeoutSec;
-    static bool s_hostNvsCardTimeoutSecStored;
-#endif
+    NvsConfig cfgStore_;
+    NvsConfig logCfgStore_;
+    NvsListStore<NvsQsoRecord> listStore_;
 };
 

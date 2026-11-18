@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <cmath>
+#include "nvs_store.h"
 
 /**
  * @brief Manages antenna azimuth alignment calibration offset, staging, and NVS persistence.
@@ -45,16 +46,13 @@ public:
 
 #if !defined(ARDUINO)
     // Host test mock helpers
-    static void resetHostStorage() { s_hostStorageOffset = 0.0f; }
-    static float getHostStorage() { return s_hostStorageOffset; }
+    static void resetHostStorage() { NvsConfig("compass").remove("cal_offset"); }
+    static float getHostStorage() { return NvsConfig("compass").getFloat("cal_offset", 0.0f); }
 #endif
 
 private:
     float activeOffset_;
     float proposedOffset_;
-
-#if !defined(ARDUINO)
-    static float s_hostStorageOffset;
-#endif
+    NvsConfig cfgStore_;
 };
 

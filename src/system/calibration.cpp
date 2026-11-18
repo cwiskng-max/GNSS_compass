@@ -3,14 +3,10 @@
 
 #if defined(ARDUINO)
 #include <Arduino.h>
-#include <Preferences.h>
-#else
-#include <cstdio>
-float Calibration::s_hostStorageOffset = 0.0f;
 #endif
 
 Calibration::Calibration()
-    : activeOffset_(0.0f), proposedOffset_(0.0f) {}
+    : activeOffset_(0.0f), proposedOffset_(0.0f), cfgStore_("compass") {}
 
 void Calibration::begin() {
     loadFromNvs();
@@ -18,26 +14,16 @@ void Calibration::begin() {
 }
 
 void Calibration::loadFromNvs() {
+    activeOffset_ = cfgStore_.getFloat("cal_offset", 0.0f);
 #if defined(ARDUINO)
-    Preferences prefs;
-    prefs.begin("compass", true);
-    activeOffset_ = prefs.getFloat("cal_offset", 0.0f);
-    prefs.end();
     Serial.printf("[NVS] Loaded antenna calibration offset: %+5.1f deg\r\n", activeOffset_);
-#else
-    activeOffset_ = s_hostStorageOffset;
 #endif
 }
 
 void Calibration::saveToNvs(float offsetDeg) {
+    cfgStore_.putFloat("cal_offset", offsetDeg);
 #if defined(ARDUINO)
-    Preferences prefs;
-    prefs.begin("compass", false);
-    prefs.putFloat("cal_offset", offsetDeg);
-    prefs.end();
     Serial.printf("[NVS] Saved antenna calibration offset: %+5.1f deg\r\n", offsetDeg);
-#else
-    s_hostStorageOffset = offsetDeg;
 #endif
 }
 

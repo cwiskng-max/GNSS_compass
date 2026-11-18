@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cctype>
 #include "../config.h"
+#include "nvs_store.h"
 
 /**
  * @brief Represents a persistent contest operating site / transit stop.
@@ -118,11 +119,7 @@ public:
 private:
     std::vector<RoverStop> stops_;
     size_t maxStops_;
-
-#if !defined(ARDUINO)
-    static std::vector<RoverStop> s_hostNvsStops;
-    static size_t s_hostNvsMaxStops;
-    static bool s_hostNvsMaxStopsStored;
-#endif
+    NvsConfig cfgStore_;
+    NvsListStore<RoverStop> listStore_;
 };
 

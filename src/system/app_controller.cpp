@@ -232,8 +232,9 @@ void AppController::showQsoCard(const QsoEntry &qso, size_t qsoIndex, unsigned l
     pendingModalButtonRelease_ = ModalButtonId::None;
     qsoCardOpenedMillis_ = nowMs;
     setUiMode(UiMode::QsoCard);
-    displayUi_.getQsoCard().show(qso, qsoIndex, nowMs);
-    displayUi_.getQsoCard().drawModal(qso, qsoIndex);
+    uint16_t timeoutSec = qsoLogManagerRef_ ? qsoLogManagerRef_->getCardTimeoutSec() : DEFAULT_QSO_CARD_TIMEOUT_S;
+    displayUi_.getQsoCard().show(qso, qsoIndex, nowMs, timeoutSec);
+    displayUi_.getQsoCard().drawModal(qso, qsoIndex, timeoutSec);
 }
 
 void AppController::dismissQsoCard() {

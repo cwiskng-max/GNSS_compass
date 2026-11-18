@@ -49,9 +49,9 @@ public:
 #if defined(ARDUINO)
         Preferences prefs;
         if (prefs.begin(ns_.c_str(), false)) {
-            prefs.putUShort(key, value);
+            size_t written = prefs.putUShort(key, value);
             prefs.end();
-            return true;
+            return written == sizeof(uint16_t);
         }
         return false;
 #else
@@ -60,21 +60,131 @@ public:
 #endif
     }
 
+    std::string getString(const char *key, const std::string &defaultValue) const {
+        if (!key || ns_.empty()) return defaultValue;
+#if defined(ARDUINO)
+        Preferences prefs;
+        if (prefs.begin(ns_.c_str(), true)) {
+            String val = prefs.getString(key, defaultValue.c_str());
+            prefs.end();
+            return std::string(val.c_str());
+        }
+        return defaultValue;
+#else
+        const auto &store = hostStringStore();
+        auto nsIt = store.find(ns_);
+        if (nsIt == store.end()) return defaultValue;
+        auto keyIt = nsIt->second.find(key);
+        if (keyIt == nsIt->second.end()) return defaultValue;
+        return keyIt->second;
+#endif
+    }
+
+    bool putString(const char *key, const std::string &value) {
+        if (!key || ns_.empty()) return false;
+#if defined(ARDUINO)
+        Preferences prefs;
+        if (prefs.begin(ns_.c_str(), false)) {
+            size_t written = prefs.putString(key, value.c_str());
+            prefs.end();
+            return written == value.size();
+        }
+        return false;
+#else
+        hostStringStore()[ns_][key] = value;
+        return true;
+#endif
+    }
+
+    float getFloat(const char *key, float defaultValue) const {
+        if (!key || ns_.empty()) return defaultValue;
+#if defined(ARDUINO)
+        Preferences prefs;
+        if (prefs.begin(ns_.c_str(), true)) {
+            float val = prefs.getFloat(key, defaultValue);
+            prefs.end();
+            return val;
+        }
+        return defaultValue;
+#else
+        const auto &store = hostFloatStore();
+        auto nsIt = store.find(ns_);
+        if (nsIt == store.end()) return defaultValue;
+        auto keyIt = nsIt->second.find(key);
+        if (keyIt == nsIt->second.end()) return defaultValue;
+        return keyIt->second;
+#endif
+    }
+
+    bool putFloat(const char *key, float value) {
+        if (!key || ns_.empty()) return false;
+#if defined(ARDUINO)
+        Preferences prefs;
+        if (prefs.begin(ns_.c_str(), false)) {
+            size_t written = prefs.putFloat(key, value);
+            prefs.end();
+            return written == sizeof(float);
+        }
+        return false;
+#else
+        hostFloatStore()[ns_][key] = value;
+        return true;
+#endif
+    }
+
+    bool remove(const char *key) {
+        if (!key || ns_.empty()) return false;
+#if defined(ARDUINO)
+        Preferences prefs;
+        if (prefs.begin(ns_.c_str(), false)) {
+            bool ok = prefs.remove(key);
+            prefs.end();
+            return ok;
+        }
+        return false;
+#else
+        bool removed = false;
+        auto uIt = hostUShortStore().find(ns_);
+        if (uIt != hostUShortStore().end()) removed |= (uIt->second.erase(key) > 0);
+        auto sIt = hostStringStore().find(ns_);
+        if (sIt != hostStringStore().end()) removed |= (sIt->second.erase(key) > 0);
+        auto fIt = hostFloatStore().find(ns_);
+        if (fIt != hostFloatStore().end()) removed |= (fIt->second.erase(key) > 0);
+        return removed;
+#endif
+    }
+
 #if !defined(ARDUINO)
     static void resetHostStorage(const char *ns = nullptr) {
         if (ns) {
             hostUShortStore().erase(ns);
+            hostStringStore().erase(ns);
+            hostFloatStore().erase(ns);
         } else {
             hostUShortStore().clear();
+            hostStringStore().clear();
+            hostFloatStore().clear();
         }
     }
 
     bool hasHostKey(const char *key) const {
         if (!key) return false;
-        const auto &store = hostUShortStore();
-        auto nsIt = store.find(ns_);
-        if (nsIt == store.end()) return false;
-        return nsIt->second.find(key) != nsIt->second.end();
+        const auto &uStore = hostUShortStore();
+        auto uNsIt = uStore.find(ns_);
+        if (uNsIt != uStore.end() && uNsIt->second.find(key) != uNsIt->second.end()) {
+            return true;
+        }
+        const auto &sStore = hostStringStore();
+        auto sNsIt = sStore.find(ns_);
+        if (sNsIt != sStore.end() && sNsIt->second.find(key) != sNsIt->second.end()) {
+            return true;
+        }
+        const auto &fStore = hostFloatStore();
+        auto fNsIt = fStore.find(ns_);
+        if (fNsIt != fStore.end() && fNsIt->second.find(key) != fNsIt->second.end()) {
+            return true;
+        }
+        return false;
     }
 #endif
 
@@ -84,6 +194,16 @@ private:
 #if !defined(ARDUINO)
     static std::map<std::string, std::map<std::string, uint16_t>>& hostUShortStore() {
         static std::map<std::string, std::map<std::string, uint16_t>> s_store;
+        return s_store;
+    }
+
+    static std::map<std::string, std::map<std::string, std::string>>& hostStringStore() {
+        static std::map<std::string, std::map<std::string, std::string>> s_store;
+        return s_store;
+    }
+
+    static std::map<std::string, std::map<std::string, float>>& hostFloatStore() {
+        static std::map<std::string, std::map<std::string, float>> s_store;
         return s_store;
     }
 #endif
@@ -134,20 +254,81 @@ public:
         auto it = store.find(ns_);
         if (it == store.end()) return;
 
-        size_t count = it->second.size();
+        size_t count = getHostCount();
         if (count > maxCount) {
             count = maxCount;
         }
         out.reserve(count);
         for (size_t i = 0; i < count; ++i) {
-            if (it->second[i].size() == sizeof(T)) {
+            auto slotIt = it->second.find(i);
+            if (slotIt != it->second.end() && slotIt->second.size() == sizeof(T)) {
                 T item;
-                std::memcpy(&item, it->second[i].data(), sizeof(T));
+                std::memcpy(&item, slotIt->second.data(), sizeof(T));
                 out.push_back(item);
             } else {
                 break;
             }
         }
+#endif
+    }
+
+    size_t getCount() const {
+        if (ns_.empty()) return 0;
+#if defined(ARDUINO)
+        Preferences prefs;
+        if (prefs.begin(ns_.c_str(), true)) {
+            uint16_t count = prefs.getUShort(countKey_.c_str(), 0);
+            prefs.end();
+            return count;
+        }
+        return 0;
+#else
+        return getHostCount();
+#endif
+    }
+
+    bool putCount(size_t newCount) {
+        if (ns_.empty()) return false;
+#if defined(ARDUINO)
+        Preferences prefs;
+        if (prefs.begin(ns_.c_str(), false)) {
+            size_t written = prefs.putUShort(countKey_.c_str(), static_cast<uint16_t>(newCount));
+            prefs.end();
+            return written == sizeof(uint16_t);
+        }
+        return false;
+#else
+        hostCountStore()[ns_] = newCount;
+        return true;
+#endif
+    }
+
+    bool getRawSlot(size_t index, void *buf, size_t bufSize, size_t &bytesRead) const {
+        bytesRead = 0;
+        if (ns_.empty() || !buf || bufSize == 0) return false;
+#if defined(ARDUINO)
+        Preferences prefs;
+        if (prefs.begin(ns_.c_str(), true)) {
+            char key[16];
+            std::snprintf(key, sizeof(key), "%c%u", keyPrefix_, static_cast<unsigned int>(index));
+            bytesRead = prefs.getBytes(key, buf, bufSize);
+            prefs.end();
+            return bytesRead > 0;
+        }
+        return false;
+#else
+        const auto &store = hostBlobStore();
+        auto nsIt = store.find(ns_);
+        if (nsIt == store.end()) return false;
+        auto slotIt = nsIt->second.find(index);
+        if (slotIt == nsIt->second.end()) return false;
+        const auto &blob = slotIt->second;
+        if (blob.size() > bufSize) {
+            return false;
+        }
+        std::memcpy(buf, blob.data(), blob.size());
+        bytesRead = blob.size();
+        return bytesRead > 0;
 #endif
     }
 
@@ -185,14 +366,14 @@ public:
         }
         return false;
 #else
-        auto &vec = hostBlobStore()[ns_];
-        vec.clear();
-        vec.reserve(items.size());
+        auto &slots = hostBlobStore()[ns_];
+        slots.clear();
         for (size_t i = 0; i < items.size(); ++i) {
             std::vector<uint8_t> bytes(sizeof(T));
             std::memcpy(bytes.data(), &items[i], sizeof(T));
-            vec.push_back(bytes);
+            slots[i] = bytes;
         }
+        hostCountStore()[ns_] = items.size();
         return true;
 #endif
     }
@@ -210,12 +391,9 @@ public:
         }
         return false;
 #else
-        auto &vec = hostBlobStore()[ns_];
-        if (index >= vec.size()) {
-            vec.resize(index + 1);
-        }
-        vec[index].resize(sizeof(T));
-        std::memcpy(vec[index].data(), &item, sizeof(T));
+        std::vector<uint8_t> bytes(sizeof(T));
+        std::memcpy(bytes.data(), &item, sizeof(T));
+        hostBlobStore()[ns_][index] = bytes;
         return true;
 #endif
     }
@@ -237,10 +415,7 @@ public:
         return false;
 #else
         if (!putSlot(index, item)) return false;
-        auto &vec = hostBlobStore()[ns_];
-        if (vec.size() > newCount) {
-            vec.resize(newCount);
-        }
+        hostCountStore()[ns_] = newCount;
         return true;
 #endif
     }
@@ -259,11 +434,8 @@ public:
         }
         return false;
 #else
-        (void)index;
-        auto &vec = hostBlobStore()[ns_];
-        if (newCount < vec.size()) {
-            vec.resize(newCount);
-        }
+        hostBlobStore()[ns_].erase(index);
+        hostCountStore()[ns_] = newCount;
         return true;
 #endif
     }
@@ -281,6 +453,7 @@ public:
         return false;
 #else
         hostBlobStore()[ns_].clear();
+        hostCountStore()[ns_] = 0;
         return true;
 #endif
     }
@@ -289,16 +462,25 @@ public:
     static void resetHostStorage(const char *ns = nullptr) {
         if (ns) {
             hostBlobStore().erase(ns);
+            hostCountStore().erase(ns);
         } else {
             hostBlobStore().clear();
+            hostCountStore().clear();
         }
     }
 
     size_t getHostCount() const {
-        const auto &store = hostBlobStore();
-        auto it = store.find(ns_);
-        if (it == store.end()) return 0;
-        return it->second.size();
+        const auto &counts = hostCountStore();
+        auto it = counts.find(ns_);
+        if (it == counts.end()) return 0;
+        return it->second;
+    }
+
+    void putHostRawSlot(size_t index, const void *buf, size_t len) {
+        if (ns_.empty() || !buf || len == 0) return;
+        std::vector<uint8_t> bytes(len);
+        std::memcpy(bytes.data(), buf, len);
+        hostBlobStore()[ns_][index] = bytes;
     }
 #endif
 
@@ -308,9 +490,14 @@ private:
     char keyPrefix_;
 
 #if !defined(ARDUINO)
-    static std::map<std::string, std::vector<std::vector<uint8_t>>>& hostBlobStore() {
-        static std::map<std::string, std::vector<std::vector<uint8_t>>> s_store;
+    static std::map<std::string, std::map<size_t, std::vector<uint8_t>>>& hostBlobStore() {
+        static std::map<std::string, std::map<size_t, std::vector<uint8_t>>> s_store;
         return s_store;
+    }
+
+    static std::map<std::string, size_t>& hostCountStore() {
+        static std::map<std::string, size_t> s_counts;
+        return s_counts;
     }
 #endif
 };
