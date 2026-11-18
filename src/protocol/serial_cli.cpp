@@ -31,6 +31,21 @@ static bool parseStrictPositiveInt(const char *s, int &out) {
     return true;
 }
 
+static bool parsePositiveIntOrVoice(const char *s, int &out) {
+    if (parseStrictPositiveInt(s, out)) {
+        return true;
+    }
+    if (!s) return false;
+    while (*s == ' ' || *s == '\t') s++;
+    if (std::isalpha(static_cast<unsigned char>(*s))) {
+        std::string voiceNorm = VoiceQsoParser::normalizeVoiceInput(s);
+        if (!voiceNorm.empty()) {
+            return parseStrictPositiveInt(voiceNorm.c_str(), out);
+        }
+    }
+    return false;
+}
+
 static bool equalsIgnoreCase(const char *a, const char *b) {
     if (!a || !b) return false;
 #if defined(_WIN32)
@@ -1128,7 +1143,7 @@ void SerialCli::handleTargetCommand(const char *arg, unsigned long nowMs) {
             return;
         }
 
-        // Extract first whitespace-delimited token as grid
+        // Extract first whitespace-delimited token as grid, or parse phonetic grid prefix
         char gridToken[32];
         size_t gLen = 0;
         while (p[gLen] && p[gLen] != ' ' && p[gLen] != '\t' && gLen < sizeof(gridToken) - 1) {
@@ -1137,14 +1152,38 @@ void SerialCli::handleTargetCommand(const char *arg, unsigned long nowMs) {
         }
         gridToken[gLen] = '\0';
 
-        char normGrid[7];
+        char normGrid[7] = {0};
+        const char *lblStart = p + gLen;
         if (!TargetPresetManager::normalizeGrid(gridToken, normGrid)) {
-            printFormat("[TARGET ERROR] Invalid 6-char Maidenhead grid: '%s'\r\n", gridToken);
-            return;
+            // Try phonetic/spaced grid prefix (up to 6 words, e.g. "charlie mike 87 victor uniform [LABEL]")
+            bool parsedPhonetic = false;
+            const char *scan = p;
+            std::string prefix;
+            for (int w = 0; w < 6 && *scan; ++w) {
+                while (*scan == ' ' || *scan == '\t') scan++;
+                if (*scan == '\0') break;
+                const char *wStart = scan;
+                while (*scan && *scan != ' ' && *scan != '\t') scan++;
+                if (!prefix.empty()) prefix.push_back(' ');
+                prefix.append(wStart, static_cast<size_t>(scan - wStart));
+
+                std::string voiceNorm = VoiceQsoParser::normalizeVoiceInput(prefix);
+                if (voiceNorm.size() == 6 && TargetPresetManager::normalizeGrid(voiceNorm.c_str(), normGrid)) {
+                    lblStart = scan;
+                    parsedPhonetic = true;
+                    break;
+                }
+                if (voiceNorm.size() > 6) {
+                    break;
+                }
+            }
+            if (!parsedPhonetic) {
+                printFormat("[TARGET ERROR] Invalid 6-char Maidenhead grid: '%s'\r\n", gridToken);
+                return;
+            }
         }
 
         // Remainder (if any) is the optional label (spaces allowed)
-        const char *lblStart = p + gLen;
         while (*lblStart == ' ' || *lblStart == '\t') lblStart++;
         char labelBuf[64];
         size_t lLen = 0;
@@ -1228,16 +1267,8 @@ void SerialCli::handleTargetCommand(const char *arg, unsigned long nowMs) {
             return;
         }
 
-        char token[32];
-        size_t tLen = 0;
-        while (p[tLen] && p[tLen] != ' ' && p[tLen] != '\t' && tLen < sizeof(token) - 1) {
-            token[tLen] = p[tLen];
-            tLen++;
-        }
-        token[tLen] = '\0';
-
         int index1Based = 0;
-        if (parseStrictPositiveInt(token, index1Based)) {
+        if (parsePositiveIntOrVoice(p, index1Based)) {
             size_t count = targetPresetManager_->getCount();
             if (count == 0) {
                 println("[TARGET ERROR] Preset list is empty.");
@@ -1258,8 +1289,11 @@ void SerialCli::handleTargetCommand(const char *arg, unsigned long nowMs) {
             return;
         }
 
-        char normGrid[7];
-        if (TargetPresetManager::normalizeGrid(token, normGrid)) {
+        std::string parsedGrid;
+        char normGrid[7] = {0};
+        if (TargetPresetManager::normalizeGrid(p, normGrid) ||
+            (VoiceQsoParser::parseGrid(p, parsedGrid) &&
+             TargetPresetManager::normalizeGrid(parsedGrid.c_str(), normGrid))) {
             int idx = targetPresetManager_->findIndexByGrid(normGrid);
             if (idx < 0) {
                 printFormat("[TARGET ERROR] Preset '%s' not found.\r\n", normGrid);
@@ -1271,7 +1305,7 @@ void SerialCli::handleTargetCommand(const char *arg, unsigned long nowMs) {
             return;
         }
 
-        printFormat("[TARGET ERROR] Invalid preset index or grid: '%s'\r\n", token);
+        printFormat("[TARGET ERROR] Invalid preset index or grid: '%s'\r\n", p);
         return;
     }
 
@@ -1312,7 +1346,7 @@ void SerialCli::handleTargetCommand(const char *arg, unsigned long nowMs) {
             return;
         }
         int val = 0;
-        if (!parseStrictPositiveInt(p, val)) {
+        if (!parsePositiveIntOrVoice(p, val)) {
             printFormat("[TARGET ERROR] Invalid capacity. Range: %u-%u.\r\n",
                         MIN_TARGET_PRESETS, ABS_MAX_TARGET_PRESETS);
             return;
@@ -1551,7 +1585,7 @@ void SerialCli::handleLogDelete(const char *arg) {
         return;
     }
     int idx = 0;
-    if (!parseStrictPositiveInt(arg, idx) || !qsoLogManager_ || static_cast<size_t>(idx) > qsoLogManager_->getQsoCount()) {
+    if (!parsePositiveIntOrVoice(arg, idx) || !qsoLogManager_ || static_cast<size_t>(idx) > qsoLogManager_->getQsoCount()) {
         size_t count = qsoLogManager_ ? qsoLogManager_->getQsoCount() : 0;
         printFormat("[QSO ERROR] Invalid QSO index '%s'. Log contains %zu contacts.\r\n", arg, count);
         return;

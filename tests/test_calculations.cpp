@@ -6065,6 +6065,26 @@ void test_app_controller_target_list_workflow_e2e() {
     ASSERT_TRUE(app.resolveTargetLabel(app.getTargetGrid()) != nullptr);
     ASSERT_STR_EQ(app.resolveTargetLabel(app.getTargetGrid()), "MY SUMMIT");
 
+    // 17. Voice-dictated target preset commands ('target add <phonetics> <label>', 'target del one', 'target del <phonetics>')
+    cli.executeCommand("target clear");
+    cli.executeCommand("target add charlie mike 87 victor uniform MT DIABLO");
+    cli.executeCommand("target add charlie mike nine seven bravo echo UMUNHUM");
+    ASSERT_TRUE(targetMgr.getCount() == 2);
+    ASSERT_TRUE(targetMgr.findByGrid("CM87vu") != nullptr);
+    ASSERT_STR_EQ(targetMgr.findByGrid("CM87vu")->label, "MT DIABLO");
+    ASSERT_TRUE(targetMgr.findByGrid("CM97be") != nullptr);
+
+    cli.executeCommand("target del one");
+    ASSERT_TRUE(targetMgr.getCount() == 1);
+
+    // Delete remaining preset by phonetic grid
+    if (targetMgr.findByGrid("CM87vu") != nullptr) {
+        cli.executeCommand("target del charlie mike 87 victor uniform");
+    } else {
+        cli.executeCommand("target del charlie mike nine seven bravo echo");
+    }
+    ASSERT_TRUE(targetMgr.isEmpty());
+
     PASS();
 }
 
