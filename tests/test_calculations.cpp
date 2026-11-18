@@ -5677,6 +5677,196 @@ void test_serial_cli_target_presets_usb_and_ble() {
     PASS();
 }
 
+void test_target_list_modal_formatters() {
+    TEST("TargetListModal header and live geodetic row formatters");
+
+    char buf[64];
+    TargetListModal::formatHeader(3, 100, buf, sizeof(buf));
+    ASSERT_STR_EQ(buf, "SAVED TARGET GRIDS (3/100)");
+
+    TargetListModal::formatHeader(0, 50, buf, sizeof(buf));
+    ASSERT_STR_EQ(buf, "SAVED TARGET GRIDS (0/50)");
+
+    // Buffer safety
+    TargetListModal::formatHeader(1, 10, nullptr, 10);
+    TargetListModal::formatHeader(1, 10, buf, 0);
+
+    GeoPoint here;
+    ASSERT_TRUE(gridToGeoPoint("CM87wa", here));
+
+    TargetPreset diablo("CM87vu", "DIABLO", 2, 100);
+    TargetListModal::formatPresetRow(0, diablo, here, true, buf, sizeof(buf));
+    ASSERT_TRUE(std::strncmp(buf, "1. CM87vu DIABLO ", 17) == 0);
+    ASSERT_TRUE(std::strchr(buf, '\xf7') != nullptr);
+    ASSERT_TRUE(std::strstr(buf, "---") == nullptr);
+    ASSERT_TRUE(buf[std::strlen(buf) - 1] == 'k');
+
+    // No GPS -> placeholder bearing and distance
+    TargetListModal::formatPresetRow(0, diablo, here, false, buf, sizeof(buf));
+    ASSERT_STR_EQ(buf, "1. CM87vu DIABLO  ---\xf7 ---k");
+
+    // Empty label -> spaces keep columns aligned
+    TargetPreset noLabel("CM97be", "", 0, 0);
+    TargetListModal::formatPresetRow(3, noLabel, here, false, buf, sizeof(buf));
+    ASSERT_STR_EQ(buf, "4. CM97be         ---\xf7 ---k");
+
+    PASS();
+}
+
+void test_display_ui_row2_label_behavior() {
+    TEST("DisplayUi Row 2 target label formatting, edit-mode clear, and Rover Mode clear");
+
+    char buf[32];
+
+    // Normal Bearing Mode, not editing -> shows label
+    DisplayUi::formatTargetLabel("MT DIABLO", false, false, buf, sizeof(buf));
+    ASSERT_STR_EQ(buf, "MT DIABLO");
+
+    // Truncates to MAX_TARGET_LABEL_LEN - 1 (11 chars)
+    DisplayUi::formatTargetLabel("LOMA PRIETA SUMMIT", false, false, buf, sizeof(buf));
+    ASSERT_STR_EQ(buf, "LOMA PRIETA");
+
+    // Editing mode -> cleared so '^' caret has full space
+    DisplayUi::formatTargetLabel("MT DIABLO", true, false, buf, sizeof(buf));
+    ASSERT_STR_EQ(buf, "");
+
+    // Rover mode -> cleared
+    DisplayUi::formatTargetLabel("MT DIABLO", false, true, buf, sizeof(buf));
+    ASSERT_STR_EQ(buf, "");
+
+    // Null / empty -> empty
+    DisplayUi::formatTargetLabel(nullptr, false, false, buf, sizeof(buf));
+    ASSERT_STR_EQ(buf, "");
+    DisplayUi::formatTargetLabel("", false, false, buf, sizeof(buf));
+    ASSERT_STR_EQ(buf, "");
+
+    // Host renderTargetGrid / MainScreenState smoke check
+    DisplayUi ui;
+    ui.renderTargetGrid("CM87vu", 0, false, "DIABLO");
+    ui.renderTargetGrid("CM87vu", 2, true, "DIABLO");
+    MainScreenState st;
+    st.myGrid = "CM87wa";
+    st.targetGrid = "CM87vu";
+    st.targetLabel = "DIABLO";
+    ui.redrawMainScreen(st);
+
+    PASS();
+}
+
+void test_input_manager_target_list_hit_testing_and_gestures() {
+    TEST("InputManager Row 2 long-press, TargetList hit-testing, and 1.5s hold-to-clear");
+
+    InputManager input;
+    UserEvent ev;
+
+    // 1. Preserve Row 2 character touch hitboxes on short tap (< 500 ms) in Normal mode
+    input.setUiMode(UiMode::Normal);
+    input.injectTouch(true, REMSTARTX + 2 * CHAR_W(REMSIZE) + 10, REMSTARTY + 20, 1000);
+    input.injectTouch(false, 0, 0, 1100);
+    ASSERT_TRUE(input.pollEvent(ev));
+    ASSERT_TRUE(ev.type == UserEventType::TouchGridCharacter);
+    ASSERT_TRUE(ev.gridIndex == 2);
+    ASSERT_TRUE(!input.pollEvent(ev));
+
+    // Preserve EncoderButtonPressed in Normal mode
+    input.injectEncoderButton(true);
+    ASSERT_TRUE(input.pollEvent(ev));
+    ASSERT_TRUE(ev.type == UserEventType::EncoderButtonPressed);
+
+    // 2. Row 2 long-press (> 500 ms) triggers LongPressTargetGridTriggered without TouchGridCharacter
+    input.injectTouch(true, REMSTARTX + 10, REMSTARTY + 20, 2000);
+    input.injectTouch(true, REMSTARTX + 10, REMSTARTY + 20, 2499);
+    ASSERT_TRUE(!input.pollEvent(ev)); // Not yet at 500 ms
+    input.injectTouch(true, REMSTARTX + 10, REMSTARTY + 20, 2500);
+    ASSERT_TRUE(input.pollEvent(ev));
+    ASSERT_TRUE(ev.type == UserEventType::LongPressTargetGridTriggered);
+    input.injectTouch(false, 0, 0, 2600);
+    ASSERT_TRUE(!input.pollEvent(ev)); // No TouchGridCharacter on release
+
+    // 3. TargetList modal hit-testing helpers
+    ASSERT_TRUE(InputManager::getTargetModalRowFromTouch(TARGET_LIST_X + 20, TARGET_LIST_Y + 20) == 0);
+    ASSERT_TRUE(InputManager::getTargetModalRowFromTouch(TARGET_LIST_X + 20, TARGET_LIST_Y + TARGET_LIST_ROW_PITCH + 20) == 1);
+    ASSERT_TRUE(InputManager::getTargetModalRowFromTouch(TARGET_LIST_X + 20, TARGET_LIST_Y + 2 * TARGET_LIST_ROW_PITCH + 20) == 2);
+    ASSERT_TRUE(InputManager::getTargetModalRowFromTouch(TARGET_LIST_X - 5, TARGET_LIST_Y + 20) == -1);
+
+    ASSERT_TRUE(InputManager::getTargetModalButtonFromTouch(TARGET_BTN_LOAD_X + 10, TARGET_BTN_LOAD_Y + 10) == ModalButtonId::TargetLoad);
+    ASSERT_TRUE(InputManager::getTargetModalButtonFromTouch(TARGET_BTN_DEL_X + 10, TARGET_BTN_DEL_Y + 10) == ModalButtonId::TargetDelete);
+    ASSERT_TRUE(InputManager::getTargetModalButtonFromTouch(TARGET_BTN_SAVE_X + 10, TARGET_BTN_SAVE_Y + 10) == ModalButtonId::TargetSave);
+    ASSERT_TRUE(InputManager::getTargetModalButtonFromTouch(TARGET_BTN_CLEAR_X + 10, TARGET_BTN_CLEAR_Y + 10) == ModalButtonId::TargetClear);
+    ASSERT_TRUE(InputManager::getTargetModalButtonFromTouch(TARGET_BTN_CANCEL_X + 10, TARGET_BTN_CANCEL_Y + 10) == ModalButtonId::Cancel);
+    ASSERT_TRUE(InputManager::getTargetModalButtonFromTouch(10, 10) == ModalButtonId::None);
+
+    // 4. TargetList row tap and action buttons
+    input.setUiMode(UiMode::TargetList);
+    input.injectTouch(true, TARGET_LIST_X + 30, TARGET_LIST_Y + TARGET_LIST_ROW_PITCH + 10, 3000);
+    input.injectTouch(false, 0, 0, 3080);
+    ASSERT_TRUE(input.pollEvent(ev));
+    ASSERT_TRUE(ev.type == UserEventType::TargetRowTouched);
+    ASSERT_TRUE(ev.gridIndex == 1);
+
+    // [ LOAD ]
+    input.injectTouch(true, TARGET_BTN_LOAD_X + 10, TARGET_BTN_LOAD_Y + 10, 3300);
+    ASSERT_TRUE(input.pollEvent(ev));
+    ASSERT_TRUE(ev.type == UserEventType::ModalButtonDown);
+    ASSERT_TRUE(ev.buttonId == ModalButtonId::TargetLoad);
+    input.injectTouch(false, 0, 0, 3380);
+    ASSERT_TRUE(input.pollEvent(ev));
+    ASSERT_TRUE(ev.type == UserEventType::LoadTargetTriggered);
+
+    // [ DEL ]
+    input.injectTouch(true, TARGET_BTN_DEL_X + 10, TARGET_BTN_DEL_Y + 10, 3600);
+    ASSERT_TRUE(input.pollEvent(ev));
+    ASSERT_TRUE(ev.type == UserEventType::ModalButtonDown);
+    input.injectTouch(false, 0, 0, 3680);
+    ASSERT_TRUE(input.pollEvent(ev));
+    ASSERT_TRUE(ev.type == UserEventType::DeleteTargetTriggered);
+
+    // [ + SAVE ]
+    input.injectTouch(true, TARGET_BTN_SAVE_X + 10, TARGET_BTN_SAVE_Y + 10, 3900);
+    ASSERT_TRUE(input.pollEvent(ev));
+    ASSERT_TRUE(ev.type == UserEventType::ModalButtonDown);
+    input.injectTouch(false, 0, 0, 3980);
+    ASSERT_TRUE(input.pollEvent(ev));
+    ASSERT_TRUE(ev.type == UserEventType::SaveTargetTriggered);
+
+    // [ CANCEL ]
+    input.injectTouch(true, TARGET_BTN_CANCEL_X + 10, TARGET_BTN_CANCEL_Y + 10, 4200);
+    ASSERT_TRUE(input.pollEvent(ev));
+    ASSERT_TRUE(ev.type == UserEventType::ModalButtonDown);
+    input.injectTouch(false, 0, 0, 4280);
+    ASSERT_TRUE(input.pollEvent(ev));
+    ASSERT_TRUE(ev.type == UserEventType::CancelModalTriggered);
+
+    // 5. Hold-to-Clear All: < 1500 ms aborts with no ClearButtonCommitted
+    input.injectTouch(true, TARGET_BTN_CLEAR_X + 50, TARGET_BTN_CLEAR_Y + 20, 5000);
+    input.injectTouch(true, TARGET_BTN_CLEAR_X + 50, TARGET_BTN_CLEAR_Y + 20, 6400); // 1400 ms
+    ASSERT_TRUE(input.pollEvent(ev));
+    ASSERT_TRUE(ev.type == UserEventType::HoldClearButtonProgress);
+    ASSERT_TRUE(ev.progress > 0.9f && ev.progress < 1.0f);
+    input.injectTouch(false, 0, 0, 6450);
+    ASSERT_TRUE(input.pollEvent(ev));
+    ASSERT_TRUE(ev.type == UserEventType::HoldClearButtonProgress);
+    ASSERT_NEAR(ev.progress, 0.0f, 0.001f);
+    ASSERT_TRUE(input.pollEvent(ev));
+    ASSERT_TRUE(ev.type == UserEventType::ModalButtonUp);
+    ASSERT_TRUE(!input.pollEvent(ev));
+
+    // 6. Hold-to-Clear All: >= 1500 ms commits ClearButtonCommitted
+    input.injectTouch(true, TARGET_BTN_CLEAR_X + 50, TARGET_BTN_CLEAR_Y + 20, 7000);
+    input.injectTouch(true, TARGET_BTN_CLEAR_X + 50, TARGET_BTN_CLEAR_Y + 20, 8500); // 1500 ms
+    ASSERT_TRUE(input.pollEvent(ev));
+    ASSERT_TRUE(ev.type == UserEventType::HoldClearButtonProgress);
+    ASSERT_NEAR(ev.progress, 1.0f, 0.001f);
+    ASSERT_TRUE(input.pollEvent(ev));
+    ASSERT_TRUE(ev.type == UserEventType::ClearButtonCommitted);
+    input.injectTouch(false, 0, 0, 8600);
+    ASSERT_TRUE(input.pollEvent(ev));
+    ASSERT_TRUE(ev.type == UserEventType::ModalButtonUp);
+    ASSERT_TRUE(!input.pollEvent(ev));
+
+    PASS();
+}
+
 int main() {
     std::cout << "========================================" << std::endl;
     std::cout << "  GNSS Compass Unit Test Suite" << std::endl;
@@ -5748,6 +5938,9 @@ int main() {
     test_target_preset_capacity_eviction_and_nvs();
     test_target_preset_deletion_and_clear();
     test_serial_cli_target_presets_usb_and_ble();
+    test_target_list_modal_formatters();
+    test_display_ui_row2_label_behavior();
+    test_input_manager_target_list_hit_testing_and_gestures();
 
     std::cout << "========================================" << std::endl;
     std::cout << "  All " << tests_passed << " / " << tests_run << " tests PASSED successfully!" << std::endl;

@@ -31,6 +31,7 @@ g++ -O2 -Wall -Wextra -I"$REPO_DIR" \
     "$REPO_DIR/src/ui/input_manager.cpp" \
     "$REPO_DIR/src/ui/cal_modal.cpp" \
     "$REPO_DIR/src/ui/rover_history_modal.cpp" \
+    "$REPO_DIR/src/ui/target_list_modal.cpp" \
     "$REPO_DIR/src/ui/rover_card.cpp" \
     "$REPO_DIR/src/ui/qso_card.cpp" \
     "$REPO_DIR/src/ui/display_ui.cpp" \

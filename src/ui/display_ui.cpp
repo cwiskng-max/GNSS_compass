@@ -59,6 +59,18 @@ void DisplayUi::formatSelfTestFailure(const int *failedTests, int count, char *o
     }
 }
 
+void DisplayUi::formatTargetLabel(const char *label, bool isEditing, bool isRoverMode, char *outBuf, size_t bufSize) {
+    if (!outBuf || bufSize == 0) return;
+    outBuf[0] = '\0';
+    if (isEditing || isRoverMode || !label || label[0] == '\0') {
+        return;
+    }
+    size_t maxCopy = (MAX_TARGET_LABEL_LEN > 0) ? (MAX_TARGET_LABEL_LEN - 1) : 0;
+    if (maxCopy > bufSize - 1) maxCopy = bufSize - 1;
+    std::strncpy(outBuf, label, maxCopy);
+    outBuf[maxCopy] = '\0';
+}
+
 #if defined(ARDUINO)
 DisplayUi::DisplayUi() {}
 
@@ -91,6 +103,7 @@ void DisplayUi::initLcd() {
     calModal_.setGfx(gfx_);
     roverHistoryModal_.setGfx(gfx_);
     qsoCard_.setGfx(gfx_);
+    targetListModal_.setGfx(gfx_);
 }
 
 void DisplayUi::begin() {
@@ -105,7 +118,7 @@ void DisplayUi::renderMyGrid(const char *grid) {
     gfx_->print(grid);
 }
 
-void DisplayUi::renderTargetGrid(const char *grid, uint8_t cursorCol, bool isEditing) {
+void DisplayUi::renderTargetGrid(const char *grid, uint8_t cursorCol, bool isEditing, const char *label) {
     if (!gfx_ || !grid) return;
 
     gfx_->setTextSize(REMSIZE);
@@ -119,12 +132,27 @@ void DisplayUi::renderTargetGrid(const char *grid, uint8_t cursorCol, bool isEdi
         gfx_->print(grid[i]);
     }
 
-    gfx_->setTextColor(RICH_YELLOW, BLACK);
-    gfx_->setCursor(REMSTARTX, REMSTARTY + CHAR_H(REMSIZE));
-    gfx_->print("      ");
+    // Clear the caret / subtitle row so neither stale '^' nor stale label remains
+    gfx_->fillRect(REMSTARTX, REM_LABEL_Y, REMSTOPX - REMSTARTX, CHAR_H(REMSIZE), BLACK);
+
     if (isEditing) {
-        gfx_->setCursor(REMSTARTX + cursorCol * CHAR_W(REMSIZE), REMSTARTY + CHAR_H(REMSIZE));
+        gfx_->setTextSize(REMSIZE);
+        gfx_->setTextColor(RICH_YELLOW, BLACK);
+        gfx_->setCursor(REMSTARTX + cursorCol * CHAR_W(REMSIZE), REM_LABEL_Y);
         gfx_->print("^");
+    } else {
+        char lblBuf[MAX_TARGET_LABEL_LEN];
+        formatTargetLabel(label, false, false, lblBuf, sizeof(lblBuf));
+        if (lblBuf[0] != '\0') {
+            int lw = static_cast<int>(std::strlen(lblBuf)) * CHAR_W(3);
+            int rowW = REMSTOPX - REMSTARTX;
+            int lx = REMSTARTX + (rowW - lw) / 2;
+            int ly = REM_LABEL_Y + 12;
+            gfx_->setTextSize(3);
+            gfx_->setTextColor(CYAN, BLACK);
+            gfx_->setCursor(lx, ly);
+            gfx_->print(lblBuf);
+        }
     }
 
     gfx_->setTextColor(WHITE, BLACK);
@@ -362,7 +390,7 @@ void DisplayUi::redrawMainScreen(const MainScreenState &s) {
     lastRoverCardBuf_[0] = '\0';
     clearScreen(BLACK);
     renderMyGrid(s.myGrid);
-    renderTargetGrid(s.targetGrid, s.cursorColumn, s.isEditing);
+    renderTargetGrid(s.targetGrid, s.cursorColumn, s.isEditing, s.isRoverMode ? nullptr : s.targetLabel);
     renderCurrentBearing(s.currentHeading, s.bearingQuality, s.hasHeading);
     renderCalibrationPill(s.calOffset, s.isCalibrated);
     renderTargetBearing(s.targetBearing);
@@ -382,7 +410,7 @@ void DisplayUi::begin() {}
 void DisplayUi::initLcd() {}
 void DisplayUi::clearScreen(uint16_t) {}
 void DisplayUi::renderMyGrid(const char *) {}
-void DisplayUi::renderTargetGrid(const char *, uint8_t, bool) {}
+void DisplayUi::renderTargetGrid(const char *, uint8_t, bool, const char *) {}
 void DisplayUi::renderCurrentBearing(double, BearingQuality, bool) {}
 void DisplayUi::renderCalibrationPill(float, bool) {}
 void DisplayUi::renderTargetBearing(double) {}
