@@ -105,7 +105,7 @@ classDiagram
   * Fits within the 29-byte Scan Response local name payload limit (`"GNSS-Compass-"` [13 chars] + suffix [up to 16 chars] = 29 chars max).
 * **Advertising Flags:** `ESP_BLE_ADV_FLAG_GEN_DISC | ESP_BLE_ADV_FLAG_BREDR_NOT_SPT` (General Discoverable, BR/EDR Not Supported).
 * **Service Solicitation / UUID:** Includes the NUS 128-bit UUID in advertising data so terminal apps can filter specifically for UART-capable devices.
-* **Advertising Interval:** 100 ms (balanced for sub-second connection discovery with minimal radio power).
+* **Advertising Interval:** 20–30 ms (maximum-rate discovery across advertising channels).
 
 ### 3.3 MTU Negotiation & Transmit Queue
 

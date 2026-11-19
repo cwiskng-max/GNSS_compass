@@ -21,6 +21,9 @@ constexpr unsigned long kSendRetryMs = 20;
 constexpr unsigned long kDisconnectGraceMs = 150;
 // disconnect(): give up waiting for the queue to drain after this long.
 constexpr unsigned long kDisconnectTimeoutMs = 2000;
+// Disconnect peers that complete link-layer connect but never subscribe to TX notifications
+// (e.g. Windows/Web Bluetooth giving up during GATT discovery without closing the ACL link).
+constexpr unsigned long kSubscribeTimeoutMs = 10000;
 
 const char kDropNoticeFmt[] = "\r\n[BLE] %lu bytes of output dropped (send queue full)\r\n";
 } // namespace
@@ -101,7 +104,7 @@ void BleSerialManager::update(unsigned long nowMs) {
     if (nowMs == 0) nowMs = platformMillis();
 
     platformUpdate(nowMs);
-    serviceSessionChange();
+    serviceSessionChange(nowMs);
     drainRx();
     pumpTx(nowMs);
     serviceDisconnect(nowMs);
@@ -160,7 +163,7 @@ void BleSerialManager::handleRxData(const char *data, size_t len) {
 // Main-loop processing
 // ---------------------------------------------------------------------------
 
-void BleSerialManager::serviceSessionChange() {
+void BleSerialManager::serviceSessionChange(unsigned long nowMs) {
     uint32_t gen = sessionGen_.load(std::memory_order_acquire);
     if (gen == seenSessionGen_) return;
     seenSessionGen_ = gen;
@@ -169,6 +172,8 @@ void BleSerialManager::serviceSessionChange() {
     // subscribed); a new client should not receive it.
     txClear();
     pendingDisconnect_ = false;
+    subscribeTimerStarted_ = connected_.load();
+    connectMs_ = nowMs;
 
     // Skip RX bytes left over from the previous session
     uint32_t mark = rxSessionStart_.load(std::memory_order_acquire);
@@ -246,11 +251,26 @@ void BleSerialManager::pumpTx(unsigned long nowMs) {
 }
 
 void BleSerialManager::serviceDisconnect(unsigned long nowMs) {
-    if (!pendingDisconnect_) return;
     if (!connected_.load()) {
         pendingDisconnect_ = false;
+        subscribeTimerStarted_ = false;
         return;
     }
+
+    if (subscribed_.load()) {
+        subscribeTimerStarted_ = false;
+    } else if (!pendingDisconnect_) {
+        if (!subscribeTimerStarted_) {
+            subscribeTimerStarted_ = true;
+            connectMs_ = nowMs;
+        } else if ((nowMs - connectMs_) >= kSubscribeTimeoutMs) {
+            subscribeTimerStarted_ = false;
+            platformDisconnect();
+            return;
+        }
+    }
+
+    if (!pendingDisconnect_) return;
     if (!disconnectTimerStarted_) {
         disconnectTimerStarted_ = true;
         disconnectStartMs_ = nowMs;

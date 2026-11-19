@@ -165,7 +165,7 @@ private:
     void platformSaveSuffix(const char *suffix);
 
     // Portable core
-    void serviceSessionChange();
+    void serviceSessionChange(unsigned long nowMs);
     void drainRx();
     void pumpTx(unsigned long nowMs);
     void serviceDisconnect(unsigned long nowMs);
@@ -211,6 +211,8 @@ private:
     bool pendingDisconnect_ = false;
     bool disconnectTimerStarted_ = false;
     unsigned long disconnectStartMs_ = 0;
+    bool subscribeTimerStarted_ = false;
+    unsigned long connectMs_ = 0;
 
     BleDataReceivedCallback dataCb_ = nullptr;
     void *dataCbContext_ = nullptr;

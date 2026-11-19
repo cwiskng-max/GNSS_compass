@@ -9,6 +9,7 @@
 #include <BLEServer.h>
 #include <BLEUtils.h>
 #include <BLE2902.h>
+#include <esp_bt.h>
 #include <esp_mac.h>
 #include <esp_gap_ble_api.h>
 #include <esp_gatts_api.h>
@@ -114,6 +115,9 @@ bool BleSerialManager::platformBegin(bool haveCustomName) {
 
     s_bleInstance = this;
     BLEDevice::init(deviceName_);
+    // Maximize BLE TX power for advertising and active connections (power is not constrained)
+    esp_ble_tx_power_set(ESP_BLE_PWR_TYPE_ADV, ESP_PWR_LVL_P9);
+    esp_ble_tx_power_set(ESP_BLE_PWR_TYPE_DEFAULT, ESP_PWR_LVL_P9);
     // Largest MTU we accept. The client decides whether to start an MTU exchange; the
     // result arrives as ESP_GATTS_MTU_EVT.
     BLEDevice::setMTU(512);
@@ -165,8 +169,8 @@ bool BleSerialManager::platformBegin(bool haveCustomName) {
     BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
     pAdvertising->setAdvertisementData(advData);
     pAdvertising->setScanResponseData(scanResponseData);
-    pAdvertising->setMinInterval(0x50); // 50 ms (80 * 0.625 ms)
-    pAdvertising->setMaxInterval(0xA0); // 100 ms (160 * 0.625 ms)
+    pAdvertising->setMinInterval(0x20); // 20 ms (32 * 0.625 ms, BLE spec minimum)
+    pAdvertising->setMaxInterval(0x30); // 30 ms (48 * 0.625 ms)
 
     requestAdvertisingStart();
     return true;
