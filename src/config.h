@@ -18,7 +18,6 @@
 #define BKL_PIN              6
 #define I2C_TOUCH_ADDR       0x15
 #define PCF8574_ADDR         0x21
-#define PCF8574_I2C_ADDR     0x21
 
 // Hardware UART Pins for GNSS Receiver (Serial2)
 #define RXD2                 44

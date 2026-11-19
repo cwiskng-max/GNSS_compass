@@ -42,7 +42,8 @@ AppController::AppController(Board &board,
       lastLocationUpdate_(0),
       lastRoverState_(RoverState::InTransitUnder16k),
       currentNowMs_(0),
-      roverWarningUntilMs_(0),
+      roverWarningActive_(false),
+      roverWarningStartMs_(0),
       distance_(0.0),
       bearing_(0.0),
       revbearing_(0.0),
@@ -119,7 +120,8 @@ void AppController::startRoverMode(unsigned long nowMs) {
 
     // Guard: Prevent accidental restart if already in Rover Mode!
     if (operationalMode_ == OperationalMode::Rover) {
-        roverWarningUntilMs_ = (nowMs > 0 ? nowMs : currentNowMs_) + ROVER_WARNING_DURATION_MS;
+        roverWarningActive_ = true;
+        roverWarningStartMs_ = (nowMs > 0 ? nowMs : currentNowMs_);
         displayUi_.renderRoverCardMessage("ROVER ACTIVE", COLOR_ROVER_TRANSIT_RED);
         return;
     }
@@ -172,7 +174,7 @@ void AppController::onTargetEdited(unsigned long nowMs) {
         RoverStop stop(ts, currentPosition_.latitude, currentPosition_.longitude, myGrid_, finalDistKm, qualified);
         roverLogManagerRef_->appendStop(stop);
 
-        roverWarningUntilMs_ = 0;
+        roverWarningActive_ = false;
         displayUi_.clearRoverCard();
         operationalMode_ = OperationalMode::Bearing;
     }
@@ -185,7 +187,7 @@ void AppController::stopRoverMode(unsigned long nowMs) {
     if (nowMs > 0) currentNowMs_ = nowMs;
 
     if (operationalMode_ == OperationalMode::Rover) {
-        roverWarningUntilMs_ = 0;
+        roverWarningActive_ = false;
         onTargetEdited(nowMs);
         updateNavigation();
         redrawMainScreen();
@@ -197,7 +199,7 @@ void AppController::discardLastStopAndRearm(unsigned long nowMs) {
     if (nowMs == 0) nowMs = millis();
 #endif
     if (nowMs > 0) currentNowMs_ = nowMs;
-    roverWarningUntilMs_ = 0;
+    roverWarningActive_ = false;
 
     // 1. Pop topmost stop from NVS history
     roverLogManagerRef_->popLastStop();
@@ -393,7 +395,8 @@ void AppController::renderNavigationRows() {
         }
         bool isRevisit = roverLogManagerRef_->hasVisitedGrid(myGrid_);
         lastRoverState_ = evaluateRoverState(dispKm, isRevisit, isFresh);
-        if (roverWarningUntilMs_ == 0 || (currentNowMs_ > 0 && currentNowMs_ >= roverWarningUntilMs_)) {
+        if (!roverWarningActive_ || (currentNowMs_ - roverWarningStartMs_) >= ROVER_WARNING_DURATION_MS) {
+            roverWarningActive_ = false;
             displayUi_.renderRoverCard(lastRoverState_, dispKm, isRevisit);
         }
     } else {
@@ -1046,8 +1049,8 @@ void AppController::update(unsigned long nowMs) {
     // 6. In Rover Mode, evaluate GPS watchdog staleness and warning expiration
     if (operationalMode_ == OperationalMode::Rover && currentUiMode_ == UiMode::Normal) {
         bool isRevisit = roverLogManagerRef_->hasVisitedGrid(myGrid_);
-        if (roverWarningUntilMs_ > 0 && nowMs >= roverWarningUntilMs_) {
-            roverWarningUntilMs_ = 0;
+        if (roverWarningActive_ && (nowMs - roverWarningStartMs_) >= ROVER_WARNING_DURATION_MS) {
+            roverWarningActive_ = false;
             displayUi_.renderRoverCard(lastRoverState_, lastValidDisplacementKm_, isRevisit);
         }
 
@@ -1055,7 +1058,7 @@ void AppController::update(unsigned long nowMs) {
         if (!isFresh) {
             if (lastRoverState_ != RoverState::GpsLostStale) {
                 lastRoverState_ = RoverState::GpsLostStale;
-                if (roverWarningUntilMs_ == 0) {
+                if (!roverWarningActive_) {
                     displayUi_.renderRoverCard(RoverState::GpsLostStale, lastValidDisplacementKm_, isRevisit);
                 }
             }

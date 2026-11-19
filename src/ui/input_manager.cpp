@@ -2,18 +2,21 @@
 #include <cmath>
 
 #if defined(ARDUINO)
+portMUX_TYPE InputManager::s_encMux = portMUX_INITIALIZER_UNLOCKED;
 volatile int InputManager::s_counter = 0;
 volatile int InputManager::s_encState = 0;
 volatile int InputManager::s_oldState = -1;
 volatile bool InputManager::s_hasChanged = false;
 
 void IRAM_ATTR InputManager::encoderIrq() {
-    s_encState = digitalRead(ENCODER_CLK);
+    portENTER_CRITICAL_ISR(&s_encMux);
+    s_encState = gpio_get_level(static_cast<gpio_num_t>(ENCODER_CLK));
     if (s_encState != s_oldState) {
-        s_counter += (digitalRead(ENCODER_DT) == s_encState) ? +1 : -1;
+        s_counter += (gpio_get_level(static_cast<gpio_num_t>(ENCODER_DT)) == s_encState) ? +1 : -1;
         s_oldState = s_encState;
         s_hasChanged = true;
     }
+    portEXIT_CRITICAL_ISR(&s_encMux);
 }
 #endif
 
@@ -201,6 +204,7 @@ void InputManager::handleTouchPoint(bool touched, int16_t x, int16_t y, unsigned
                     holdingSaveBtn_ = false;
                     holdingDiscardBtn_ = false;
                     holdingClearBtn_ = false;
+                    lastHoldProgressReported_ = -1.0f;
 
                     if (uiMode_ == UiMode::Calibrating) {
                         ModalButtonId btn = getModalButtonFromTouch(x, y);
@@ -293,56 +297,12 @@ void InputManager::handleTouchPoint(bool touched, int16_t x, int16_t y, unsigned
                     }
                 }
 
-                if (holdingSaveBtn_ && !longPressTriggered_) {
-                    float prog = static_cast<float>(holdDuration) / static_cast<float>(LONG_PRESS_MS);
-                    if (prog > 1.0f) prog = 1.0f;
-                    UserEvent ev;
-                    ev.type = UserEventType::HoldSaveButtonProgress;
-                    ev.progress = prog;
-                    queueEvent(ev);
-
-                    if (holdDuration >= LONG_PRESS_MS) {
-                        longPressTriggered_ = true;
-                        holdingSaveBtn_ = false;
-                        UserEvent commitEv;
-                        commitEv.type = UserEventType::SaveButtonCommitted;
-                        queueEvent(commitEv);
-                    }
-                }
-
-                if (holdingDiscardBtn_ && !longPressTriggered_) {
-                    float prog = static_cast<float>(holdDuration) / static_cast<float>(LONG_PRESS_MS);
-                    if (prog > 1.0f) prog = 1.0f;
-                    UserEvent ev;
-                    ev.type = UserEventType::HoldDiscardButtonProgress;
-                    ev.progress = prog;
-                    queueEvent(ev);
-
-                    if (holdDuration >= LONG_PRESS_MS) {
-                        longPressTriggered_ = true;
-                        holdingDiscardBtn_ = false;
-                        UserEvent commitEv;
-                        commitEv.type = UserEventType::DiscardLastStopTriggered;
-                        queueEvent(commitEv);
-                    }
-                }
-
-                if (holdingClearBtn_ && !longPressTriggered_) {
-                    float prog = static_cast<float>(holdDuration) / static_cast<float>(TARGET_CLEAR_HOLD_MS);
-                    if (prog > 1.0f) prog = 1.0f;
-                    UserEvent ev;
-                    ev.type = UserEventType::HoldClearButtonProgress;
-                    ev.progress = prog;
-                    queueEvent(ev);
-
-                    if (holdDuration >= TARGET_CLEAR_HOLD_MS) {
-                        longPressTriggered_ = true;
-                        holdingClearBtn_ = false;
-                        UserEvent commitEv;
-                        commitEv.type = UserEventType::ClearButtonCommitted;
-                        queueEvent(commitEv);
-                    }
-                }
+                updateHoldButton(UserEventType::HoldSaveButtonProgress, UserEventType::SaveButtonCommitted,
+                                 holdingSaveBtn_, holdDuration, LONG_PRESS_MS);
+                updateHoldButton(UserEventType::HoldDiscardButtonProgress, UserEventType::DiscardLastStopTriggered,
+                                 holdingDiscardBtn_, holdDuration, LONG_PRESS_MS);
+                updateHoldButton(UserEventType::HoldClearButtonProgress, UserEventType::ClearButtonCommitted,
+                                 holdingClearBtn_, holdDuration, TARGET_CLEAR_HOLD_MS);
             }
         }
     } else {
@@ -473,6 +433,31 @@ void InputManager::handleTouchPoint(bool touched, int16_t x, int16_t y, unsigned
     }
 }
 
+void InputManager::updateHoldButton(UserEventType progressType, UserEventType commitType,
+                                    bool &holdingFlag, unsigned long holdDuration, unsigned long requiredMs) {
+    if (!holdingFlag || longPressTriggered_) {
+        return;
+    }
+    float prog = static_cast<float>(holdDuration) / static_cast<float>(requiredMs);
+    if (prog > 1.0f) prog = 1.0f;
+
+    if (prog >= 1.0f || lastHoldProgressReported_ < 0.0f || (prog - lastHoldProgressReported_) >= 0.03f) {
+        lastHoldProgressReported_ = prog;
+        UserEvent ev;
+        ev.type = progressType;
+        ev.progress = prog;
+        queueEvent(ev);
+    }
+
+    if (holdDuration >= requiredMs) {
+        longPressTriggered_ = true;
+        holdingFlag = false;
+        UserEvent commitEv;
+        commitEv.type = commitType;
+        queueEvent(commitEv);
+    }
+}
+
 void InputManager::update(unsigned long nowMs) {
 #if defined(ARDUINO)
     if (nowMs == 0) {
@@ -480,13 +465,13 @@ void InputManager::update(unsigned long nowMs) {
     }
 
     int delta = 0;
-    noInterrupts();
+    portENTER_CRITICAL(&s_encMux);
     if (s_hasChanged) {
         delta = s_counter;
         s_counter = 0;
         s_hasChanged = false;
     }
-    interrupts();
+    portEXIT_CRITICAL(&s_encMux);
 
     while (delta > 0) {
         UserEvent ev;

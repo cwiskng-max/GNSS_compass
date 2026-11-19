@@ -10,6 +10,7 @@
 #include <Wire.h>
 #include <PCF8574.h>
 #include <Adafruit_CST8XX.h>
+#include <driver/gpio.h>
 #endif
 
 enum class UiMode : uint8_t {
@@ -111,6 +112,7 @@ public:
 private:
 #if defined(ARDUINO)
     static void IRAM_ATTR encoderIrq();
+    static portMUX_TYPE s_encMux;
     static volatile int s_counter;
     static volatile int s_encState;
     static volatile int s_oldState;
@@ -120,6 +122,9 @@ private:
     PCF8574 *pcf8574_ = nullptr;
     bool encoderSwPressed_ = false;
 #endif
+
+    void updateHoldButton(UserEventType progressType, UserEventType commitType,
+                          bool &holdingFlag, unsigned long holdDuration, unsigned long requiredMs);
 
     UiMode uiMode_ = UiMode::Normal;
 
@@ -132,6 +137,7 @@ private:
     bool holdingSaveBtn_ = false;
     bool holdingDiscardBtn_ = false;
     bool holdingClearBtn_ = false;
+    float lastHoldProgressReported_ = -1.0f;
     unsigned long lastTouchReleaseTime_ = 0;
 
     // Event FIFO queue

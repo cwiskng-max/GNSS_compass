@@ -20,7 +20,9 @@
 static void selfTestDelay(AppController &app, unsigned long ms) {
     unsigned long start = millis();
     while (millis() - start < ms) {
-        app.getGpsManager().update(millis());
+        unsigned long now = millis();
+        app.getGpsManager().update(now);
+        app.getSerialCli().update(now);
         delay(10);
     }
 }
@@ -163,6 +165,7 @@ void SelfTest::run(AppController &app) {
     std::strncpy(saved_myGrid, app.getMyGrid(), sizeof(saved_myGrid) - 1);
     saved_myGrid[sizeof(saved_myGrid) - 1] = '\0';
 
+    bool saved_hasLocation = app.hasLocation();
     GeoPoint saved_currentPos = app.getCurrentPosition();
     GeoPoint saved_targetPos = app.getTargetPosition();
     bool saved_hasHeading = app.hasHeading();
@@ -359,7 +362,7 @@ void SelfTest::run(AppController &app) {
     int failedTests[16];
     int failedCount = runAssertions(failedTests, sizeof(failedTests) / sizeof(failedTests[0]));
 
-    static const char* const TEST_NAMES[9] = {
+    static const char* const TEST_NAMES[10] = {
         "Same Grid (ARRL 1.0 km rule)",
         "Under 1,000 km formatting",
         "Over 1,000 km formatting",
@@ -368,14 +371,15 @@ void SelfTest::run(AppController &app) {
         "Live GNSS stream diagnostic",
         "Antenna calibration pill & modal",
         "Rover Mode 4-state matrix card",
-        "Rover history log & undo modal"
+        "Rover history log & undo modal",
+        "Target presets & modal formatting"
     };
 
     cli.broadcastln();
     cli.broadcastln("==================================================");
     cli.broadcastln("             Visual Self-Test Summary             ");
     cli.broadcastln("==================================================");
-    for (int t = 1; t <= 9; ++t) {
+    for (int t = 1; t <= 10; ++t) {
         bool passed = true;
         for (int f = 0; f < failedCount; ++f) {
             if (failedTests[f] == t) {
@@ -383,12 +387,12 @@ void SelfTest::run(AppController &app) {
                 break;
             }
         }
-        cli.broadcastFormat("  [%d/9] %-33s : %s\r\n", t, TEST_NAMES[t - 1], passed ? "PASS" : "FAIL");
+        cli.broadcastFormat("  [%2d/10] %-33s : %s\r\n", t, TEST_NAMES[t - 1], passed ? "PASS" : "FAIL");
     }
     cli.broadcastln("--------------------------------------------------");
 
     if (failedCount == 0) {
-        cli.broadcastln("Overall Verdict: ALL 9 TESTS PASSED [PASS]");
+        cli.broadcastln("Overall Verdict: ALL 10 TESTS PASSED [PASS]");
         app.getDisplayUi().showStatusCard("SELF-TEST PASSED", GREEN, BLACK);
         selfTestDelay(app, 2500);
     } else {
@@ -405,7 +409,11 @@ void SelfTest::run(AppController &app) {
     app.setSelfTesting(false);
     app.setTargetGrid(saved_targetGrid);
     app.setMyGrid(saved_myGrid);
-    app.setCurrentPosition(saved_currentPos);
+    if (saved_hasLocation) {
+        app.setCurrentPosition(saved_currentPos);
+    } else {
+        app.clearLocation();
+    }
     app.setTargetPosition(saved_targetPos);
     app.setHeadingState(saved_hasHeading, saved_quality, saved_lastHeading);
     app.setOperationalMode(saved_operationalMode);

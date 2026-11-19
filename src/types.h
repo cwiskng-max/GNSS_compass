@@ -1,5 +1,18 @@
 #pragma once
 #include <cstdint>
+#include <cstddef>
+#include <cstring>
+
+// Safely copies a C-string into a fixed-size destination buffer, zero-filling or null-terminating.
+inline void copyBoundedString(char *dst, size_t dstSize, const char *src) {
+    if (!dst || dstSize == 0) return;
+    std::memset(dst, 0, dstSize);
+    if (!src) return;
+    size_t len = std::strlen(src);
+    if (len >= dstSize) len = dstSize - 1;
+    std::memcpy(dst, src, len);
+    dst[len] = '\0';
+}
 
 // High-precision geographic coordinate (Source of physical ground truth)
 struct GeoPoint {

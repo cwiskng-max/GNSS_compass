@@ -14,7 +14,11 @@ void Calibration::begin() {
 }
 
 void Calibration::loadFromNvs() {
-    activeOffset_ = cfgStore_.getFloat("cal_offset", 0.0f);
+    float stored = cfgStore_.getFloat("cal_offset", 0.0f);
+    if (!std::isfinite(stored)) {
+        stored = 0.0f;
+    }
+    activeOffset_ = normalizeOffset(stored);
 #if defined(ARDUINO)
     Serial.printf("[NVS] Loaded antenna calibration offset: %+5.1f deg\r\n", activeOffset_);
 #endif

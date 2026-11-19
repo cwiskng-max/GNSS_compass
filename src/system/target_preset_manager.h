@@ -5,6 +5,7 @@
 #include <cstring>
 #include <vector>
 #include "../config.h"
+#include "../types.h"
 #include "nvs_store.h"
 
 /**
@@ -29,26 +30,8 @@ struct TargetPreset {
         lastUsedTime = ts;
     }
 
-    void setGrid(const char *g) {
-        if (g) {
-            size_t len = std::strlen(g);
-            if (len > sizeof(grid) - 1) len = sizeof(grid) - 1;
-            std::memcpy(grid, g, len);
-            grid[len] = '\0';
-        } else {
-            std::memset(grid, 0, sizeof(grid));
-        }
-    }
-
-    void setLabel(const char *lbl) {
-        std::memset(label, 0, sizeof(label));
-        if (lbl) {
-            size_t len = std::strlen(lbl);
-            if (len > sizeof(label) - 1) len = sizeof(label) - 1;
-            std::memcpy(label, lbl, len);
-            label[len] = '\0';
-        }
-    }
+    void setGrid(const char *g) { copyBoundedString(grid, sizeof(grid), g); }
+    void setLabel(const char *lbl) { copyBoundedString(label, sizeof(label), lbl); }
 
     bool operator==(const TargetPreset &other) const {
         return std::strncmp(grid, other.grid, sizeof(grid)) == 0 &&

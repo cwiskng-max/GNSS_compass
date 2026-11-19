@@ -6356,6 +6356,136 @@ void test_migrated_nvs_stores() {
     PASS();
 }
 
+void test_audit_hardening_regressions() {
+    TEST("Audit hardening: rollover timers, BLE probe cleanup, strict CLI, NVS sanitization, hold throttle");
+
+    // 1. Rollover-safe rover warning timer in AppController
+    {
+        RoverLogManager::resetHostStorage();
+        Board board;
+        DisplayUi ui;
+        InputManager input;
+        GpsManager gps;
+        Calibration cal;
+        GpsSimulator sim;
+        SerialCli cli(gps, cal, sim);
+        AppController app(board, ui, input, gps, cal, sim, cli);
+        app.begin();
+        app.setCurrentPosition(GeoPoint(37.75, -122.45, true));
+        unsigned long nearRollover = 0xFFFFFF00UL;
+        app.startRoverMode(nearRollover);
+        ASSERT_TRUE(app.isRoverMode());
+        app.startRoverMode(nearRollover + 100UL); // duplicate start triggers warning
+        ASSERT_TRUE(app.isRoverWarningActive(nearRollover + 100UL));
+        ASSERT_TRUE(app.isRoverWarningActive(nearRollover + 1000UL)); // wraps past 0
+        ASSERT_TRUE(!app.isRoverWarningActive(nearRollover + 100UL + ROVER_WARNING_DURATION_MS + 10UL));
+    }
+
+    // 2. SerialCli ble suffix error prompt, BLE disconnect cleanup, and strict numeric parsing
+    {
+        GpsManager gps;
+        Calibration cal;
+        GpsSimulator sim;
+        BleSerialManager ble;
+        SerialCli cli(gps, cal, sim, nullptr, &ble);
+        std::string out;
+        cli.setOutputHandler([](const char *s, void *ctx) {
+            static_cast<std::string*>(ctx)->append(s);
+        }, &out);
+
+        cli.executeCommand("ble suffix 12345678901234567", 100, CLI_SOURCE_USB);
+        ASSERT_TRUE(out.find("[BLE ERROR]") != std::string::npos);
+        ASSERT_TRUE(out.size() >= 2 && out.substr(out.size() - 2) == "> ");
+
+        out.clear();
+        cal.setOffset(12.5f, false);
+        cli.executeCommand("cal foo", 110, CLI_SOURCE_USB);
+        ASSERT_TRUE(out.find("[CAL ERROR]") != std::string::npos);
+        ASSERT_NEAR(cal.getOffset(), 12.5f, 0.01f);
+
+        out.clear();
+        cli.executeCommand("gps config baseline abc", 120, CLI_SOURCE_USB);
+        ASSERT_TRUE(out.find("[GPS ERROR]") != std::string::npos);
+        ASSERT_TRUE(gps.getTxState() == GpsTxState::Unknown);
+
+        out.clear();
+        RoverLogManager rlog;
+        cli.setRoverLogManager(&rlog);
+        cli.executeCommand("rover max abc", 130, CLI_SOURCE_USB);
+        ASSERT_TRUE(out.find("[ROVER ERROR]") != std::string::npos);
+
+        out.clear();
+        cli.executeCommand("sim hdg nope", 140, CLI_SOURCE_USB);
+        ASSERT_TRUE(out.find("[SIM ERROR]") != std::string::npos);
+
+        out.clear();
+        cli.executeCommand("sim rover nope", 150, CLI_SOURCE_USB);
+        ASSERT_TRUE(out.find("[SIM ERROR]") != std::string::npos);
+
+        // BLE disconnect while gps audit probe is pending should cancel pending BLE audit
+        ble.setConnected(true);
+        ble.setSubscribed(true);
+        cli.executeCommand("gps check", 200, CLI_SOURCE_BLE);
+        ASSERT_TRUE(gps.getTxState() == GpsTxState::Probing);
+        ble.flushTx();
+        ble.clearTxBuffer();
+        cli.handleBleConnectionChanged(false);
+        gps.feedSentence("<OK", 250);
+        ble.flushTx();
+        ASSERT_TRUE(ble.getTxBuffer().find("[GPS AUDIT]") == std::string::npos);
+    }
+
+    // 3. Calibration & RoverLogManager NVS sanitization
+    {
+        NvsConfig::resetHostStorage("compass");
+        NvsConfig("compass").putFloat("cal_offset", std::numeric_limits<float>::quiet_NaN());
+        Calibration cal;
+        cal.begin();
+        ASSERT_NEAR(cal.getOffset(), 0.0f, 0.001f);
+
+        RoverLogManager::resetHostStorage();
+        NvsListStore<RoverStop> store(ROVER_LOG_NAMESPACE, ROVER_LOG_KEY_COUNT, 's');
+        RoverStop badStop(100, std::numeric_limits<double>::quiet_NaN(), -122.0, "CM87wa00", 0.0f, false);
+        RoverStop goodStop(200, 37.75, -122.45, "CM87wa00", 18.0f, true);
+        goodStop.grid[8] = 'X'; // unterminated
+        store.putHostRawSlot(0, &badStop, sizeof(badStop));
+        store.putHostRawSlot(1, &goodStop, sizeof(goodStop));
+        store.putCount(2);
+
+        RoverLogManager rlog;
+        rlog.begin();
+        ASSERT_TRUE(rlog.getStopCount() == 1);
+        ASSERT_TRUE(rlog.getStop(0)->grid[8] == '\0');
+    }
+
+    // 4. evaluateGpsStream(0) underflow guard when now < lastByteTime
+    {
+        GpsLinkVerdict v = evaluateGpsStream(0, 100, 1000, 1, 1, 0, true, true, BEARING_FIXED);
+        ASSERT_TRUE(v == GPS_LINK_OK_FIXED);
+    }
+
+    // 5. InputManager hold-progress throttling
+    {
+        InputManager im;
+        im.setUiMode(UiMode::Calibrating);
+        im.injectTouch(true, 200, 300, 1000);
+        int progressEvents = 0;
+        bool committed = false;
+        for (unsigned long t = 1005; t <= 2505; t += 5) {
+            im.injectTouch(true, 200, 300, t);
+            UserEvent ev;
+            while (im.pollEvent(ev)) {
+                if (ev.type == UserEventType::HoldSaveButtonProgress) progressEvents++;
+                if (ev.type == UserEventType::SaveButtonCommitted) committed = true;
+            }
+        }
+        ASSERT_TRUE(committed);
+        ASSERT_TRUE(progressEvents > 0 && progressEvents <= 40);
+    }
+
+    PASS();
+}
+
 int main() {
     std::cout << "========================================" << std::endl;
     std::cout << "  GNSS Compass Unit Test Suite" << std::endl;
@@ -6433,6 +6563,7 @@ int main() {
     test_app_controller_target_list_workflow_e2e();
     test_target_preset_review_fixes();
     test_migrated_nvs_stores();
+    test_audit_hardening_regressions();
 
     std::cout << "========================================" << std::endl;
     std::cout << "  All " << tests_passed << " / " << tests_run << " tests PASSED successfully!" << std::endl;

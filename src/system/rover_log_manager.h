@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cctype>
 #include "../config.h"
+#include "../types.h"
 #include "nvs_store.h"
 
 /**
@@ -36,14 +37,7 @@ struct RoverStop {
     }
 
     void setGrid(const char *g) {
-        if (g) {
-            size_t len = std::strlen(g);
-            if (len > sizeof(grid) - 1) len = sizeof(grid) - 1;
-            std::memcpy(grid, g, len);
-            grid[len] = '\0';
-        } else {
-            std::memset(grid, 0, sizeof(grid));
-        }
+        copyBoundedString(grid, sizeof(grid), g);
     }
 
     bool operator==(const RoverStop &other) const {

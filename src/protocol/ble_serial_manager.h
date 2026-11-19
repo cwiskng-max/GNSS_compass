@@ -230,6 +230,7 @@ private:
     // Advertising supervision: advertising_ reflects controller state as reported by GAP events.
     // update() restarts advertising if we are disconnected and the controller is not advertising.
     std::atomic<bool> advertising_{false};
+    std::atomic<bool> advRestartPending_{false};
     std::atomic<uint32_t> lastAdvStartRequestMs_{0};
 #else
     std::string testTxBuffer_;

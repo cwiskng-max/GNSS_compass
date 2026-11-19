@@ -21,6 +21,7 @@ echo
 
 # Prepare scratch folder for arduino-cli
 rm -rf "$SCRATCH_DIR"
+rm -f "$FACTORY_BIN" "$UPDATE_BIN"
 mkdir -p "$SCRATCH_DIR"
 cp -r "$REPO_ROOT/gps_compass.ino" "$REPO_ROOT/partitions.csv" "$REPO_ROOT/src" "$SCRATCH_DIR/"
 

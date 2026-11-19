@@ -1,4 +1,5 @@
 #include "target_list_modal.h"
+#include "modal_widgets.h"
 #include "../geo/geo_math.h"
 #include "../geo/maidenhead.h"
 #include <cmath>
@@ -228,31 +229,14 @@ void TargetListModal::drawSaveButton(bool highlighted) {
 }
 
 void TargetListModal::drawClearButton(bool isHolding, float progress, bool enabled) {
-    if (!gfx_) return;
     uint16_t bg = !enabled ? BUTTON_MUTED_BG : (isHolding ? BUTTON_DISCARD_HOLD_BG : BUTTON_RESET_BG);
     uint16_t border = !enabled ? DARK_GRAY_BORDER : RED;
-
-    gfx_->fillRoundRect(TARGET_BTN_CLEAR_X, TARGET_BTN_CLEAR_Y, TARGET_BTN_CLEAR_W, TARGET_BTN_CLEAR_H, 8, bg);
-    gfx_->drawRoundRect(TARGET_BTN_CLEAR_X, TARGET_BTN_CLEAR_Y, TARGET_BTN_CLEAR_W, TARGET_BTN_CLEAR_H, 8, border);
-
-    if (enabled && isHolding && progress > 0.0f) {
-        if (progress > 1.0f) progress = 1.0f;
-        int fillW = static_cast<int>((TARGET_BTN_CLEAR_W - 4) * progress);
-        if (fillW > TARGET_BTN_CLEAR_W - 4) fillW = TARGET_BTN_CLEAR_W - 4;
-        if (fillW > 0) {
-            gfx_->fillRoundRect(TARGET_BTN_CLEAR_X + 2, TARGET_BTN_CLEAR_Y + 2, fillW, TARGET_BTN_CLEAR_H - 4, 6, RED);
-        }
-    }
-
-    const char *lbl = (enabled && isHolding) ? "HOLDING TO CLEAR..." : "[ HOLD TO CLEAR ALL ]";
-    int lw = static_cast<int>(std::strlen(lbl)) * CHAR_W(2);
     uint16_t fg = !enabled ? DIM_GRAY_TEXT : WHITE;
-    uint16_t textBg = (enabled && isHolding && progress > 0.5f) ? RED : bg;
-    gfx_->setTextSize(2);
-    gfx_->setTextColor(fg, textBg);
-    gfx_->setCursor(TARGET_BTN_CLEAR_X + (TARGET_BTN_CLEAR_W - lw) / 2, TARGET_BTN_CLEAR_Y + 14);
-    gfx_->print(lbl);
-    gfx_->setTextColor(WHITE, BLACK);
+    const char *lbl = (enabled && isHolding) ? "HOLDING TO CLEAR..." : "[ HOLD TO CLEAR ALL ]";
+    ui_widgets::drawHoldProgressButton(
+        gfx_,
+        TARGET_BTN_CLEAR_X, TARGET_BTN_CLEAR_Y, TARGET_BTN_CLEAR_W, TARGET_BTN_CLEAR_H,
+        TARGET_BTN_CLEAR_Y + 14, bg, border, RED, fg, lbl, isHolding, progress, enabled);
 }
 
 void TargetListModal::drawCancelButton(bool highlighted) {

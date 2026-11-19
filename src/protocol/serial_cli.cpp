@@ -17,6 +17,26 @@
 #include <iostream>
 #endif
 
+static bool parseFloatToken(const char *s, float &out, const char *&nextOut) {
+    if (!s) return false;
+    while (*s == ' ' || *s == '\t') s++;
+    if (*s == '\0') return false;
+    char *endPtr = nullptr;
+    float val = std::strtof(s, &endPtr);
+    if (endPtr == s || !std::isfinite(val)) return false;
+    if (*endPtr != '\0' && *endPtr != ' ' && *endPtr != '\t') return false;
+    out = val;
+    nextOut = endPtr;
+    return true;
+}
+
+static bool parseStrictFloat(const char *s, float &out) {
+    const char *next = nullptr;
+    if (!parseFloatToken(s, out, next)) return false;
+    while (*next == ' ' || *next == '\t') next++;
+    return *next == '\0';
+}
+
 // Portable case-insensitive comparisons
 static bool parseStrictPositiveInt(const char *s, int &out) {
     if (!s) return false;
@@ -203,6 +223,8 @@ void SerialCli::begin() {
     pendingExportCall_.clear();
     pendingAudit_ = false;
     pendingAuditSource_ = CLI_SOURCE_USB;
+    pendingConfig_ = false;
+    pendingConfigSource_ = CLI_SOURCE_USB;
     auditState_.inProgress = false;
     activeSource_ = CLI_SOURCE_USB;
 }
@@ -235,6 +257,15 @@ void SerialCli::handleBleConnectionChanged(bool connected) {
     }
     if (pendingExportFormat_ != ExportFormat::None && pendingExportSource_ == CLI_SOURCE_BLE) {
         pendingExportFormat_ = ExportFormat::None;
+    }
+    if (pendingAudit_ && pendingAuditSource_ == CLI_SOURCE_BLE) {
+        pendingAudit_ = false;
+    }
+    if (pendingConfig_ && pendingConfigSource_ == CLI_SOURCE_BLE) {
+        pendingConfig_ = false;
+    }
+    if (auditState_.inProgress && auditState_.source == CLI_SOURCE_BLE) {
+        auditState_.source = CLI_SOURCE_USB;
     }
     activeSource_ = CLI_SOURCE_USB;
 }
@@ -590,80 +621,7 @@ void SerialCli::executeCommand(const char *cmdLine, unsigned long nowMs, CliSour
     } else if (equalsIgnoreCase(cleanCmd, "ble") || startsWithIgnoreCase(cleanCmd, "ble ")) {
         const char *arg = cleanCmd + 3;
         while (*arg == ' ' || *arg == '\t') arg++;
-        if (!bleManager_) {
-            println("[BLE] Bluetooth not available");
-        } else if (equalsIgnoreCase(arg, "diag on")) {
-            bleManager_->setDiagEnabled(true);
-            println("[BLE] Diagnostics ON (RSSI every 3 s while connected, main-loop stall reports; USB serial)");
-        } else if (equalsIgnoreCase(arg, "diag off")) {
-            bleManager_->setDiagEnabled(false);
-            println("[BLE] Diagnostics OFF");
-        } else if (startsWithIgnoreCase(arg, "suffix")) {
-            const char *sub = arg + 6;
-            while (*sub == ' ' || *sub == '\t') sub++;
-            if (*sub == '\0') {
-                if (bleManager_->isCustomSuffix()) {
-                    printFormat("[BLE] Device name: %s (Custom suffix: %s)\r\n",
-                                bleManager_->getDeviceName(), bleManager_->getDeviceSuffix());
-                } else {
-                    printFormat("[BLE] Device name: %s (Default MAC suffix: %s)\r\n",
-                                bleManager_->getDeviceName(), bleManager_->getDeviceSuffix());
-                }
-            } else if (equalsIgnoreCase(sub, "reset") || equalsIgnoreCase(sub, "default")) {
-                bleManager_->resetDeviceSuffix(true);
-                printFormat("[BLE] Device name reset to default: %s\r\n", bleManager_->getDeviceName());
-                println("[BLE] Saved to non-volatile storage.");
-                println("[BLE] Note: If your phone still displays the old name, toggle your phone's Bluetooth off and on to clear its scan cache.");
-            } else {
-                size_t len = std::strlen(sub);
-                while (len > 0 && (sub[len - 1] == ' ' || sub[len - 1] == '\t' ||
-                                   sub[len - 1] == '\r' || sub[len - 1] == '\n')) {
-                    len--;
-                }
-                if (len > BleSerialManager::kMaxSuffixLength) {
-                    println("[BLE ERROR] Suffix too long (maximum 16 characters).");
-                    return;
-                }
-                char cleanSuffix[BleSerialManager::kMaxSuffixLength + 1];
-                std::memcpy(cleanSuffix, sub, len);
-                cleanSuffix[len] = '\0';
-
-                bool valid = true;
-                for (size_t i = 0; i < len; ++i) {
-                    char c = cleanSuffix[i];
-                    if (c <= 32 || c >= 127) {
-                        valid = false;
-                        break;
-                    }
-                }
-                if (!valid) {
-                    println("[BLE ERROR] Invalid suffix. Use letters, numbers, hyphens or underscores (no spaces).");
-                    return;
-                }
-
-                if (bleManager_->setDeviceSuffix(cleanSuffix, true)) {
-                    printFormat("[BLE] Device name updated to: %s\r\n", bleManager_->getDeviceName());
-                    println("[BLE] Saved to non-volatile storage.");
-                    println("[BLE] Note: If your phone still displays the old name, toggle your phone's Bluetooth off and on to clear its scan cache.");
-                } else {
-                    println("[BLE ERROR] Failed to set device suffix.");
-                }
-            }
-        } else if (arg[0] == '\0' || equalsIgnoreCase(arg, "status")) {
-            printFormat("[BLE] Device: %s\r\n", bleManager_->getDeviceName());
-            printFormat("[BLE] Connected: %s | Subscribed: %s | MTU: %u\r\n",
-                        bleManager_->isConnected() ? "yes" : "no",
-                        bleManager_->isSubscribed() ? "yes" : "no",
-                        (unsigned)bleManager_->getMtu());
-            printFormat("[BLE] Advertising: %s\r\n", bleManager_->isAdvertising() ? "yes" : "no");
-            printFormat("[BLE] TX queue: %u / %u bytes | Dropped: %lu bytes | Send retries: %lu\r\n",
-                        (unsigned)bleManager_->getTxQueued(), (unsigned)bleManager_->getTxCapacity(),
-                        (unsigned long)bleManager_->getTxDroppedBytes(),
-                        (unsigned long)bleManager_->getTxRetries());
-            printFormat("[BLE] Diagnostics: %s\r\n", bleManager_->isDiagEnabled() ? "on" : "off");
-        } else {
-            println("Usage: ble [status] | ble suffix [<val>|reset] | ble diag on|off");
-        }
+        handleBleCommand(arg);
     } else if (startsWithIgnoreCase(cleanCmd, "cal")) {
         const char *arg = cleanCmd + 3;
         while (*arg == ' ' || *arg == '\t') arg++;
@@ -739,18 +697,34 @@ void SerialCli::handleGpsCommand(const char *arg, unsigned long nowMs) {
         if (startsWithIgnoreCase(sub, "baseline")) {
             sub += 8;
             while (*sub == ' ' || *sub == '\t') sub++;
-            char *endPtr = nullptr;
-            baselineCm = std::strtof(sub, &endPtr);
-            if (endPtr && *endPtr) {
-                float t = std::strtof(endPtr, nullptr);
-                if (t > 0.0f) tolCm = t;
+            const char *next = nullptr;
+            if (!parseFloatToken(sub, baselineCm, next) || baselineCm <= 0.0f) {
+                println("[GPS ERROR] Usage: gps config [baseline <cm> [tol]]");
+                return;
             }
-        } else if ((*sub >= '0' && *sub <= '9') || *sub == '.') {
-            char *endPtr = nullptr;
-            baselineCm = std::strtof(sub, &endPtr);
-            if (endPtr && *endPtr) {
-                float t = std::strtof(endPtr, nullptr);
-                if (t > 0.0f) tolCm = t;
+            while (*next == ' ' || *next == '\t') next++;
+            if (*next != '\0') {
+                float t = 0.0f;
+                if (!parseStrictFloat(next, t) || t <= 0.0f) {
+                    println("[GPS ERROR] Invalid baseline tolerance. Usage: gps config [baseline <cm> [tol]]");
+                    return;
+                }
+                tolCm = t;
+            }
+        } else if (*sub != '\0') {
+            const char *next = nullptr;
+            if (!parseFloatToken(sub, baselineCm, next) || baselineCm <= 0.0f) {
+                println("[GPS ERROR] Usage: gps config [baseline <cm> [tol]]");
+                return;
+            }
+            while (*next == ' ' || *next == '\t') next++;
+            if (*next != '\0') {
+                float t = 0.0f;
+                if (!parseStrictFloat(next, t) || t <= 0.0f) {
+                    println("[GPS ERROR] Invalid baseline tolerance. Usage: gps config [baseline <cm> [tol]]");
+                    return;
+                }
+                tolCm = t;
             }
         }
 
@@ -2120,6 +2094,85 @@ void SerialCli::printSimulationStatus(unsigned long nowMs) {
     println();
 }
 
+void SerialCli::handleBleCommand(const char *arg) {
+    if (!bleManager_) {
+        println("[BLE] Bluetooth not available");
+        return;
+    }
+    if (equalsIgnoreCase(arg, "diag on")) {
+        bleManager_->setDiagEnabled(true);
+        println("[BLE] Diagnostics ON (RSSI every 3 s while connected, main-loop stall reports; USB serial)");
+    } else if (equalsIgnoreCase(arg, "diag off")) {
+        bleManager_->setDiagEnabled(false);
+        println("[BLE] Diagnostics OFF");
+    } else if (startsWithIgnoreCase(arg, "suffix")) {
+        const char *sub = arg + 6;
+        while (*sub == ' ' || *sub == '\t') sub++;
+        if (*sub == '\0') {
+            if (bleManager_->isCustomSuffix()) {
+                printFormat("[BLE] Device name: %s (Custom suffix: %s)\r\n",
+                            bleManager_->getDeviceName(), bleManager_->getDeviceSuffix());
+            } else {
+                printFormat("[BLE] Device name: %s (Default MAC suffix: %s)\r\n",
+                            bleManager_->getDeviceName(), bleManager_->getDeviceSuffix());
+            }
+        } else if (equalsIgnoreCase(sub, "reset") || equalsIgnoreCase(sub, "default")) {
+            bleManager_->resetDeviceSuffix(true);
+            printFormat("[BLE] Device name reset to default: %s\r\n", bleManager_->getDeviceName());
+            println("[BLE] Saved to non-volatile storage.");
+            println("[BLE] Note: If your phone still displays the old name, toggle your phone's Bluetooth off and on to clear its scan cache.");
+        } else {
+            size_t len = std::strlen(sub);
+            while (len > 0 && (sub[len - 1] == ' ' || sub[len - 1] == '\t' ||
+                               sub[len - 1] == '\r' || sub[len - 1] == '\n')) {
+                len--;
+            }
+            if (len > BleSerialManager::kMaxSuffixLength) {
+                println("[BLE ERROR] Suffix too long (maximum 16 characters).");
+                return;
+            }
+            char cleanSuffix[BleSerialManager::kMaxSuffixLength + 1];
+            std::memcpy(cleanSuffix, sub, len);
+            cleanSuffix[len] = '\0';
+
+            bool valid = true;
+            for (size_t i = 0; i < len; ++i) {
+                char c = cleanSuffix[i];
+                if (c <= 32 || c >= 127) {
+                    valid = false;
+                    break;
+                }
+            }
+            if (!valid) {
+                println("[BLE ERROR] Invalid suffix. Use letters, numbers, hyphens or underscores (no spaces).");
+                return;
+            }
+
+            if (bleManager_->setDeviceSuffix(cleanSuffix, true)) {
+                printFormat("[BLE] Device name updated to: %s\r\n", bleManager_->getDeviceName());
+                println("[BLE] Saved to non-volatile storage.");
+                println("[BLE] Note: If your phone still displays the old name, toggle your phone's Bluetooth off and on to clear its scan cache.");
+            } else {
+                println("[BLE ERROR] Failed to set device suffix.");
+            }
+        }
+    } else if (arg[0] == '\0' || equalsIgnoreCase(arg, "status")) {
+        printFormat("[BLE] Device: %s\r\n", bleManager_->getDeviceName());
+        printFormat("[BLE] Connected: %s | Subscribed: %s | MTU: %u\r\n",
+                    bleManager_->isConnected() ? "yes" : "no",
+                    bleManager_->isSubscribed() ? "yes" : "no",
+                    (unsigned)bleManager_->getMtu());
+        printFormat("[BLE] Advertising: %s\r\n", bleManager_->isAdvertising() ? "yes" : "no");
+        printFormat("[BLE] TX queue: %u / %u bytes | Dropped: %lu bytes | Send retries: %lu\r\n",
+                    (unsigned)bleManager_->getTxQueued(), (unsigned)bleManager_->getTxCapacity(),
+                    (unsigned long)bleManager_->getTxDroppedBytes(),
+                    (unsigned long)bleManager_->getTxRetries());
+        printFormat("[BLE] Diagnostics: %s\r\n", bleManager_->isDiagEnabled() ? "on" : "off");
+    } else {
+        println("Usage: ble [status] | ble suffix [<val>|reset] | ble diag on|off");
+    }
+}
+
 void SerialCli::printCalHelp() {
     println();
     println("=== Antenna Calibration Commands ===");
@@ -2165,7 +2218,11 @@ void SerialCli::handleCalCommand(const char *arg) {
         while (*numStr == ' ' || *numStr == '\t') numStr++;
     }
 
-    float val = (float)atof(numStr);
+    float val = 0.0f;
+    if (!parseStrictFloat(numStr, val)) {
+        printFormat("[CAL ERROR] Invalid offset '%s'. Usage: cal [snap|zero|<deg>]\r\n", numStr);
+        return;
+    }
     calibration_.setOffset(val);
     if (stateChangedCb_) stateChangedCb_(stateChangedContext_);
     printFormat("[CAL] Offset set to %+5.1f deg\r\n", calibration_.getOffset());
@@ -2213,14 +2270,18 @@ void SerialCli::handleSimCommand(const char *arg, unsigned long nowMs) {
 
     if (startsWithIgnoreCase(arg, "hdg")) {
         const char *p = skipSubcommandPrefix(arg, 3);
-        float h = (float)atof(p);
+        float h = 0.0f;
+        const char *next = nullptr;
+        if (!parseFloatToken(p, h, next)) {
+            println("[SIM ERROR] Usage: sim hdg <deg> [fixed|float|lost]");
+            return;
+        }
         BearingQuality q = BEARING_FIXED;
 
-        const char *sp = strchr(p, ' ');
-        if (sp) {
-            while (*sp == ' ') sp++;
-            if (equalsIgnoreCase(sp, "float")) q = BEARING_FLOAT;
-            else if (equalsIgnoreCase(sp, "lost") || equalsIgnoreCase(sp, "invalid")) q = BEARING_LOST;
+        while (*next == ' ' || *next == '\t') next++;
+        if (*next != '\0') {
+            if (equalsIgnoreCase(next, "float")) q = BEARING_FLOAT;
+            else if (equalsIgnoreCase(next, "lost") || equalsIgnoreCase(next, "invalid")) q = BEARING_LOST;
             else q = BEARING_FIXED;
         }
 
@@ -2274,27 +2335,30 @@ void SerialCli::handleSimCommand(const char *arg, unsigned long nowMs) {
     if (startsWithIgnoreCase(arg, "rover")) {
         const char *p = arg + 5;
         while (*p == ' ' || *p == '\t') p++;
-        if (roverSimCb_) {
-            char ogBuf[10] = "";
-            double distKm = 0.0;
-            const char *sp = strchr(p, ' ');
-            if (sp) {
-                size_t ogLen = sp - p;
-                if (ogLen < sizeof(ogBuf)) {
-                    strncpy(ogBuf, p, ogLen);
-                    ogBuf[ogLen] = '\0';
-                }
-                distKm = atof(sp + 1);
-            } else if (*p != '\0') {
-                distKm = atof(p);
+        char ogBuf[10] = "";
+        float distKmF = 0.0f;
+        const char *sp = strchr(p, ' ');
+        if (sp) {
+            size_t ogLen = static_cast<size_t>(sp - p);
+            if (ogLen >= sizeof(ogBuf) || !parseStrictFloat(sp + 1, distKmF) || distKmF < 0.0f) {
+                println("[SIM ERROR] Usage: sim rover [origin_grid] <dist_km>");
+                return;
             }
+            strncpy(ogBuf, p, ogLen);
+            ogBuf[ogLen] = '\0';
+        } else if (!parseStrictFloat(p, distKmF) || distKmF < 0.0f) {
+            println("[SIM ERROR] Usage: sim rover [origin_grid] <dist_km>");
+            return;
+        }
+        double distKm = static_cast<double>(distKmF);
+
+        if (roverSimCb_) {
             roverSimCb_(ogBuf, distKm, roverSimContext_);
             return;
         }
 
         // Default rover handler if no UI callback
         GeoPoint origin = gpsManager_.hasLocation() ? gpsManager_.getLocation() : GeoPoint(38.35412, -119.45821, true);
-        double distKm = atof(p);
         GeoPoint simulated = GpsSimulator::calculateRoverDisplacement(origin, distKm, 45.0);
         gpsManager_.setLocation(simulated, nowMs);
         if (stateChangedCb_) stateChangedCb_(stateChangedContext_);
@@ -2482,8 +2546,8 @@ void SerialCli::handleRoverMax(const char *arg) {
                     roverLogManager_->getMaxStops(), MIN_ROVER_STOPS, ABS_MAX_ROVER_STOPS);
         return;
     }
-    int val = atoi(arg);
-    if (val <= 0) {
+    int val = 0;
+    if (!parseStrictPositiveInt(arg, val)) {
         println("[ROVER ERROR] Invalid capacity. Range: 10-500.");
         return;
     }

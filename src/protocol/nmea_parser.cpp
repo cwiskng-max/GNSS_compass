@@ -98,17 +98,26 @@ bool parseKSXT(const char *sentence, float *heading_out, BearingQuality *quality
     return true;
 }
 
+static bool extractKsxtUtcDigits(const char *sentence, const char *&utcField, int &len) {
+    if (!sentence) return false;
+    utcField = getNthField(sentence, 1);
+    if (utcField == nullptr || *utcField == ',' || *utcField == '*' || *utcField == '\0') {
+        return false;
+    }
+    len = 0;
+    while (isdigit((unsigned char)utcField[len])) {
+        len++;
+    }
+    return true;
+}
+
 bool parseKSXTTime(const char *sentence, int *hours_out, int *minutes_out) {
     if (!sentence || !hours_out || !minutes_out) return false;
 
-    const char *utc_field = getNthField(sentence, 1);
-    if (utc_field == nullptr || *utc_field == ',' || *utc_field == '*' || *utc_field == '\0') {
-        return false;
-    }
-
+    const char *utc_field = nullptr;
     int len = 0;
-    while (isdigit((unsigned char)utc_field[len])) {
-        len++;
+    if (!extractKsxtUtcDigits(sentence, utc_field, len)) {
+        return false;
     }
 
     int h = -1, m = -1;
@@ -153,16 +162,10 @@ uint32_t utcCalendarToEpoch(int year, int month, int day, int hour, int min, int
 }
 
 bool parseKsxtDateTime(const char *sentence, int &yearOut, int &monthOut, int &dayOut, int &hoursOut, int &minutesOut, int &secondsOut) {
-    if (!sentence) return false;
-
-    const char *utc_field = getNthField(sentence, 1);
-    if (utc_field == nullptr || *utc_field == ',' || *utc_field == '*' || *utc_field == '\0') {
-        return false;
-    }
-
+    const char *utc_field = nullptr;
     int len = 0;
-    while (isdigit((unsigned char)utc_field[len])) {
-        len++;
+    if (!extractKsxtUtcDigits(sentence, utc_field, len)) {
+        return false;
     }
 
     if (len >= 12) {
@@ -286,7 +289,7 @@ GpsLinkVerdict evaluateGpsStream(
     bool hasHdg,
     BearingQuality quality)
 {
-    if (totalBytes == 0 || (now - lastByteTime > 3000)) {
+    if (totalBytes == 0 || (now >= lastByteTime && (now - lastByteTime > 3000))) {
         return GPS_LINK_DISCONNECTED;
     }
     if (gllCount == 0 && ksxtCount == 0 && hdtCount == 0) {

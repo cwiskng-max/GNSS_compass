@@ -127,6 +127,27 @@ void RoverLogManager::loadFromNvs() {
     uint16_t storedMax = cfgStore_.getUShort(ROVER_CFG_KEY_MAX_STOPS, DEFAULT_MAX_ROVER_STOPS);
     maxStops_ = clampMaxStops(storedMax);
     listStore_.load(stops_, maxStops_);
+
+    bool hadCorrupt = false;
+    std::vector<RoverStop> clean;
+    clean.reserve(stops_.size());
+    for (size_t i = 0; i < stops_.size(); ++i) {
+        RoverStop s = stops_[i];
+        s.grid[sizeof(s.grid) - 1] = '\0';
+        if (!std::isfinite(s.latitude) || !std::isfinite(s.longitude) ||
+            !std::isfinite(s.displacement_km) ||
+            s.latitude < -90.0 || s.latitude > 90.0 ||
+            s.longitude < -180.0 || s.longitude > 180.0 ||
+            s.displacement_km < 0.0f) {
+            hadCorrupt = true;
+            continue;
+        }
+        clean.push_back(s);
+    }
+    stops_.swap(clean);
+    if (hadCorrupt) {
+        saveToNvs();
+    }
 }
 
 void RoverLogManager::saveToNvs() {

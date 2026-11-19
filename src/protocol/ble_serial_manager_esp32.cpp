@@ -22,6 +22,7 @@ namespace {
 // Bluedroid's custom handlers are plain function pointers, so they reach the manager through
 // this pointer. Only one BleSerialManager may be started (enforced in platformBegin()).
 BleSerialManager *s_bleInstance = nullptr;
+portMUX_TYPE s_bdaMux = portMUX_INITIALIZER_UNLOCKED;
 
 // Restart advertising if disconnected and the controller has not confirmed advertising
 constexpr unsigned long kAdvWatchdogMs = 2000;
@@ -174,19 +175,25 @@ bool BleSerialManager::platformBegin(bool haveCustomName) {
 void BleSerialManager::platformUpdate(unsigned long nowMs) {
     const uint8_t *peer = nullptr;
     uint8_t bda[6];
+    portENTER_CRITICAL(&s_bdaMux);
     if (connected_.load() && haveRemoteBda_.load(std::memory_order_acquire)) {
         std::memcpy(bda, remoteBda_, sizeof(bda));
         peer = bda;
     }
+    portEXIT_CRITICAL(&s_bdaMux);
     diag_.update(nowMs, peer);
 
-    // Advertising watchdog: if we are disconnected and the controller has not confirmed
-    // that advertising is running, (re)start it. Normal path is the immediate restart in
-    // onBtDisconnect(); this only fires if that start was lost or rejected.
-    if (initialized_ && !connected_.load() && !advertising_.load() &&
-        (static_cast<uint32_t>(nowMs) - lastAdvStartRequestMs_.load()) >= kAdvWatchdogMs) {
-        Serial.println("[BLE] watchdog: not advertising while disconnected -> restarting advertising");
-        requestAdvertisingStart();
+    // Advertising supervision: restarts requested from onBtDisconnect() or the watchdog
+    // are executed here on the main loop so all BLEAdvertising calls stay single-task.
+    if (initialized_ && !connected_.load()) {
+        bool restartPending = advRestartPending_.exchange(false, std::memory_order_acq_rel);
+        if (restartPending) {
+            requestAdvertisingStart();
+        } else if (!advertising_.load() &&
+                   (static_cast<uint32_t>(nowMs) - lastAdvStartRequestMs_.load()) >= kAdvWatchdogMs) {
+            Serial.println("[BLE] watchdog: not advertising while disconnected -> restarting advertising");
+            requestAdvertisingStart();
+        }
     }
 }
 
@@ -206,9 +213,15 @@ void BleSerialManager::platformDisconnect() {
     // Terminate the link-layer connection directly (HCI Disconnect, reason 0x13).
     // BLEServer::disconnect() only calls esp_ble_gatts_close(), which closes the GATT
     // virtual connection and leaves the ACL link to be torn down later by an idle timer.
+    uint8_t bda[6];
+    bool haveBda = false;
+    portENTER_CRITICAL(&s_bdaMux);
     if (haveRemoteBda_.load(std::memory_order_acquire)) {
-        uint8_t bda[6];
         std::memcpy(bda, remoteBda_, sizeof(bda));
+        haveBda = true;
+    }
+    portEXIT_CRITICAL(&s_bdaMux);
+    if (haveBda) {
         esp_err_t rc = esp_ble_gap_disconnect(bda);
         if (diag_.isEnabled() || rc != ESP_OK) {
             Serial.printf("[BLE] disconnect requested (gap_disconnect rc=%d)\r\n", (int)rc);
@@ -240,9 +253,12 @@ bool BleSerialManager::isAdvertising() const {
 // ---------------------------------------------------------------------------
 
 void BleSerialManager::onBtConnect(uint16_t connId, const uint8_t *bda) {
+    advRestartPending_.store(false, std::memory_order_relaxed);
     if (bda) {
+        portENTER_CRITICAL(&s_bdaMux);
         std::memcpy(remoteBda_, bda, sizeof(remoteBda_));
         haveRemoteBda_.store(true, std::memory_order_release);
+        portEXIT_CRITICAL(&s_bdaMux);
     }
     // The controller stops legacy advertising automatically when a connection is created
     advertising_ = false;
@@ -254,14 +270,15 @@ void BleSerialManager::onBtDisconnect() {
     // cannot see "disconnected + not advertising + stale timestamp" in the window before
     // the advertising restart below.
     lastAdvStartRequestMs_ = millis();
-    haveRemoteBda_ = false;
+    portENTER_CRITICAL(&s_bdaMux);
+    haveRemoteBda_.store(false, std::memory_order_release);
+    portEXIT_CRITICAL(&s_bdaMux);
     advertising_ = false;
     handleDisconnect();
     // The library keeps the CCCD value across connections; the next client must subscribe again
     if (p2902_) p2902_->setNotifications(false);
-    // Restart advertising exactly once, right away. The update() watchdog covers
-    // the case where this start is rejected by the controller.
-    requestAdvertisingStart();
+    // Defer advertising restart to platformUpdate() on the main loop
+    advRestartPending_.store(true, std::memory_order_release);
 }
 
 void BleSerialManager::requestAdvertisingStart() {
