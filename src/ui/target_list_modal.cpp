@@ -5,6 +5,42 @@
 #include <cmath>
 #include <cstring>
 
+void TargetListModal::clampSelection(size_t count) {
+    if (count == 0) {
+        selectedIndex_ = 0;
+        scrollOffset_ = 0;
+        return;
+    }
+    if (selectedIndex_ >= count) {
+        selectedIndex_ = count - 1;
+    }
+    if (selectedIndex_ < scrollOffset_) {
+        scrollOffset_ = selectedIndex_;
+    } else if (selectedIndex_ >= scrollOffset_ + TARGET_LIST_VISIBLE_ROWS) {
+        scrollOffset_ = selectedIndex_ - TARGET_LIST_VISIBLE_ROWS + 1;
+    }
+    if (count <= TARGET_LIST_VISIBLE_ROWS) {
+        scrollOffset_ = 0;
+    } else if (scrollOffset_ > count - TARGET_LIST_VISIBLE_ROWS) {
+        scrollOffset_ = count - TARGET_LIST_VISIBLE_ROWS;
+    }
+}
+
+bool TargetListModal::moveSelection(int delta, size_t count) {
+    if (count == 0) return false;
+    if (delta > 0 && selectedIndex_ + 1 < count) {
+        selectedIndex_++;
+        clampSelection(count);
+        return true;
+    }
+    if (delta < 0 && selectedIndex_ > 0) {
+        selectedIndex_--;
+        clampSelection(count);
+        return true;
+    }
+    return false;
+}
+
 void TargetListModal::formatHeader(size_t count, size_t maxTargets, char *outBuf, size_t bufSize) {
     if (!outBuf || bufSize == 0) return;
     std::snprintf(outBuf, bufSize, "SAVED TARGET GRIDS (%zu/%zu)", count, maxTargets);

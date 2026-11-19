@@ -25,6 +25,14 @@ public:
     TargetListModal() = default;
 #endif
 
+    // Selection & scroll state management
+    void resetSelection() { selectedIndex_ = 0; scrollOffset_ = 0; }
+    void setSelectedIndex(size_t idx, size_t count) { selectedIndex_ = idx; clampSelection(count); }
+    bool moveSelection(int delta, size_t count);
+    void clampSelection(size_t count);
+    size_t getSelectedIndex() const { return selectedIndex_; }
+    size_t getScrollOffset() const { return scrollOffset_; }
+
     // Modal drawing methods
     void drawModal(const TargetPreset *presets,
                    size_t count,
@@ -62,6 +70,8 @@ public:
                                 size_t bufSize);
 
 private:
+    size_t selectedIndex_ = 0;
+    size_t scrollOffset_ = 0;
 #if defined(ARDUINO)
     Arduino_GFX *gfx_ = nullptr;
 #endif

@@ -17,6 +17,10 @@ g++ -O2 -Wall -Wextra -I"$REPO_DIR" \
     "$REPO_DIR/src/protocol/ble_serial_manager_esp32.cpp" \
     "$REPO_DIR/src/protocol/voice_qso_parser.cpp" \
     "$REPO_DIR/src/protocol/serial_cli.cpp" \
+    "$REPO_DIR/src/protocol/serial_cli_gps.cpp" \
+    "$REPO_DIR/src/protocol/serial_cli_rover.cpp" \
+    "$REPO_DIR/src/protocol/serial_cli_target.cpp" \
+    "$REPO_DIR/src/protocol/serial_cli_log.cpp" \
     "$REPO_DIR/src/system/board.cpp" \
     "$REPO_DIR/src/system/calibration.cpp" \
     "$REPO_DIR/src/system/rover_log_manager.cpp" \

@@ -77,8 +77,8 @@ public:
     unsigned long getQsoCardOpenedMs() const { return qsoCardOpenedMillis_; }
 
     // Target List modal state accessors
-    size_t getSelectedPresetIndex() const { return selectedPresetIndex_; }
-    size_t getPresetScrollOffset() const { return presetScrollOffset_; }
+    size_t getSelectedPresetIndex() const { return displayUi_.getTargetListModal().getSelectedIndex(); }
+    size_t getPresetScrollOffset() const { return displayUi_.getTargetListModal().getScrollOffset(); }
     unsigned long getTargetModalOpenedMs() const { return targetModalOpenedMillis_; }
     const char* resolveTargetLabel(const char *grid) const;
 
@@ -200,11 +200,9 @@ private:
 
     UiMode currentUiMode_;
     bool isSelfTesting_;
-    unsigned long calModalOpenedMillis_;
+    unsigned long modalOpenedMillis_;
     unsigned long qsoCardOpenedMillis_;
     unsigned long targetModalOpenedMillis_;
-    size_t selectedPresetIndex_;
-    size_t presetScrollOffset_;
     ModalButtonId pendingModalButtonRelease_;
     unsigned long pendingModalButtonReleaseStartMillis_;
 

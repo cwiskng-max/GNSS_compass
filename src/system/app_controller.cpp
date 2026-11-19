@@ -49,11 +49,9 @@ AppController::AppController(Board &board,
       revbearing_(0.0),
       currentUiMode_(UiMode::Normal),
       isSelfTesting_(false),
-      calModalOpenedMillis_(0),
+      modalOpenedMillis_(0),
       qsoCardOpenedMillis_(0),
       targetModalOpenedMillis_(0),
-      selectedPresetIndex_(0),
-      presetScrollOffset_(0),
       pendingModalButtonRelease_(ModalButtonId::None),
       pendingModalButtonReleaseStartMillis_(0)
 {
@@ -277,35 +275,19 @@ uint32_t AppController::currentTimestampSec(unsigned long nowMs) const {
 
 void AppController::clampTargetModalSelection() {
     size_t count = targetPresetManagerRef_ ? targetPresetManagerRef_->getCount() : 0;
-    if (count == 0) {
-        selectedPresetIndex_ = 0;
-        presetScrollOffset_ = 0;
-        return;
-    }
-    if (selectedPresetIndex_ >= count) {
-        selectedPresetIndex_ = count - 1;
-    }
-    if (selectedPresetIndex_ < presetScrollOffset_) {
-        presetScrollOffset_ = selectedPresetIndex_;
-    } else if (selectedPresetIndex_ >= presetScrollOffset_ + TARGET_LIST_VISIBLE_ROWS) {
-        presetScrollOffset_ = selectedPresetIndex_ - TARGET_LIST_VISIBLE_ROWS + 1;
-    }
-    if (count <= TARGET_LIST_VISIBLE_ROWS) {
-        presetScrollOffset_ = 0;
-    } else if (presetScrollOffset_ > count - TARGET_LIST_VISIBLE_ROWS) {
-        presetScrollOffset_ = count - TARGET_LIST_VISIBLE_ROWS;
-    }
+    displayUi_.getTargetListModal().clampSelection(count);
 }
 
 void AppController::drawTargetListModal() {
     if (!targetPresetManagerRef_) return;
     const auto &presets = targetPresetManagerRef_->getPresets();
-    displayUi_.getTargetListModal().drawModal(
+    auto &modal = displayUi_.getTargetListModal();
+    modal.drawModal(
         presets.empty() ? nullptr : presets.data(),
         presets.size(),
         targetPresetManagerRef_->getMaxTargets(),
-        selectedPresetIndex_,
-        presetScrollOffset_,
+        modal.getSelectedIndex(),
+        modal.getScrollOffset(),
         currentPosition_,
         hasLocation_);
 }
@@ -313,25 +295,27 @@ void AppController::drawTargetListModal() {
 void AppController::drawTargetListRows() {
     if (!targetPresetManagerRef_) return;
     const auto &presets = targetPresetManagerRef_->getPresets();
-    displayUi_.getTargetListModal().drawPresetList(
+    auto &modal = displayUi_.getTargetListModal();
+    modal.drawPresetList(
         presets.empty() ? nullptr : presets.data(),
         presets.size(),
-        selectedPresetIndex_,
-        presetScrollOffset_,
+        modal.getSelectedIndex(),
+        modal.getScrollOffset(),
         currentPosition_,
         hasLocation_);
 }
 
 void AppController::loadSelectedTargetPreset(unsigned long nowMs) {
     if (!targetPresetManagerRef_) return;
-    const TargetPreset *preset = targetPresetManagerRef_->getPreset(selectedPresetIndex_);
+    size_t selectedIdx = displayUi_.getTargetListModal().getSelectedIndex();
+    const TargetPreset *preset = targetPresetManagerRef_->getPreset(selectedIdx);
     if (!preset) return;
 
     char loadedGrid[7];
     std::strncpy(loadedGrid, preset->grid, sizeof(loadedGrid) - 1);
     loadedGrid[sizeof(loadedGrid) - 1] = '\0';
 
-    targetPresetManagerRef_->recordUse(selectedPresetIndex_, currentTimestampSec(nowMs));
+    targetPresetManagerRef_->recordUse(selectedIdx, currentTimestampSec(nowMs));
     gridEditor_.setGrid(loadedGrid);
     gridEditor_.setEditing(false);
     if (operationalMode_ == OperationalMode::Rover) {
@@ -691,15 +675,13 @@ void AppController::handleUserEvent(const UserEvent &event, unsigned long nowMs)
     switch (event.type) {
         case UserEventType::RotateClockwise:
             if (currentUiMode_ == UiMode::Calibrating) {
-                calModalOpenedMillis_ = nowMs;
+                modalOpenedMillis_ = nowMs;
                 calibration_.adjustProposedOffset(0.1f);
                 displayUi_.getCalModal().drawProposedOffsetRow(calibration_.getProposedOffset());
             } else if (currentUiMode_ == UiMode::TargetList) {
                 targetModalOpenedMillis_ = nowMs;
                 size_t count = targetPresetManagerRef_ ? targetPresetManagerRef_->getCount() : 0;
-                if (count > 0 && selectedPresetIndex_ + 1 < count) {
-                    selectedPresetIndex_++;
-                    clampTargetModalSelection();
+                if (displayUi_.getTargetListModal().moveSelection(+1, count)) {
                     drawTargetListRows();
                 }
             } else if (currentUiMode_ == UiMode::Normal && gridEditor_.isEditing()) {
@@ -715,15 +697,13 @@ void AppController::handleUserEvent(const UserEvent &event, unsigned long nowMs)
 
         case UserEventType::RotateCounterClockwise:
             if (currentUiMode_ == UiMode::Calibrating) {
-                calModalOpenedMillis_ = nowMs;
+                modalOpenedMillis_ = nowMs;
                 calibration_.adjustProposedOffset(-0.1f);
                 displayUi_.getCalModal().drawProposedOffsetRow(calibration_.getProposedOffset());
             } else if (currentUiMode_ == UiMode::TargetList) {
                 targetModalOpenedMillis_ = nowMs;
                 size_t count = targetPresetManagerRef_ ? targetPresetManagerRef_->getCount() : 0;
-                if (count > 0 && selectedPresetIndex_ > 0) {
-                    selectedPresetIndex_--;
-                    clampTargetModalSelection();
+                if (displayUi_.getTargetListModal().moveSelection(-1, count)) {
                     drawTargetListRows();
                 }
             } else if (currentUiMode_ == UiMode::Normal && gridEditor_.isEditing()) {
@@ -764,7 +744,7 @@ void AppController::handleUserEvent(const UserEvent &event, unsigned long nowMs)
                 calibration_.syncProposedFromActive();
             }
             setUiMode(UiMode::Calibrating);
-            calModalOpenedMillis_ = nowMs;
+            modalOpenedMillis_ = nowMs;
             displayUi_.getCalModal().drawModal(bearing_, gpsManager_.getBearingFilter().getRawHeading(), hasHeading_,
                                               calibration_.getOffset(), calibration_.getProposedOffset());
             break;
@@ -781,7 +761,7 @@ void AppController::handleUserEvent(const UserEvent &event, unsigned long nowMs)
                 break;
             }
             setUiMode(UiMode::RoverHistory);
-            calModalOpenedMillis_ = nowMs;
+            modalOpenedMillis_ = nowMs;
             displayUi_.getRoverHistoryModal().drawModal(
                 roverLogManagerRef_->getLastStop(),
                 roverLogManagerRef_->getStopCount(),
@@ -807,8 +787,7 @@ void AppController::handleUserEvent(const UserEvent &event, unsigned long nowMs)
             }
             setUiMode(UiMode::TargetList);
             targetModalOpenedMillis_ = nowMs;
-            selectedPresetIndex_ = 0;
-            presetScrollOffset_ = 0;
+            displayUi_.getTargetListModal().resetSelection();
             drawTargetListModal();
             break;
 
@@ -870,12 +849,12 @@ void AppController::handleUserEvent(const UserEvent &event, unsigned long nowMs)
             break;
 
         case UserEventType::HoldSaveButtonProgress:
-            calModalOpenedMillis_ = nowMs;
+            modalOpenedMillis_ = nowMs;
             displayUi_.getCalModal().drawSaveButton(event.progress > 0.0f, event.progress);
             break;
 
         case UserEventType::HoldDiscardButtonProgress:
-            calModalOpenedMillis_ = nowMs;
+            modalOpenedMillis_ = nowMs;
             displayUi_.getRoverHistoryModal().drawDiscardButton(event.progress > 0.0f, event.progress);
             break;
 
@@ -886,7 +865,7 @@ void AppController::handleUserEvent(const UserEvent &event, unsigned long nowMs)
             break;
 
         case UserEventType::SnapOffsetTriggered:
-            calModalOpenedMillis_ = nowMs;
+            modalOpenedMillis_ = nowMs;
             displayUi_.getCalModal().drawSnapButton(true, hasHeading_);
             if (hasHeading_) {
                 calibration_.snapProposed(bearing_, gpsManager_.getBearingFilter().getRawHeading());
@@ -897,7 +876,7 @@ void AppController::handleUserEvent(const UserEvent &event, unsigned long nowMs)
             break;
 
         case UserEventType::ResetOffsetTriggered:
-            calModalOpenedMillis_ = nowMs;
+            modalOpenedMillis_ = nowMs;
             displayUi_.getCalModal().drawResetButton(true);
             calibration_.resetProposed();
             displayUi_.getCalModal().drawProposedOffsetRow(calibration_.getProposedOffset());
@@ -928,10 +907,11 @@ void AppController::handleUserEvent(const UserEvent &event, unsigned long nowMs)
         case UserEventType::TargetRowTouched:
             if (currentUiMode_ == UiMode::TargetList && targetPresetManagerRef_ && event.gridIndex >= 0) {
                 targetModalOpenedMillis_ = nowMs;
-                size_t tappedIdx = presetScrollOffset_ + static_cast<size_t>(event.gridIndex);
-                if (tappedIdx < targetPresetManagerRef_->getCount()) {
-                    selectedPresetIndex_ = tappedIdx;
-                    clampTargetModalSelection();
+                auto &modal = displayUi_.getTargetListModal();
+                size_t count = targetPresetManagerRef_->getCount();
+                size_t tappedIdx = modal.getScrollOffset() + static_cast<size_t>(event.gridIndex);
+                if (tappedIdx < count) {
+                    modal.setSelectedIndex(tappedIdx, count);
                     drawTargetListRows();
                 }
             }
@@ -947,7 +927,7 @@ void AppController::handleUserEvent(const UserEvent &event, unsigned long nowMs)
         case UserEventType::DeleteTargetTriggered:
             if (currentUiMode_ == UiMode::TargetList && targetPresetManagerRef_) {
                 targetModalOpenedMillis_ = nowMs;
-                if (targetPresetManagerRef_->removePreset(selectedPresetIndex_)) {
+                if (targetPresetManagerRef_->removePreset(displayUi_.getTargetListModal().getSelectedIndex())) {
                     clampTargetModalSelection();
                     drawTargetListModal();
                 }
@@ -961,9 +941,11 @@ void AppController::handleUserEvent(const UserEvent &event, unsigned long nowMs)
                 if (targetPresetManagerRef_->addOrUpdatePreset(activeGrid, nullptr, currentTimestampSec(nowMs))) {
                     int idx = targetPresetManagerRef_->findIndexByGrid(activeGrid);
                     if (idx >= 0) {
-                        selectedPresetIndex_ = static_cast<size_t>(idx);
+                        displayUi_.getTargetListModal().setSelectedIndex(
+                            static_cast<size_t>(idx), targetPresetManagerRef_->getCount());
+                    } else {
+                        clampTargetModalSelection();
                     }
-                    clampTargetModalSelection();
                     drawTargetListModal();
                 }
             }
@@ -981,8 +963,7 @@ void AppController::handleUserEvent(const UserEvent &event, unsigned long nowMs)
             if (currentUiMode_ == UiMode::TargetList && targetPresetManagerRef_) {
                 targetModalOpenedMillis_ = nowMs;
                 targetPresetManagerRef_->clearAll();
-                selectedPresetIndex_ = 0;
-                presetScrollOffset_ = 0;
+                displayUi_.getTargetListModal().resetSelection();
                 drawTargetListModal();
             }
             break;
@@ -1029,7 +1010,7 @@ void AppController::update(unsigned long nowMs) {
 
     // 5. Modal timeout check
     if (currentUiMode_ == UiMode::Calibrating || currentUiMode_ == UiMode::RoverHistory) {
-        if ((nowMs - calModalOpenedMillis_) >= CAL_MODAL_TIMEOUT_MS) {
+        if ((nowMs - modalOpenedMillis_) >= CAL_MODAL_TIMEOUT_MS) {
             setUiMode(UiMode::Normal);
             redrawMainScreen();
         }
