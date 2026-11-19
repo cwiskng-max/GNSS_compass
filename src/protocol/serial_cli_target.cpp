@@ -10,7 +10,8 @@ using namespace cli_helpers;
 void SerialCli::printTargetHelp() {
     println();
     println("=== Target Preset Commands ===");
-    println("  target <GRID>             - Set active target grid (supports NATO phonetics)");
+    println("  target <GRID|INDEX>       - Set active target grid (phonetics or 1-based preset #)");
+    println("  target select <INDEX>     - Select saved preset by 1-based index");
     println("  target add <GRID> [LABEL] - Add or update preset (spaces allowed in label)");
     println("  target save [LABEL]       - Save current active target grid as preset");
     println("  target del <INDEX|GRID>   - Delete preset by 1-based index or 6-char grid");
@@ -40,12 +41,12 @@ void SerialCli::handleTargetCommand(const char *arg, unsigned long nowMs) {
         nowSec = static_cast<uint32_t>(nowMs / 1000);
     }
 
-    if (hasSubcommandPrefix(arg, "add")) {
+    if (hasSubcommandPrefix(arg, "add") || hasSubcommandPrefix(arg, "ad")) {
         if (!targetPresetManager_) {
             println("[TARGET] Target preset manager not available.");
             return;
         }
-        const char *p = skipSubcommandPrefix(arg, 3);
+        const char *p = skipSubcommandPrefix(arg, hasSubcommandPrefix(arg, "add") ? 3 : 2);
         if (*p == '\0') {
             println("[TARGET ERROR] Usage: target add <GRID> [LABEL]");
             return;
@@ -268,34 +269,99 @@ void SerialCli::handleTargetCommand(const char *arg, unsigned long nowMs) {
         return;
     }
 
+    auto applyActiveTarget = [&](const char *grid, double &outBearing, double &outDistKm) {
+        if (targetGridCb_) {
+            targetGridCb_(grid, nowMs, targetGridContext_);
+        } else {
+            setTargetGrid(grid);
+        }
+
+        CliNavContext nctx = getNavContext();
+        outBearing = nctx.targetBearing;
+        outDistKm = nctx.roverDistanceMeters / 1000.0;
+
+        // Fallback geodesic calculation when in standalone test mode without full AppController provider
+        if (!navContextFn_ && nctx.currentGrid[0] != '\0') {
+            GeoPoint curPt, tgtPt;
+            if (gridToGeoPoint(nctx.currentGrid, curPt) && gridToGeoPoint(grid, tgtPt)) {
+                double distMeters = 0.0, brg = 0.0;
+                calculateWgs84(curPt, tgtPt, distMeters, brg);
+                outBearing = brg;
+                outDistKm = distMeters / 1000.0;
+                fallbackNavContext_.targetBearing = outBearing;
+                fallbackNavContext_.roverDistanceMeters = distMeters;
+            }
+        }
+    };
+
+    auto selectPresetByIndex = [&](int index1Based) {
+        if (!targetPresetManager_) {
+            println("[TARGET] Target preset manager not available.");
+            return;
+        }
+        size_t count = targetPresetManager_->getCount();
+        if (count == 0) {
+            println("[TARGET ERROR] Preset list is empty.");
+            return;
+        }
+        if (index1Based < 1 || static_cast<size_t>(index1Based) > count) {
+            printFormat("[TARGET ERROR] Preset #%d out of range (1-%zu).\r\n", index1Based, count);
+            return;
+        }
+        const TargetPreset *preset = targetPresetManager_->getPreset(static_cast<size_t>(index1Based - 1));
+        if (!preset) {
+            printFormat("[TARGET ERROR] Preset #%d not found.\r\n", index1Based);
+            return;
+        }
+        char selectedGrid[7] = {0};
+        char selectedLabel[sizeof(preset->label)] = {0};
+        std::snprintf(selectedGrid, sizeof(selectedGrid), "%s", preset->grid);
+        std::snprintf(selectedLabel, sizeof(selectedLabel), "%s", preset->label);
+
+        targetPresetManager_->recordUse(static_cast<size_t>(index1Based - 1), nowSec);
+
+        double bearing = 0.0, distKm = 0.0;
+        applyActiveTarget(selectedGrid, bearing, distKm);
+
+        if (selectedLabel[0] != '\0') {
+            printFormat("[TARGET] Selected #%d: %s (%s) (Bearing: %.1f deg, Distance: %.1f km)\r\n",
+                        index1Based, selectedGrid, selectedLabel, bearing, distKm);
+        } else {
+            printFormat("[TARGET] Selected #%d: %s (Bearing: %.1f deg, Distance: %.1f km)\r\n",
+                        index1Based, selectedGrid, bearing, distKm);
+        }
+        if (stateChangedCb_) stateChangedCb_(stateChangedContext_);
+    };
+
+    if (hasSubcommandPrefix(arg, "select")) {
+        const char *p = skipSubcommandPrefix(arg, 6);
+        if (*p == '\0') {
+            println("[TARGET ERROR] Usage: target select <INDEX>");
+            return;
+        }
+        int index1Based = 0;
+        if (!parsePositiveIntOrVoice(p, index1Based)) {
+            printFormat("[TARGET ERROR] Invalid preset index: '%s'\r\n", p);
+            return;
+        }
+        selectPresetByIndex(index1Based);
+        return;
+    }
+
+    int directIndex = 0;
+    if (parsePositiveIntOrVoice(arg, directIndex)) {
+        selectPresetByIndex(directIndex);
+        return;
+    }
+
     std::string cleanGrid;
     if (!VoiceQsoParser::parseGrid(arg, cleanGrid)) {
         printFormat("[TARGET ERROR] Invalid Maidenhead grid: '%s'\r\n", arg);
         return;
     }
 
-    if (targetGridCb_) {
-        targetGridCb_(cleanGrid.c_str(), nowMs, targetGridContext_);
-    } else {
-        setTargetGrid(cleanGrid.c_str());
-    }
-
-    CliNavContext nctx = getNavContext();
-    double bearing = nctx.targetBearing;
-    double distKm = nctx.roverDistanceMeters / 1000.0;
-
-    // Fallback geodesic calculation when in standalone test mode without full AppController provider
-    if (!navContextFn_ && nctx.currentGrid[0] != '\0') {
-        GeoPoint curPt, tgtPt;
-        if (gridToGeoPoint(nctx.currentGrid, curPt) && gridToGeoPoint(cleanGrid.c_str(), tgtPt)) {
-            double distMeters = 0.0, brg = 0.0;
-            calculateWgs84(curPt, tgtPt, distMeters, brg);
-            bearing = brg;
-            distKm = distMeters / 1000.0;
-            fallbackNavContext_.targetBearing = bearing;
-            fallbackNavContext_.roverDistanceMeters = distMeters;
-        }
-    }
+    double bearing = 0.0, distKm = 0.0;
+    applyActiveTarget(cleanGrid.c_str(), bearing, distKm);
 
     printFormat("[TARGET] Target set to %s (Bearing: %.1f deg, Distance: %.1f km)\r\n",
                 cleanGrid.c_str(), bearing, distKm);

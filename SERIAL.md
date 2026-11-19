@@ -103,8 +103,8 @@ Displays a summary of available serial commands.
                         - UM982 GNSS receiver setup and diagnostics
   rover [status|start|stop|history|undo|max|clear]
                         - Rover transit tracking
-  target <grid>         - Set active target grid (supports phonetics)
-  target [add|save|del|list|max|clear]
+  target <grid|index>   - Set active target grid or select saved preset #
+  target [add|save|select|del|list|max|clear]
                         - Manage saved target grid presets
   log <call> [band/freq]- Voice-friendly contest QSO logging (10 GHz default)
   log [undo|del|list|stats|export|mycall|default|clear]
@@ -584,6 +584,7 @@ Pre-load contest summit rosters before heading into the field or manage presets 
 
 | Subcommand | Description |
 | :--- | :--- |
+| **`target <INDEX>`** / **`target select <INDEX>`** | Select a saved preset by 1-based list index (supports spoken numbers like `target select two`), increment its use count, and set it as the active target grid. |
 | **`target add <GRID> [LABEL...]`** | Add or update a 6-char target preset (spaces allowed in label, max 16 chars, truncated if longer; auto-fills regional summit name if omitted). |
 | **`target save [LABEL...]`** | Save the current active target grid into presets (optional label, spaces allowed). |
 | **`target del <INDEX\|GRID>`** | Remove a preset by 1-based list index or 6-char grid. |
@@ -604,6 +605,9 @@ Pre-load contest summit rosters before heading into the field or manage presets 
   #1: CM87vu - Mt Diablo (uses: 0)
   #2: CM97be - UMUNHUM (uses: 0)
 =====================================
+
+> target 2
+[TARGET] Selected #2: CM97be (UMUNHUM) (Bearing: 175.4 deg, Distance: 62.1 km)
 ```
 
 #### Pre-Trip Batch Preloading

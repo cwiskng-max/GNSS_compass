@@ -5576,9 +5576,9 @@ void test_serial_cli_target_presets_usb_and_ble() {
     ASSERT_TRUE(usbOut.find("Saved Target Presets (0/100)") != std::string::npos);
     ASSERT_TRUE(usbOut.find("(No saved target presets)") != std::string::npos);
 
-    // 2. USB: target add with label containing spaces
+    // 2. USB: target add with label containing spaces (and Gboard "ad" alias)
     usbOut.clear();
-    cli.executeCommand("target add CM97bb LOMA PRIETA", 2000, CLI_SOURCE_USB);
+    cli.executeCommand("target ad CM97bb LOMA PRIETA", 2000, CLI_SOURCE_USB);
     ASSERT_TRUE(usbOut.find("[TARGET] Added #1: CM97bb (LOMA PRIETA)") != std::string::npos);
     ASSERT_TRUE(presetMgr.getCount() == 1);
     ASSERT_STR_EQ(presetMgr.getPreset(0)->grid, "CM97bb");
@@ -5646,10 +5646,33 @@ void test_serial_cli_target_presets_usb_and_ble() {
     ASSERT_TRUE(usbOut.find("[TARGET ERROR]") != std::string::npos);
     ASSERT_TRUE(presetMgr.getMaxTargets() == 25);
 
+    // 9b. USB: target <INDEX> and target select <INDEX> (including spoken numbers)
+    usbOut.clear();
+    cli.executeCommand("target 2", 7450, CLI_SOURCE_USB);
+    ASSERT_TRUE(usbOut.find("[TARGET] Selected #2:") != std::string::npos);
+    ASSERT_TRUE(usbOut.find("Bearing:") != std::string::npos);
+    // Selected preset should now be #1 (MRU) with useCount == 1
+    const TargetPreset *selPreset = presetMgr.getPreset(0);
+    ASSERT_TRUE(selPreset != nullptr);
+    ASSERT_TRUE(selPreset->useCount == 1);
+
+    usbOut.clear();
+    cli.executeCommand("target select two", 7460, CLI_SOURCE_USB);
+    ASSERT_TRUE(usbOut.find("[TARGET] Selected #2:") != std::string::npos);
+    ASSERT_TRUE(presetMgr.getPreset(0) != nullptr && presetMgr.getPreset(0)->useCount == 1);
+
+    usbOut.clear();
+    cli.executeCommand("target select", 7470, CLI_SOURCE_USB);
+    ASSERT_TRUE(usbOut.find("[TARGET ERROR] Usage: target select <INDEX>") != std::string::npos);
+
+    usbOut.clear();
+    cli.executeCommand("target 99", 7480, CLI_SOURCE_USB);
+    ASSERT_TRUE(usbOut.find("[TARGET ERROR] Preset #99 out of range") != std::string::npos);
+
     // 10. USB: target del by 1-based index and by grid
     usbOut.clear();
     cli.executeCommand("target del 1", 7500, CLI_SOURCE_USB);
-    ASSERT_TRUE(usbOut.find("[TARGET] Deleted #1: CM88no") != std::string::npos);
+    ASSERT_TRUE(usbOut.find("[TARGET] Deleted #1:") != std::string::npos);
     ASSERT_TRUE(presetMgr.getCount() == 2);
 
     usbOut.clear();
