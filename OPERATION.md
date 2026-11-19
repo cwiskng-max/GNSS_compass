@@ -82,7 +82,20 @@ For rapid switching between pre-loaded contest summits or previously dialed grid
    * **`[ HOLD TO CLEAR ALL ]`:** Press and **hold for 1.5 seconds** (red progress bar) to wipe the entire preset list from NVS.
    * **`[ CLOSE ]`** (or **30 seconds** of inactivity): Closes the modal without changing your target or stopping Rover Mode.
 
-*(Presets can also be pre-loaded or managed over USB-C / BLE UART using `target add|save|del|list|max|clear`; see [SERIAL.md](SERIAL.md#311-remote-target-setting-target-grid).)*
+#### Pre-Trip Target List Preloading (Recommended)
+Before heading out for a contest, rover run, or SOTA/POTA activation, it is much faster to pre-load your expected target grids (hilltop stations, rovers, beacons, and landmarks) from a computer over USB-C (or smartphone over BLE) than to dial each 6-character grid on the rotary bezel in the field:
+1. **Connect via USB-C** at `115200` baud (or connect over BLE UART).
+2. *(Optional)* **Reset or Resize the List:** Run `target clear` to wipe old trip entries, and `target max <N>` if you need more or fewer than the default `100` slots (`10`–`500`).
+3. **Add Your Targets:** Send `target add <GRID> [LABEL]` for each 6-character grid (labels can include spaces and are up to `16` characters; omit the label to auto-fill built-in regional summit names):
+   ```text
+   target add CM87vu Mt Diablo
+   target add CM97be
+   target add CM88qk K6MG/R Stop 1
+   ```
+   You can paste a whole block of `target add` lines into your serial terminal at once, or re-run `target add` on an existing grid to update its label without creating a duplicate.
+4. **Verify & Power Off:** Run `target list` to confirm all entries are stored. Presets are saved immediately to ESP32 non-volatile storage (NVS) and persist across reboots and power loss.
+
+*(For full CLI syntax and batch-loading tips over USB-C / BLE UART, see [SERIAL.md](SERIAL.md#311-remote-target-setting-target-grid).)*
 
 ### 4.3 Antenna Heading Calibration (`CalModal`)
 If your GNSS boom has a small mechanical alignment offset relative to your RF feed/dish, you can trim it on-device without moving hardware:

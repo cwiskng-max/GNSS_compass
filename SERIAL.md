@@ -586,6 +586,32 @@ Pre-load contest summit rosters before heading into the field or manage presets 
 =====================================
 ```
 
+#### Pre-Trip Batch Preloading
+Preloading a target roster before leaving home or camp saves time on the hilltop and avoids dialing 6-character grids in gloves or bright sunlight:
+
+1. **Prepare a plain-text command list** (e.g. `targets.txt`) with one command per line:
+   ```text
+   target clear
+   target add CM87vu Mt Diablo
+   target add CM97be
+   target add CM88qk K6MG/R Stop 1
+   target add DM04aa Frazier Mtn
+   target list
+   ```
+   * **Labels:** Optional, up to `16` characters (spaces allowed; longer labels are truncated). If omitted, built-in regional summit names are filled in automatically when matched.
+   * **Duplicates & Capacity:** Running `target add` on an already-saved 6-char grid updates its label in place rather than creating a duplicate. If the list reaches `target max` (`100` by default, configurable `10`–`500`), adding a new grid evicts the least-used / oldest entry.
+2. **Send over USB-C (or paste into a BLE terminal):**
+   * **Terminal paste:** Connect with `tio`, `picocom`, PuTTY, or Arduino Serial Monitor at `115200` baud and paste the block of `target add` commands.
+   * **Line-by-line from Linux/macOS shell:** Send lines with a brief pause (`0.05`–`0.1 s`) between lines so NVS writes complete cleanly without overrunning the serial buffer:
+     ```bash
+     stty -F /dev/ttyACM0 115200 raw -echo
+     while IFS= read -r line; do
+       printf '%s\r\n' "$line" > /dev/ttyACM0
+       sleep 0.1
+     done < targets.txt
+     ```
+3. **Verify persistence:** Check the `target list` output. Every `target add` / `target max` / `target del` / `target clear` command commits directly to ESP32 non-volatile storage (NVS), so your pre-loaded roster remains intact across power cycles and opens immediately on-device via a **long-press (> 500 ms) on Row 2 (Target Grid)**.
+
 ---
 
 ### 3.12 Voice-Friendly Contest QSO Logging (`log`)
