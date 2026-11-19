@@ -358,6 +358,8 @@ void BleSerialManager::onGattsEvent(int event, uint8_t gattsIf, const void *p) {
 }
 
 void BleSerialManager::platformUpdateDeviceName() {
+    if (!initialized_) return;
+    esp_ble_gap_set_device_name(deviceName_);
     BLEAdvertisementData scanResponseData;
     scanResponseData.setName(deviceName_);
     BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
