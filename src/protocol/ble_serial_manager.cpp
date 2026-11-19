@@ -23,7 +23,7 @@ constexpr unsigned long kDisconnectGraceMs = 150;
 constexpr unsigned long kDisconnectTimeoutMs = 2000;
 // Disconnect peers that complete link-layer connect but never subscribe to TX notifications
 // (e.g. Windows/Web Bluetooth giving up during GATT discovery without closing the ACL link).
-constexpr unsigned long kSubscribeTimeoutMs = 10000;
+constexpr unsigned long kSubscribeTimeoutMs = 25000;
 
 const char kDropNoticeFmt[] = "\r\n[BLE] %lu bytes of output dropped (send queue full)\r\n";
 } // namespace

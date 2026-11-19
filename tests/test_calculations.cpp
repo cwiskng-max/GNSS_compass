@@ -3619,9 +3619,9 @@ void test_ble_serial_manager() {
 
     // Stalled unsubscribed connection is torn down automatically so advertising resumes
     ble.setConnected(true);  // sets connectMs_ = 0 via synchronous update(0)
-    ble.update(9999);
+    ble.update(24999);
     ASSERT_TRUE(ble.isConnected());
-    ble.update(10000);
+    ble.update(25000);
     ASSERT_TRUE(!ble.isConnected());
     ASSERT_TRUE(ble.isAdvertising());
 
