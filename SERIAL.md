@@ -77,10 +77,10 @@ You can connect directly from **Google Chrome**, **Microsoft Edge**, or **Chromi
 
 ## 2. Boot Output
 
-Upon power-up or reboot, the ESP32 outputs initial startup identification and a summary prompt:
+Upon power-up or reboot, the ESP32 outputs initial startup identification (reflecting the firmware build version) and a summary prompt:
 
 ```text
-GNSS Compass v0.5-dev (Built Nov 18 2026 15:00:00)
+GNSS Compass v1.0 (Built Nov 18 2026 15:00:00)
 Commands: 'status' (GPS stream), 'gps' (receiver config), 'rover' (transit), 'cal' (antenna), 'sim' (simulation), 'help'
 BLE Device: GNSS-Compass-8a4f2b
 ```

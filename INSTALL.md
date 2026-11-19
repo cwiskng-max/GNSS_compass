@@ -157,6 +157,6 @@ Once flashing completes, the display will restart automatically:
    * **Calibration Pill:** Centered between Row 3 and Row 4 (`OFF` when uncalibrated, or active offset in degrees).
    * **Row 4:** UTC time (`--:--Z` until GPS time is received).
    * **Row 5:** Calculated reverse bearing and distance (`<bear> <dist> k`) computed between the local and target grids.
-   * **Footer:** Firmware version string (e.g., `v0.5-dev`).
+   * **Footer:** Firmware version string from the build (e.g., `v1.0`).
 2. **On-Device Self-Test:** Tap directly on the firmware version string at the bottom center of the screen. The display will run through the 9-step visual self-test and display `SELF-TEST PASSED` in green. See [tests/README.md](tests/README.md) for details.
 3. **Connect & Configure Receiver:** Connect and configure the Unicore UM982 GNSS receiver following [RECEIVER.md](RECEIVER.md). If using the standard 4-pin GX12 harness with the TX line wired (ESP32 GPIO 43 $\to$ UM982 COM1 RX), receiver setup is performed in-system using the `gps config` command.

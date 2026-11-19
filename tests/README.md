@@ -67,7 +67,7 @@ The test suite runs automatically on every push and pull request in [`.github/wo
 The firmware includes an interactive self-test demo to visually verify LCD rendering, font alignment, color highlighting, GPS stream diagnosis, and state recovery directly on the physical 480×480 screen.
 
 ### How to Trigger the Test
-* **Touchscreen:** Tap directly on the **firmware version string** at the bottom center of the display (`v0.5-dev`).
+* **Touchscreen:** Tap directly on the **firmware version string** at the bottom center of the display (e.g., `v1.0`).
 * **USB Serial:** Send `t` or `test` to `/dev/ttyACM0` at `115200` baud.
 * *(Note: To run only the GPS stream diagnosis without the visual demo, send `status` or `gps` via USB Serial).*
 
@@ -89,4 +89,4 @@ The test automatically cycles through 9 visual scenarios, displaying the current
 ### Pass/Fail Confirmation & Clean Restoration
 * **Programmatic Assertions:** The firmware validates calculations across all stages (ARRL 1 km minimum rule, Rover <16 km alert threshold, mid/long/extreme distance boundaries, baseline offset geometry, and antenna calibration offset normalization).
 * **On-Screen Banner:** A centered green **`SELF-TEST PASSED`** banner pops up for 2.5 seconds upon success. If any test fails, an on-screen red card lists the failing test numbers (e.g. **`FAILED: TEST #2`** or **`FAILED: #1, #2`**) for 4.0 seconds, while detailed failure diagnostics are emitted over USB serial.
-* **State Restoration:** Erases the banner and cleanly restores your live GPS coordinates, local grid, target grid, heading, and the centered grey version footer (`v0.5-dev`).
+* **State Restoration:** Erases the banner and cleanly restores your live GPS coordinates, local grid, target grid, heading, and the centered grey version footer (e.g., `v1.0`).

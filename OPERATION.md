@@ -42,7 +42,7 @@ The 480×480 circular display organizes station telemetry into functional rows a
 | **Cal Pill** | **Calibration Offset Pill** | `OFF` / `+4.2°` | Centered pill between Row 3 and Row 4. Shows active heading offset (`OFF` in gray when `0.0°`, or offset in cyan). **Tap** to open the Calibration Modal. |
 | **Row 4** | **UTC Clock** | `19:45 Z` | Universal Coordinated Time derived from GNSS (`--:--Z` before fix). |
 | **Row 5** | **Reverse Bearing & Distance** *(Normal Mode)* / **Rover Card** *(Rover Mode)* | `322.8  3892 k` or `TRANSIT    6.4 k` | **Normal Mode:** Reverse bearing from target back to you and geodesic distance in km.<br>**Rover Mode:** 4-state 16 km qualification card (`TRANSIT`, `QUALIFIED`, `REVISIT`, `NO GPS`). |
-| **Footer** | **Version Footer** | `v0.5-dev` | Firmware version identifier. **Tap** to run the 9-step on-device visual self-test. |
+| **Footer** | **Version Footer** | `v1.0` | Firmware version identifier from the build (e.g., `v1.0`). **Tap** to run the 9-step on-device visual self-test. |
 
 ---
 
