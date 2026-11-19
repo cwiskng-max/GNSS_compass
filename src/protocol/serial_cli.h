@@ -257,6 +257,7 @@ private:
     void handleSimCommand(const char *arg, unsigned long nowMs);
     void handleCalCommand(const char *arg);
     void handleBleCommand(const char *arg);
+    void handleHelpCommand(const char *arg);
     void handleGpsCommand(const char *arg, unsigned long nowMs);
     void handleRoverCommand(const char *arg, unsigned long nowMs);
     void handleRoverStart(unsigned long nowMs);

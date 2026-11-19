@@ -6422,6 +6422,35 @@ void test_audit_hardening_regressions() {
         cli.executeCommand("sim rover nope", 150, CLI_SOURCE_USB);
         ASSERT_TRUE(out.find("[SIM ERROR]") != std::string::npos);
 
+        // Reverse help syntax: "help <topic>" and "? <topic>"
+        out.clear();
+        cli.executeCommand("help rover", 160, CLI_SOURCE_USB);
+        ASSERT_TRUE(out.find("Rover Mode Serial Commands") != std::string::npos);
+
+        out.clear();
+        cli.executeCommand("help gps", 165, CLI_SOURCE_USB);
+        ASSERT_TRUE(out.find("GPS Receiver Commands") != std::string::npos);
+
+        out.clear();
+        cli.executeCommand("help target", 170, CLI_SOURCE_USB);
+        ASSERT_TRUE(out.find("Target Preset Commands") != std::string::npos);
+
+        out.clear();
+        cli.executeCommand("help log", 175, CLI_SOURCE_USB);
+        ASSERT_TRUE(out.find("Contest QSO Logging Commands") != std::string::npos);
+
+        out.clear();
+        cli.executeCommand("help cal", 180, CLI_SOURCE_USB);
+        ASSERT_TRUE(out.find("Antenna Calibration Commands") != std::string::npos);
+
+        out.clear();
+        cli.executeCommand("help sim", 185, CLI_SOURCE_USB);
+        ASSERT_TRUE(out.find("GPS Simulation Commands") != std::string::npos);
+
+        out.clear();
+        cli.executeCommand("? ble", 190, CLI_SOURCE_USB);
+        ASSERT_TRUE(out.find("Usage: ble") != std::string::npos);
+
         // BLE disconnect while gps audit probe is pending should cancel pending BLE audit
         ble.setConnected(true);
         ble.setSubscribed(true);

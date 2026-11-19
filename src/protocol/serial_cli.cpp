@@ -27,7 +27,8 @@ bool isKnownCommand(const char *cleanCmd) {
             (cleanCmd[3] == '\0' || cleanCmd[3] == ' ' || cleanCmd[3] == '\t')) ||
            startsWithIgnoreCase(cleanCmd, "target") ||
            startsWithIgnoreCase(cleanCmd, "sim") ||
-           equalsIgnoreCase(cleanCmd, "help") || std::strcmp(cleanCmd, "?") == 0 ||
+           equalsIgnoreCase(cleanCmd, "help") || startsWithIgnoreCase(cleanCmd, "help ") ||
+           std::strcmp(cleanCmd, "?") == 0 || startsWithIgnoreCase(cleanCmd, "? ") ||
            startsWithIgnoreCase(cleanCmd, "gps") ||
            equalsIgnoreCase(cleanCmd, "status") || equalsIgnoreCase(cleanCmd, "diag") ||
            equalsIgnoreCase(cleanCmd, "s") || equalsIgnoreCase(cleanCmd, "g") ||
@@ -528,8 +529,10 @@ void SerialCli::executeCommand(const char *cmdLine, unsigned long nowMs, CliSour
         handleTargetCommand(skipCmdArg(cleanCmd, 6), nowMs);
     } else if (startsWithIgnoreCase(cleanCmd, "sim")) {
         handleSimCommand(skipCmdArg(cleanCmd, 3), nowMs);
-    } else if (equalsIgnoreCase(cleanCmd, "help") || std::strcmp(cleanCmd, "?") == 0) {
-        printHelp();
+    } else if (equalsIgnoreCase(cleanCmd, "help") || startsWithIgnoreCase(cleanCmd, "help ")) {
+        handleHelpCommand(skipCmdArg(cleanCmd, 4));
+    } else if (std::strcmp(cleanCmd, "?") == 0 || startsWithIgnoreCase(cleanCmd, "? ")) {
+        handleHelpCommand(skipCmdArg(cleanCmd, 1));
     } else if (startsWithIgnoreCase(cleanCmd, "gps")) {
         const char *arg = skipCmdArg(cleanCmd, 3);
         if (*arg == '\0' || equalsIgnoreCase(arg, "status")) {
@@ -582,6 +585,31 @@ void SerialCli::executeCommand(const char *cmdLine, unsigned long nowMs, CliSour
 
     if (!pendingAudit_ && !auditState_.inProgress && pendingExportFormat_ == ExportFormat::None) {
         printPrompt();
+    }
+}
+
+void SerialCli::handleHelpCommand(const char *arg) {
+    if (!arg || *arg == '\0') {
+        printHelp();
+        return;
+    }
+    if (equalsIgnoreCase(arg, "gps")) {
+        printGpsHelp();
+    } else if (equalsIgnoreCase(arg, "rover")) {
+        printRoverHelp();
+    } else if (equalsIgnoreCase(arg, "target")) {
+        printTargetHelp();
+    } else if (equalsIgnoreCase(arg, "log")) {
+        printLogHelp();
+    } else if (equalsIgnoreCase(arg, "cal")) {
+        printCalHelp();
+    } else if (equalsIgnoreCase(arg, "sim")) {
+        printSimHelp();
+    } else if (equalsIgnoreCase(arg, "ble")) {
+        println("Usage: ble [status] | ble suffix [<val>|reset] | ble diag on|off");
+    } else {
+        printFormat("Unknown help topic: '%s'.\r\n", arg);
+        printHelp();
     }
 }
 
@@ -752,6 +780,8 @@ void SerialCli::handleBleCommand(const char *arg) {
                     (unsigned long)bleManager_->getTxDroppedBytes(),
                     (unsigned long)bleManager_->getTxRetries());
         printFormat("[BLE] Diagnostics: %s\r\n", bleManager_->isDiagEnabled() ? "on" : "off");
+    } else if (equalsIgnoreCase(arg, "help") || std::strcmp(arg, "?") == 0) {
+        println("Usage: ble [status] | ble suffix [<val>|reset] | ble diag on|off");
     } else {
         println("Usage: ble [status] | ble suffix [<val>|reset] | ble diag on|off");
     }
