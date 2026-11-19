@@ -4184,6 +4184,16 @@ void test_voice_qso_parser() {
     ASSERT_STR_EQ(q.callsign.c_str(), "K6ML/R");
     ASSERT_STR_EQ(q.band.c_str(), "24 GHz");
 
+    ASSERT_TRUE(VoiceQsoParser::parseQso("log af9s47.199 GHz", q));
+    ASSERT_STR_EQ(q.callsign.c_str(), "AF9S");
+    ASSERT_STR_EQ(q.band.c_str(), "47 GHz");
+    ASSERT_TRUE(q.freq_khz == 47199000);
+
+    ASSERT_TRUE(VoiceQsoParser::parseQso("log k6mg10.368 GHz", q));
+    ASSERT_STR_EQ(q.callsign.c_str(), "K6MG");
+    ASSERT_STR_EQ(q.band.c_str(), "10 GHz");
+    ASSERT_TRUE(q.freq_khz == 10368000);
+
     // Invalid & incomplete inputs
     ASSERT_TRUE(!VoiceQsoParser::parseQso("log", q));
     ASSERT_STR_EQ(q.error_message.c_str(), "Missing callsign");

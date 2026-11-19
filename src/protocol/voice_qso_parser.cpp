@@ -669,7 +669,8 @@ bool VoiceQsoParser::parseQso(const std::string &input,
     // In international amateur radio regulations (ITU RR Article 19.68), callsigns
     // NEVER end in digits; suffixes must terminate in letters (or slash-rover/portable).
     std::vector<std::string> splitWords;
-    for (const auto &word : words) {
+    for (size_t i = 0; i < words.size(); ++i) {
+        const std::string &word = words[i];
         std::string dummyBand, dummyCab, dummyAdif;
         uint32_t dummyFreq = 0;
         // If the entire word is already a valid band, keep it intact
@@ -678,9 +679,19 @@ bool VoiceQsoParser::parseQso(const std::string &input,
             continue;
         }
 
+        std::string nextUnit;
+        if (i + 1 < words.size()) {
+            std::string nextLow = toLower(words[i + 1]);
+            if (nextLow == "ghz" || nextLow == "mhz" || nextLow == "g") {
+                nextUnit = nextLow;
+            } else if (nextLow == "meter" || nextLow == "meters") {
+                nextUnit = "m";
+            }
+        }
+
         bool splitDone = false;
         // Search right-to-left for a split point where prefix ends in a letter (or /R or /P)
-        // and suffix is a valid microwave band or calling frequency
+        // and suffix (optionally combined with a trailing unit like "ghz") is a valid band or frequency
         for (size_t k = word.size(); k > 1; --k) {
             std::string prefix = word.substr(0, k - 1);
             std::string suffix = word.substr(k - 1);
@@ -701,6 +712,14 @@ bool VoiceQsoParser::parseQso(const std::string &input,
             if (parseBandOrFreq(suffix, dummyBand, dummyFreq, dummyCab, dummyAdif)) {
                 splitWords.push_back(prefix);
                 splitWords.push_back(suffix);
+                splitDone = true;
+                break;
+            }
+            if (!nextUnit.empty() &&
+                parseBandOrFreq(suffix + nextUnit, dummyBand, dummyFreq, dummyCab, dummyAdif)) {
+                splitWords.push_back(prefix);
+                splitWords.push_back(suffix + nextUnit);
+                i++;
                 splitDone = true;
                 break;
             }
