@@ -100,6 +100,7 @@ public:
 
     // Callbacks & listeners
     void setRunTestCallback(CliRunTestCallback cb, void *context = nullptr) { runTestCb_ = cb; runTestContext_ = context; }
+    void setPrepareRestartCallback(CliRestartCallback cb, void *context = nullptr) { prepareRestartCb_ = cb; prepareRestartContext_ = context; }
     void setRestartCallback(CliRestartCallback cb, void *context = nullptr) { restartCb_ = cb; restartContext_ = context; }
     void setStateChangedCallback(CliStateChangedCallback cb, void *context = nullptr) { stateChangedCb_ = cb; stateChangedContext_ = context; }
     void setRoverSimCallback(CliRoverSimCallback cb, void *context = nullptr) { roverSimCb_ = cb; roverSimContext_ = context; }
@@ -187,6 +188,7 @@ public:
     void printGpsHelp();
     void printSimHelp();
     void printCalHelp();
+    void doFactoryReset(unsigned long nowMs = 0);
 
     // Receiver audit query & parsing
     struct GpsAuditState {
@@ -296,6 +298,8 @@ private:
     void *qsoLoggedContext_;
     CliCommandOutputFn outputFn_;
     void *outputContext_;
+    CliRestartCallback prepareRestartCb_;
+    void *prepareRestartContext_;
     CliRestartCallback restartCb_;
     void *restartContext_;
 
@@ -305,6 +309,10 @@ private:
     CliSource pendingQsoClearSource_;
     bool pendingQsoInput_;
     CliSource pendingQsoSource_;
+    bool pendingFactoryReset_;
+    CliSource pendingFactoryResetSource_;
+    bool pendingFactoryResetExec_;
+    bool factoryResetInProgress_;
 
     enum class ExportFormat : uint8_t {
         None = 0,

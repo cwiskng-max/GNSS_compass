@@ -12,6 +12,7 @@
 
 #if defined(ARDUINO)
 #include <Arduino.h>
+#include <nvs.h>
 #else
 #include <iostream>
 #endif
@@ -39,7 +40,8 @@ bool isKnownCommand(const char *cleanCmd) {
            equalsIgnoreCase(cleanCmd, "disconnect") || equalsIgnoreCase(cleanCmd, "exit") ||
            equalsIgnoreCase(cleanCmd, "quit") ||
            equalsIgnoreCase(cleanCmd, "ver") || equalsIgnoreCase(cleanCmd, "version") ||
-           equalsIgnoreCase(cleanCmd, "restart") || equalsIgnoreCase(cleanCmd, "reboot");
+           equalsIgnoreCase(cleanCmd, "restart") || equalsIgnoreCase(cleanCmd, "reboot") ||
+           equalsIgnoreCase(cleanCmd, "factory reset");
 }
 
 const char* skipCmdArg(const char *cmd, size_t prefixLen) {
@@ -79,6 +81,8 @@ SerialCli::SerialCli(GpsManager &gpsManager, Calibration &calibration, GpsSimula
       qsoLoggedContext_(nullptr),
       outputFn_(nullptr),
       outputContext_(nullptr),
+      prepareRestartCb_(nullptr),
+      prepareRestartContext_(nullptr),
       restartCb_(nullptr),
       restartContext_(nullptr),
       pendingRoverClear_(false),
@@ -87,6 +91,10 @@ SerialCli::SerialCli(GpsManager &gpsManager, Calibration &calibration, GpsSimula
       pendingQsoClearSource_(CLI_SOURCE_USB),
       pendingQsoInput_(false),
       pendingQsoSource_(CLI_SOURCE_USB),
+      pendingFactoryReset_(false),
+      pendingFactoryResetSource_(CLI_SOURCE_USB),
+      pendingFactoryResetExec_(false),
+      factoryResetInProgress_(false),
       pendingExportFormat_(ExportFormat::None),
       pendingExportIndex_(0),
       pendingExportSource_(CLI_SOURCE_USB),
@@ -172,6 +180,10 @@ void SerialCli::begin() {
     pendingQsoClearSource_ = CLI_SOURCE_USB;
     pendingQsoInput_ = false;
     pendingQsoSource_ = CLI_SOURCE_USB;
+    pendingFactoryReset_ = false;
+    pendingFactoryResetSource_ = CLI_SOURCE_USB;
+    pendingFactoryResetExec_ = false;
+    factoryResetInProgress_ = false;
     pendingExportFormat_ = ExportFormat::None;
     pendingExportIndex_ = 0;
     pendingExportSource_ = CLI_SOURCE_USB;
@@ -207,6 +219,9 @@ void SerialCli::handleBleConnectionChanged(bool connected) {
     }
     if (pendingQsoClear_ && pendingQsoClearSource_ == CLI_SOURCE_BLE) {
         pendingQsoClear_ = false;
+    }
+    if (pendingFactoryReset_ && pendingFactoryResetSource_ == CLI_SOURCE_BLE) {
+        pendingFactoryReset_ = false;
     }
     if (pendingExportFormat_ != ExportFormat::None && pendingExportSource_ == CLI_SOURCE_BLE) {
         pendingExportFormat_ = ExportFormat::None;
@@ -330,13 +345,20 @@ void SerialCli::broadcastFormat(const char *fmt, ...) {
 
 void SerialCli::handleBleInput(const char *data, size_t len, unsigned long nowMs) {
     if (!data || len == 0) return;
+    if (pendingFactoryResetExec_ || factoryResetInProgress_) return;
 #if defined(ARDUINO)
     if (!nowMs) nowMs = millis();
 #endif
     for (size_t i = 0; i < len; ++i) {
         if (bleLine_.feed(data[i]) == LineBuffer::LineReady) {
-            executeCommand(bleLine_.c_str(), nowMs, CLI_SOURCE_BLE);
+            char cmdCopy[LineBuffer::kCapacity];
+            std::snprintf(cmdCopy, sizeof(cmdCopy), "%s", bleLine_.c_str());
             bleLine_.clear();
+            executeCommand(cmdCopy, nowMs, CLI_SOURCE_BLE);
+            if (pendingFactoryResetExec_ || factoryResetInProgress_) {
+                bleLine_.reset();
+                return;
+            }
         }
     }
 }
@@ -346,8 +368,26 @@ void SerialCli::update(unsigned long nowMs) {
     if (!nowMs) nowMs = millis();
 #endif
 
+    if (factoryResetInProgress_) {
+        return;
+    }
+
+    if (pendingFactoryResetExec_) {
+        pendingFactoryResetExec_ = false;
+        doFactoryReset(nowMs);
+        return;
+    }
+
     if (bleManager_) {
         bleManager_->update(nowMs);
+        if (pendingFactoryResetExec_) {
+            pendingFactoryResetExec_ = false;
+            doFactoryReset(nowMs);
+            return;
+        }
+        if (factoryResetInProgress_) {
+            return;
+        }
     }
 
     if (pendingExportFormat_ != ExportFormat::None) {
@@ -375,13 +415,19 @@ void SerialCli::update(unsigned long nowMs) {
                 Serial.println("^C");
                 printPrompt();
                 break;
-            case LineBuffer::LineReady:
+            case LineBuffer::LineReady: {
                 if (usbLine_.c_str()[0] != '$') {
                     Serial.println();
                 }
-                executeCommand(usbLine_.c_str(), nowMs, CLI_SOURCE_USB);
+                char cmdCopy[LineBuffer::kCapacity];
+                std::snprintf(cmdCopy, sizeof(cmdCopy), "%s", usbLine_.c_str());
                 usbLine_.clear();
+                executeCommand(cmdCopy, nowMs, CLI_SOURCE_USB);
+                if (factoryResetInProgress_ || pendingFactoryResetExec_) {
+                    return;
+                }
                 break;
+            }
             case LineBuffer::Ignored:
                 break;
         }
@@ -392,6 +438,7 @@ void SerialCli::update(unsigned long nowMs) {
 }
 
 void SerialCli::executeCommand(const char *cmdLine, unsigned long nowMs, CliSource source) {
+    if (factoryResetInProgress_) return;
 #if defined(ARDUINO)
     if (!nowMs) nowMs = millis();
 #endif
@@ -506,6 +553,24 @@ void SerialCli::executeCommand(const char *cmdLine, unsigned long nowMs, CliSour
         return;
     }
 
+    if (pendingFactoryReset_ && activeSource_ == pendingFactoryResetSource_) {
+        pendingFactoryReset_ = false;
+        if (equalsIgnoreCase(cleanCmd, "yes")) {
+#if defined(ARDUINO)
+            if (activeSource_ == CLI_SOURCE_BLE) {
+                // Defer NVS erase + restart to loopTask (Core 1) instead of running inside BLE callback (Core 0)
+                pendingFactoryResetExec_ = true;
+                return;
+            }
+#endif
+            doFactoryReset(nowMs);
+            return;
+        }
+        println("[SYSTEM] Factory reset aborted.");
+        printPrompt();
+        return;
+    }
+
     if (pendingQsoInput_ && activeSource_ == pendingQsoSource_) {
         pendingQsoInput_ = false;
         if (equalsIgnoreCase(cleanCmd, "cancel")) {
@@ -565,10 +630,23 @@ void SerialCli::executeCommand(const char *cmdLine, unsigned long nowMs, CliSour
         }
     } else if (equalsIgnoreCase(cleanCmd, "ver") || equalsIgnoreCase(cleanCmd, "version")) {
         printFormat("GNSS Compass %s (Built %s %s)\r\n", FW_VERSION, __DATE__, __TIME__);
+    } else if (equalsIgnoreCase(cleanCmd, "factory reset")) {
+        pendingFactoryReset_ = true;
+        pendingFactoryResetSource_ = activeSource_;
+        println("[SYSTEM] WARNING: This will erase ALL saved NVS data:");
+        println("  - Antenna calibration offset");
+        println("  - Custom BLE device name suffix");
+        println("  - Rover stop history & capacity");
+        println("  - Contest QSO log & settings");
+        println("  - Target grid presets & capacity");
+        println("Type 'yes' to erase all saved data and reboot, or anything else to abort.");
     } else if (equalsIgnoreCase(cleanCmd, "restart") || equalsIgnoreCase(cleanCmd, "reboot")) {
         println("[SYSTEM] Restarting ESP32 controller...");
         if (bleManager_) {
-            bleManager_->update(nowMs);
+            bleManager_->flushAndDisconnect(nowMs);
+        }
+        if (prepareRestartCb_) {
+            prepareRestartCb_(prepareRestartContext_);
         }
         if (restartCb_) {
             restartCb_(restartContext_);
@@ -633,6 +711,7 @@ void SerialCli::printHelp() {
     println("                        - GPS simulation commands");
     println("  exit (or disconnect)  - Terminate wireless BLE connection cleanly");
     println("  restart (or reboot)   - Restart the ESP32 controller");
+    println("  factory reset         - Erase all NVS settings/logs and reboot (requires 'yes')");
     println("  version (or ver)      - Display firmware build version and compile time");
     println("  ble [diag on|off]     - BLE link status / toggle BLE RF diagnostics");
     println("  ble suffix [<val>|reset]");
@@ -999,4 +1078,77 @@ void SerialCli::handleSimCommand(const char *arg, unsigned long nowMs) {
 
     println("[SIM ERROR] Unknown sim command.");
     printSimHelp();
+}
+
+void SerialCli::doFactoryReset(unsigned long nowMs) {
+    factoryResetInProgress_ = true;
+    pendingFactoryReset_ = false;
+    pendingFactoryResetExec_ = false;
+    usbLine_.reset();
+    bleLine_.reset();
+
+    println("[SYSTEM] Factory reset complete. Restarting ESP32 controller...");
+    if (bleManager_) {
+        bleManager_->flushAndDisconnect(nowMs);
+    }
+
+    if (prepareRestartCb_) {
+        prepareRestartCb_(prepareRestartContext_);
+    }
+
+#if defined(ARDUINO)
+    // Give the LCD backlight a moment to go dark before flash writes.
+    // Do not call Serial.flush(): on ESP32-S3 USB CDC it can block when no host is reading.
+    delay(20);
+
+    // Erase all application NVS namespaces without calling nvs_flash_deinit() while Core 0
+    // Bluedroid / system tasks are still running, and without erasing 512 KB of raw flash
+    // sectors (which starves RGB LCD DMA and risks watchdog timeouts).
+    const char *kNamespaces[] = {
+        "compass",
+        ROVER_CFG_NAMESPACE,
+        ROVER_LOG_NAMESPACE,
+        QSO_CFG_NAMESPACE,
+        QSO_LOG_NAMESPACE,
+        TARGET_CFG_NAMESPACE,
+        TARGET_LOG_NAMESPACE
+    };
+    for (size_t i = 0; i < sizeof(kNamespaces) / sizeof(kNamespaces[0]); ++i) {
+        nvs_handle_t handle = 0;
+        if (nvs_open(kNamespaces[i], NVS_READWRITE, &handle) == ESP_OK) {
+            nvs_erase_all(handle);
+            nvs_commit(handle);
+            nvs_close(handle);
+        }
+    }
+#else
+    calibration_.reset();
+    if (bleManager_) {
+        bleManager_->resetDeviceSuffix(true);
+    }
+    if (roverLogManager_) {
+        roverLogManager_->clearHistory();
+        roverLogManager_->setMaxStops(DEFAULT_MAX_ROVER_STOPS, true);
+    }
+    if (qsoLogManager_) {
+        qsoLogManager_->resetDefaults();
+    }
+    if (targetPresetManager_) {
+        targetPresetManager_->clearAll();
+        targetPresetManager_->setMaxTargets(DEFAULT_MAX_TARGET_PRESETS, true);
+    }
+    NvsConfig::resetHostStorage();
+    if (stateChangedCb_) {
+        stateChangedCb_(stateChangedContext_);
+    }
+#endif
+
+    if (restartCb_) {
+        restartCb_(restartContext_);
+    } else {
+#if defined(ARDUINO)
+        delay(100);
+        esp_restart();
+#endif
+    }
 }

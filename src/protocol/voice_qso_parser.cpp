@@ -31,7 +31,7 @@ char natoToChar(const std::string &w) {
     if (w == "juliet" || w == "juliett" || w == "john" || w == "japan") return 'J';
     if (w == "kilo" || w == "king") return 'K';
     if (w == "lima" || w == "london" || w == "lewis") return 'L';
-    if (w == "mike" || w == "mary" || w == "mexico") return 'M';
+    if (w == "mike" || w == "mic" || w == "mary" || w == "mexico") return 'M';
     if (w == "november" || w == "nancy") return 'N';
     if (w == "oscar" || w == "ocean") return 'O';
     if (w == "papa" || w == "peter") return 'P';

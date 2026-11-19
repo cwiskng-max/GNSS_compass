@@ -238,6 +238,10 @@ unsigned long BleSerialManager::platformMillis() {
     return millis();
 }
 
+void BleSerialManager::platformDelay(unsigned long ms) {
+    delay(ms);
+}
+
 uint8_t *BleSerialManager::platformAllocTx(size_t size) {
     void *p = heap_caps_malloc(size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!p) p = std::malloc(size);  // no PSRAM: fall back to internal RAM

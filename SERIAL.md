@@ -115,6 +115,7 @@ Displays a summary of available serial commands.
                         - GPS simulation commands
   exit (or disconnect)  - Terminate wireless BLE connection cleanly
   restart (or reboot)   - Restart the ESP32 controller
+  factory reset         - Erase all NVS settings/logs and reboot (requires 'yes')
   version (or ver)      - Display firmware build version and compile time
   ble [diag on|off]     - BLE link status / toggle BLE RF diagnostics
   ble suffix [<val>|reset]
@@ -145,6 +146,7 @@ Displays a summary of available serial commands.
 | **`ble`** | `status` \| `suffix [<val>\|reset]` \| `diag on\|off` | USB, BLE | Bluetooth Low Energy diagnostics and device name customization |
 | **`exit`** *(or `disconnect`)*| None | BLE | Clean wireless disconnect from the ESP32 side |
 | **`restart`** *(or `reboot`)* | None | USB, BLE | Restart the ESP32 microcontroller |
+| **`factory reset`** | None *(prompts for `yes`)* | USB, BLE | Erase all saved NVS settings/logs and reboot to defaults |
 | **`version`** *(or `ver`)* | None | USB, BLE | Display firmware version and build timestamp |
 | **`$<sentence>`** | Raw NMEA / Unicore sentence | USB, BLE | Direct GNSS sentence injection into parser |
 | **`help`** *(or `?`)* | None | USB, BLE | Display CLI help menu |
@@ -503,6 +505,24 @@ Restarts the ESP32-S3 microcontroller via software reset:
 ```
 
 Accepts both `restart` and `reboot`. Over physical USB CDC or wireless BLE, the confirmation message is dispatched before triggering software reset via `esp_restart()`.
+
+#### Factory Reset (`factory reset`)
+Erases all saved NVS settings and logs (antenna calibration offset, custom BLE name suffix, rover stop history and capacity, contest QSO log and settings, and target grid presets and capacity) and reboots the ESP32-S3 to factory defaults. As a safety guard, it requires typing the full word `yes` (`y` or any other input aborts):
+
+```text
+> factory reset
+[SYSTEM] WARNING: This will erase ALL saved NVS data:
+  - Antenna calibration offset
+  - Custom BLE device name suffix
+  - Rover stop history & capacity
+  - Contest QSO log & settings
+  - Target grid presets & capacity
+Type 'yes' to erase all saved data and reboot, or anything else to abort.
+> yes
+[SYSTEM] Factory reset complete. Restarting ESP32 controller...
+```
+
+*(Note: `factory reset` only wipes the ESP32 controller's NVS; the UM982 GNSS receiver's internal configuration is left untouched.)*
 
 ---
 

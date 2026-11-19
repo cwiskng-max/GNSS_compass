@@ -3984,6 +3984,7 @@ void test_voice_qso_parser() {
 
     // 2. NATO phonetics and spoken numbers normalization
     ASSERT_STR_EQ(VoiceQsoParser::normalizeVoiceInput("kilo six mike golf").c_str(), "K6MG");
+    ASSERT_STR_EQ(VoiceQsoParser::normalizeVoiceInput("kilo six mic golf").c_str(), "K6MG");
     ASSERT_STR_EQ(VoiceQsoParser::normalizeVoiceInput("kilo 6 mike golf").c_str(), "K6MG");
     ASSERT_STR_EQ(VoiceQsoParser::normalizeVoiceInput("kilo six mike golf stroke rover").c_str(), "K6MG/R");
     ASSERT_STR_EQ(VoiceQsoParser::normalizeVoiceInput("whiskey six oscar papa stroke rover").c_str(), "W6OP/R");
@@ -6515,6 +6516,156 @@ void test_audit_hardening_regressions() {
     PASS();
 }
 
+void test_serial_cli_factory_reset() {
+    TEST("SerialCli factory reset requires 'yes', aborts on 'y', and wipes all NVS managers");
+    NvsConfig::resetHostStorage();
+    RoverLogManager::resetHostStorage();
+    QsoLogManager::resetHostStorage();
+    TargetPresetManager::resetHostStorage();
+    BleSerialManager::resetHostStorage();
+    Calibration::resetHostStorage();
+
+    GpsManager gm;
+    Calibration cal;
+    cal.begin();
+    cal.setOffset(12.5f, true);
+
+    GpsSimulator sim;
+    RoverLogManager roverMgr;
+    roverMgr.begin();
+    roverMgr.setMaxStops(25, true);
+    roverMgr.appendStop(RoverStop(1000, 38.0, -122.0, "CM87wa", 0.0f, true));
+
+    BleSerialManager ble;
+    ble.begin();
+    ble.setDeviceSuffix("Summit1", true);
+
+    QsoLogManager qsoMgr;
+    qsoMgr.begin();
+    qsoMgr.setMaxQsos(50, true);
+    qsoMgr.setMyCall("K6MG", true);
+    qsoMgr.setDefaultBand("24 GHz", true);
+    qsoMgr.setCardTimeoutSec(12, true);
+    QsoEntry q;
+    std::snprintf(q.callsign, sizeof(q.callsign), "W6OP");
+    std::snprintf(q.band, sizeof(q.band), "10 GHz");
+    std::snprintf(q.my_grid, sizeof(q.my_grid), "CM87wa");
+    std::snprintf(q.his_grid, sizeof(q.his_grid), "CM88qk");
+    qsoMgr.appendQso(q);
+
+    TargetPresetManager targetMgr;
+    targetMgr.begin();
+    targetMgr.setMaxTargets(40, true);
+    targetMgr.addOrUpdatePreset("CM87vu", "Mt Diablo", 1000);
+
+    SerialCli cli(gm, cal, sim, &roverMgr, &ble, &qsoMgr, &targetMgr);
+    cli.begin();
+
+    std::string cliOutput;
+    cli.setOutputHandler([](const char *str, void *ctx) {
+        *static_cast<std::string*>(ctx) += str;
+    }, &cliOutput);
+
+    bool restartCalled = false;
+    cli.setRestartCallback([](void *ctx) {
+        *static_cast<bool*>(ctx) = true;
+    }, &restartCalled);
+
+    // 1. 'y' must NOT confirm — only full 'yes'
+    cliOutput.clear();
+    cli.executeCommand("factory reset");
+    ASSERT_TRUE(cliOutput.find("Type 'yes'") != std::string::npos);
+
+    cliOutput.clear();
+    cli.executeCommand("y");
+    ASSERT_TRUE(cliOutput.find("aborted") != std::string::npos);
+    ASSERT_TRUE(!restartCalled);
+    ASSERT_NEAR(cal.getOffset(), 12.5f, 1e-4f);
+    ASSERT_TRUE(roverMgr.getStopCount() == 1);
+    ASSERT_TRUE(qsoMgr.getQsoCount() == 1);
+    ASSERT_TRUE(targetMgr.getCount() == 1);
+    ASSERT_TRUE(std::strcmp(ble.getDeviceSuffix(), "Summit1") == 0);
+
+    // 2. Full 'yes' wipes everything and triggers restart
+    cliOutput.clear();
+    cli.executeCommand("factory reset");
+    cliOutput.clear();
+    cli.executeCommand("YES");
+    ASSERT_TRUE(restartCalled);
+    ASSERT_TRUE(cliOutput.find("Factory reset complete") != std::string::npos);
+
+    ASSERT_NEAR(cal.getOffset(), 0.0f, 1e-4f);
+    ASSERT_TRUE(std::strcmp(ble.getDeviceSuffix(), "test") == 0);
+    ASSERT_TRUE(roverMgr.getStopCount() == 0);
+    ASSERT_TRUE(roverMgr.getMaxStops() == DEFAULT_MAX_ROVER_STOPS);
+    ASSERT_TRUE(qsoMgr.getQsoCount() == 0);
+    ASSERT_TRUE(qsoMgr.getMaxQsos() == DEFAULT_MAX_QSOS);
+    ASSERT_TRUE(qsoMgr.getMyCall() == DEFAULT_QSO_MY_CALL);
+    ASSERT_TRUE(qsoMgr.getDefaultBand() == DEFAULT_QSO_BAND);
+    ASSERT_TRUE(qsoMgr.getCardTimeoutSec() == DEFAULT_QSO_CARD_TIMEOUT_S);
+    ASSERT_TRUE(targetMgr.getCount() == 0);
+    ASSERT_TRUE(targetMgr.getMaxTargets() == DEFAULT_MAX_TARGET_PRESETS);
+
+    // Re-begin from host NVS to verify defaults persist
+    QsoLogManager qsoReload;
+    qsoReload.begin();
+    ASSERT_TRUE(qsoReload.getQsoCount() == 0);
+    ASSERT_TRUE(qsoReload.getMaxQsos() == DEFAULT_MAX_QSOS);
+    ASSERT_TRUE(qsoReload.getMyCall() == DEFAULT_QSO_MY_CALL);
+
+    // 3. BLE-sourced factory reset with duplicate "Yes\r\nYes\r\n" in one RX burst:
+    //    must flush completion notice, invoke prepareRestartCb before restartCb,
+    //    disconnect BLE, and NOT emit "Unknown command: 'Yes'".
+    cli.begin();
+    cliOutput.clear();
+    ble.clearTxBuffer();
+    ble.setConnected(true);
+    ble.setSubscribed(true);
+
+    int prepareOrder = 0;
+    int restartOrder = 0;
+    int orderCounter = 0;
+    int restartCount = 0;
+    struct ResetOrderCtx {
+        int *order;
+        int *counter;
+        int *count;
+    };
+    ResetOrderCtx prepCtx{&prepareOrder, &orderCounter, nullptr};
+    ResetOrderCtx restCtx{&restartOrder, &orderCounter, &restartCount};
+    cli.setPrepareRestartCallback([](void *ctx) {
+        auto *c = static_cast<ResetOrderCtx*>(ctx);
+        *(c->order) = ++(*(c->counter));
+    }, &prepCtx);
+    cli.setRestartCallback([](void *ctx) {
+        auto *c = static_cast<ResetOrderCtx*>(ctx);
+        *(c->order) = ++(*(c->counter));
+        ++(*(c->count));
+    }, &restCtx);
+
+    const char *bleCmd = "factory reset\r\n";
+    ble.handleRxData(bleCmd, std::strlen(bleCmd));
+    cli.update(100);
+    ble.flushTx();
+    ASSERT_TRUE(ble.getTxBuffer().find("Type 'yes'") != std::string::npos);
+
+    cliOutput.clear();
+    ble.clearTxBuffer();
+    const char *dupYes = "Yes\r\nYes\r\n";
+    ble.handleRxData(dupYes, std::strlen(dupYes));
+    cli.update(200);
+
+    ASSERT_TRUE(restartCount == 1);
+    ASSERT_TRUE(prepareOrder == 1);
+    ASSERT_TRUE(restartOrder == 2);
+    ASSERT_TRUE(!ble.isConnected());
+    ASSERT_TRUE(ble.getTxBuffer().find("Factory reset complete") != std::string::npos);
+    ASSERT_TRUE(ble.getTxBuffer().find("Unknown command") == std::string::npos);
+    ASSERT_TRUE(cliOutput.find("Unknown command") == std::string::npos);
+
+    PASS();
+}
+
 int main() {
     std::cout << "========================================" << std::endl;
     std::cout << "  GNSS Compass Unit Test Suite" << std::endl;
@@ -6593,6 +6744,7 @@ int main() {
     test_target_preset_review_fixes();
     test_migrated_nvs_stores();
     test_audit_hardening_regressions();
+    test_serial_cli_factory_reset();
 
     std::cout << "========================================" << std::endl;
     std::cout << "  All " << tests_passed << " / " << tests_run << " tests PASSED successfully!" << std::endl;

@@ -269,6 +269,41 @@ void BleSerialManager::disconnect() {
     disconnectTimerStarted_ = false;
 }
 
+void BleSerialManager::flushAndDisconnect(unsigned long nowMs) {
+    if (!connected_.load()) {
+        txClear();
+        return;
+    }
+    if (nowMs == 0) nowMs = platformMillis();
+
+#if BLE_SERIAL_HW
+    unsigned long startMs = nowMs;
+    while (connected_.load() && subscribed_.load() && txCount_ > 0) {
+        pumpTx(nowMs);
+        if (txCount_ == 0 || !connected_.load()) break;
+        platformDelay(10);
+        nowMs = platformMillis();
+        if (nowMs - startMs >= 300) break;
+    }
+    if (connected_.load()) {
+        // Allow the final notification to leave the controller before HCI Disconnect
+        platformDelay(kDisconnectGraceMs);
+        platformDisconnect();
+        unsigned long discStart = platformMillis();
+        while (connected_.load() && (platformMillis() - discStart) < 150) {
+            platformDelay(10);
+        }
+    }
+#else
+    for (int i = 0; i < 1000 && txCount_ > 0; ++i) {
+        size_t before = txCount_;
+        pumpTx(nowMs);
+        if (txCount_ >= before) break;
+    }
+    platformDisconnect();
+#endif
+}
+
 // ---------------------------------------------------------------------------
 // TX queue (main loop only)
 // ---------------------------------------------------------------------------

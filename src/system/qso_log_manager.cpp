@@ -218,6 +218,18 @@ void QsoLogManager::clearLog() {
   listStore_.putCount(0);
 }
 
+void QsoLogManager::resetDefaults() {
+  clearLog();
+  maxQsos_ = DEFAULT_MAX_QSOS;
+  defaultBand_ = DEFAULT_QSO_BAND;
+  myCall_ = DEFAULT_QSO_MY_CALL;
+  cardTimeoutSec_ = DEFAULT_QSO_CARD_TIMEOUT_S;
+  cfgStore_.remove(QSO_CFG_KEY_MAX_QSOS);
+  cfgStore_.remove(QSO_CFG_KEY_DEFAULT_BAND);
+  cfgStore_.remove(QSO_CFG_KEY_MY_CALL);
+  cfgStore_.remove(QSO_CFG_KEY_CARD_TIMEOUT_S);
+}
+
 const QsoEntry *QsoLogManager::getQso(size_t index) const {
   if (index >= qsos_.size())
     return nullptr;

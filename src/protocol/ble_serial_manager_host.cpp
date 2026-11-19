@@ -62,6 +62,10 @@ unsigned long BleSerialManager::platformMillis() {
     return 0;
 }
 
+void BleSerialManager::platformDelay(unsigned long ms) {
+    (void)ms;
+}
+
 uint8_t *BleSerialManager::platformAllocTx(size_t size) {
     return static_cast<uint8_t *>(std::malloc(size));
 }

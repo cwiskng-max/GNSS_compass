@@ -30,6 +30,7 @@ public:
     bool popLastQso();
     bool deleteQsoByIndex(size_t index); // 1-based index with re-indexing
     void clearLog();
+    void resetDefaults();
 
     // Inspection & accessors
     size_t getQsoCount() const { return qsos_.size(); }

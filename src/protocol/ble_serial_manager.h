@@ -95,6 +95,10 @@ public:
     // Ends the connection once queued output has been sent (or after a timeout)
     void disconnect();
 
+    // Pumps remaining TX notifications without draining RX, then disconnects cleanly.
+    // Used before esp_restart() / factory reset so no re-entrant RX commands can run.
+    void flushAndDisconnect(unsigned long nowMs = 0);
+
     // Optional RF diagnostics on USB serial (see BleDiagnostics for what is always logged)
     void setDiagEnabled(bool enabled) { diag_.setEnabled(enabled); }
     bool isDiagEnabled() const { return diag_.isEnabled(); }
@@ -155,6 +159,7 @@ private:
     SendResult platformSend(const uint8_t *data, size_t len);
     void platformDisconnect();
     static unsigned long platformMillis();
+    static void platformDelay(unsigned long ms);
     static uint8_t *platformAllocTx(size_t size);
     void platformUpdateDeviceName();
     void platformSaveSuffix(const char *suffix);
