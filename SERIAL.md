@@ -588,7 +588,7 @@ Pre-load contest summit rosters before heading into the field or manage presets 
 | **`target add <GRID> [LABEL...]`** | Add or update a 6-char target preset (spaces allowed in label, max 16 chars, truncated if longer; auto-fills regional summit name if omitted). |
 | **`target save [LABEL...]`** | Save the current active target grid into presets (optional label, spaces allowed). |
 | **`target del <INDEX\|GRID>`** | Remove a preset by 1-based CLI list index or 6-char grid. |
-| **`target list`** | Print all saved presets in static order added with index, grid, label, use count, and capacity. *(The touchscreen modal sorts by most used.)* |
+| **`target list`** *(or `show` / `history`)* | Print all saved presets in static order added with index, grid, label, use count, and capacity. *(The touchscreen modal sorts by most used.)* |
 | **`target max [N]`** | Show or set max preset capacity (`10`–`500`, default `100`). |
 | **`target clear`** | Wipe all saved target presets from NVS. |
 | **`target help`** | Show `target` command help. |
@@ -758,7 +758,7 @@ If the operator sends or speaks `log` with no arguments, the CLI prompts for the
 
 #### 3.12.5 Log Inspection & Statistics (`log list`, `log stats`)
 
-* **Display Log Table (`log list` or `log show`):**
+* **Display Log Table (`log list`, `log show`, or `log history`):**
   Prints a formatted ASCII table of all QSOs in memory:
   ```text
   > log list
@@ -907,7 +907,7 @@ Manage Rover 16 km contest transit tracking, inspect visited grid history, and c
 | **`rover`** *(or `rover status`)* | Display active Rover Mode status, origin grid, current displacement (km), and 16 km qualification state (`TRANSIT`, `QUALIFIED`, `REVISIT`, or `NO GPS`). |
 | **`rover start`** | Emulate a Row 1 tap: snapshot the current position as the departure origin, log the stop in NVS, and arm Rover Mode. |
 | **`rover stop`** | Emulate a target exit: commit the stop and return Row 5 to Normal Bearing Mode. |
-| **`rover history`** *(or `rover log`)* | Print a formatted ASCII table of all logged contest stops, timestamps, displacements, and qualification flags. |
+| **`rover history`** *(or `list` / `show` / `log`)* | Print a formatted ASCII table of all logged contest stops, timestamps, displacements, and qualification flags. |
 | **`rover undo`** | Discard the most recent stop from NVS and re-arm Rover Mode from the previous stop. |
 | **`rover max [n]`** | Show or set the maximum number of rover stops stored in NVS (`10`–`500`). |
 | **`rover clear [confirm]`** | Erase all rover location history from NVS. Without `confirm` (`yes` / `-y` / `force`), prompts for confirmation (`cancel` / `no` / `-n` aborts). |

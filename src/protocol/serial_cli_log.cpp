@@ -28,7 +28,7 @@ void SerialCli::handleLogCommand(const char *arg, unsigned long nowMs) {
         handleLogClear(arg);
         return;
     }
-    if (equalsIgnoreCase(arg, "list") || equalsIgnoreCase(arg, "show")) {
+    if (equalsIgnoreCase(arg, "list") || equalsIgnoreCase(arg, "show") || equalsIgnoreCase(arg, "history")) {
         handleLogList();
         return;
     }
@@ -492,7 +492,7 @@ void SerialCli::printLogHelp() {
     println("  log undo                 - Remove the most recent QSO entry");
     println("  log delete <#> (or del)  - Delete specific QSO entry by number");
     println("  log clear [confirm]      - Erase entire contest QSO history");
-    println("  log list (or show)       - Display formatted ASCII table of logged QSOs");
+    println("  log list (or show/history) - Display formatted ASCII table of logged QSOs");
     println("  log stats                - Show contest statistics (QSOs, DX, bands, grids)");
     println("  log export <cab|adif|csv>- Stream contest log export");
     println("  log mycall [<call>|reset]- Configure station callsign for Cabrillo export");

@@ -3038,10 +3038,18 @@ void test_serial_cli_rover_commands() {
     ASSERT_TRUE(cliOut.find("Not set") != std::string::npos);
     cliOut.clear();
 
-    // 3. Rover History (Empty)
+    // 3. Rover History (Empty) + list/show aliases
     cli.executeCommand("rover history");
     ASSERT_TRUE(cliOut.find("ROVER LOCATION HISTORY (0 stops / max 100)") != std::string::npos);
     ASSERT_TRUE(cliOut.find("(No stops recorded)") != std::string::npos);
+    cliOut.clear();
+
+    cli.executeCommand("rover list");
+    ASSERT_TRUE(cliOut.find("ROVER LOCATION HISTORY (0 stops / max 100)") != std::string::npos);
+    cliOut.clear();
+
+    cli.executeCommand("rover show");
+    ASSERT_TRUE(cliOut.find("ROVER LOCATION HISTORY (0 stops / max 100)") != std::string::npos);
     cliOut.clear();
 
     // 4. Standalone Rover Start & Status (with simulated location)
@@ -4854,12 +4862,20 @@ void test_serial_cli_log_commands() {
     ASSERT_TRUE(cliOutput.find("[QSO ERROR] Invalid QSO index '99'") != std::string::npos);
     ASSERT_TRUE(qsoLog.getQsoCount() == 4);
 
-    // 10. log list / show
+    // 10. log list / show / history
     cliOutput.clear();
     cli.executeCommand("log list", 10000);
     ASSERT_TRUE(cliOutput.find("K6MG") != std::string::npos);
     ASSERT_TRUE(cliOutput.find("10368.100 MHz") != std::string::npos);
     ASSERT_TRUE(cliOutput.find("47 GHz") != std::string::npos);
+
+    cliOutput.clear();
+    cli.executeCommand("log show", 10100);
+    ASSERT_TRUE(cliOutput.find("K6MG") != std::string::npos);
+
+    cliOutput.clear();
+    cli.executeCommand("log history", 10200);
+    ASSERT_TRUE(cliOutput.find("K6MG") != std::string::npos);
 
     // 11. log stats
     cliOutput.clear();
@@ -5683,6 +5699,13 @@ void test_serial_cli_target_presets_usb_and_ble() {
     ASSERT_TRUE(pos1 != std::string::npos && pos2 != std::string::npos && pos3 != std::string::npos);
     ASSERT_TRUE(pos1 < pos2 && pos2 < pos3);
     ASSERT_TRUE(usbOut.find("uses: 2, slot: t1") != std::string::npos);
+
+    usbOut.clear();
+    cli.executeCommand("target show", 7466, CLI_SOURCE_USB);
+    ASSERT_TRUE(usbOut.find("#1: CM97bb") != std::string::npos);
+    usbOut.clear();
+    cli.executeCommand("target history", 7467, CLI_SOURCE_USB);
+    ASSERT_TRUE(usbOut.find("#1: CM97bb") != std::string::npos);
 
     usbOut.clear();
     cli.executeCommand("target select", 7470, CLI_SOURCE_USB);

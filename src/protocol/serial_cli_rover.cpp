@@ -24,7 +24,8 @@ void SerialCli::handleRoverCommand(const char *arg, unsigned long nowMs) {
         return;
     }
 
-    if (equalsIgnoreCase(arg, "history") || equalsIgnoreCase(arg, "log")) {
+    if (equalsIgnoreCase(arg, "history") || equalsIgnoreCase(arg, "list") ||
+        equalsIgnoreCase(arg, "show") || equalsIgnoreCase(arg, "log")) {
         printRoverHistory();
         return;
     }
@@ -339,7 +340,7 @@ void SerialCli::printRoverHelp() {
     println("  rover [status]        - Displays active rover transit status");
     println("  rover start           - Emulates Row 1 tap: arms Rover Mode at current location");
     println("  rover stop            - Emulates target exit: commits stop and returns to Bearing");
-    println("  rover history (or log)- Formatted ASCII table of contest location stops");
+    println("  rover history (list/show/log) - Formatted ASCII table of contest location stops");
     println("  rover undo            - Discards last stop and auto-rearms Rover Mode");
     println("  rover max [n]         - Gets or sets max stops capacity (10-500) in NVS");
     println("  rover clear [confirm] - Clears rover location history in NVS");

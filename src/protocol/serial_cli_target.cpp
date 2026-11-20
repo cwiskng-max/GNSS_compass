@@ -15,7 +15,7 @@ void SerialCli::printTargetHelp() {
     println("  target add <GRID> [LABEL] - Add or update preset (spaces allowed in label)");
     println("  target save [LABEL]       - Save current active target grid as preset");
     println("  target del <INDEX|GRID>   - Delete preset by 1-based index or 6-char grid");
-    println("  target list               - List all saved target presets");
+    println("  target list               - List all saved target presets (aliases: show, history)");
     println("  target max [N]            - Show or set max capacity (10-500, default 100)");
     println("  target clear              - Wipe all saved target presets");
     println("==============================");
@@ -215,7 +215,7 @@ void SerialCli::handleTargetCommand(const char *arg, unsigned long nowMs) {
         return;
     }
 
-    if (hasSubcommandPrefix(arg, "list") || hasSubcommandPrefix(arg, "show")) {
+    if (hasSubcommandPrefix(arg, "list") || hasSubcommandPrefix(arg, "show") || hasSubcommandPrefix(arg, "history")) {
         if (!targetPresetManager_) {
             println("[TARGET] Target preset manager not available.");
             return;
