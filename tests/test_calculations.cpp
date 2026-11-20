@@ -5592,10 +5592,10 @@ void test_serial_cli_target_presets_usb_and_ble() {
     ASSERT_STR_EQ(presetMgr.getPreset(0)->grid, "CM97bb");
     ASSERT_STR_EQ(presetMgr.getPreset(0)->label, "LOMA PRIETA");
 
-    // 3. USB: target add without label uses regional summit lookup
+    // 3. USB: target add without label uses regional summit lookup (2nd item added -> #2)
     usbOut.clear();
     cli.executeCommand("target add cm87VU", 3000, CLI_SOURCE_USB);
-    ASSERT_TRUE(usbOut.find("[TARGET] Added #1: CM87vu (DIABLO)") != std::string::npos);
+    ASSERT_TRUE(usbOut.find("[TARGET] Added #2: CM87vu (DIABLO)") != std::string::npos);
     ASSERT_TRUE(presetMgr.getCount() == 2);
 
     // 4. USB: target add duplicate grid updates existing without duplicating
@@ -5654,20 +5654,35 @@ void test_serial_cli_target_presets_usb_and_ble() {
     ASSERT_TRUE(usbOut.find("[TARGET ERROR]") != std::string::npos);
     ASSERT_TRUE(presetMgr.getMaxTargets() == 25);
 
-    // 9b. USB: target <INDEX> and target select <INDEX> (including spoken numbers)
+    // 9b. USB: target <INDEX> and target select <INDEX> use static order-added indices (while GUI sorts by most used)
+    // Order added: #1 CM97bb (MT LOMA), #2 CM87vu (DIABLO), #3 CM88no (MT ST HELEN)
     usbOut.clear();
     cli.executeCommand("target 2", 7450, CLI_SOURCE_USB);
-    ASSERT_TRUE(usbOut.find("[TARGET] Selected #2:") != std::string::npos);
+    ASSERT_TRUE(usbOut.find("[TARGET] Selected #2: CM87vu") != std::string::npos);
     ASSERT_TRUE(usbOut.find("Bearing:") != std::string::npos);
-    // Selected preset should now be #1 (MRU) with useCount == 1
+    // In GUI (most-used), CM87vu moved to #1 (index 0) with useCount == 1
     const TargetPreset *selPreset = presetMgr.getPreset(0);
     ASSERT_TRUE(selPreset != nullptr);
+    ASSERT_STR_EQ(selPreset->grid, "CM87vu");
     ASSERT_TRUE(selPreset->useCount == 1);
 
+    // Selecting #2 again via 'target select two' still selects CM87vu (CLI index is static!)
     usbOut.clear();
     cli.executeCommand("target select two", 7460, CLI_SOURCE_USB);
-    ASSERT_TRUE(usbOut.find("[TARGET] Selected #2:") != std::string::npos);
-    ASSERT_TRUE(presetMgr.getPreset(0) != nullptr && presetMgr.getPreset(0)->useCount == 1);
+    ASSERT_TRUE(usbOut.find("[TARGET] Selected #2: CM87vu") != std::string::npos);
+    ASSERT_TRUE(presetMgr.getPreset(0) != nullptr && presetMgr.getPreset(0)->useCount == 2);
+    ASSERT_TRUE(presetMgr.getPresetByAddedOrder(1) != nullptr &&
+                std::strcmp(presetMgr.getPresetByAddedOrder(1)->grid, "CM87vu") == 0);
+
+    // target list still prints #1 CM97bb, #2 CM87vu (uses: 2), #3 CM88no in order added
+    usbOut.clear();
+    cli.executeCommand("target list", 7465, CLI_SOURCE_USB);
+    size_t pos1 = usbOut.find("#1: CM97bb");
+    size_t pos2 = usbOut.find("#2: CM87vu");
+    size_t pos3 = usbOut.find("#3: CM88no");
+    ASSERT_TRUE(pos1 != std::string::npos && pos2 != std::string::npos && pos3 != std::string::npos);
+    ASSERT_TRUE(pos1 < pos2 && pos2 < pos3);
+    ASSERT_TRUE(usbOut.find("uses: 2, slot: t1") != std::string::npos);
 
     usbOut.clear();
     cli.executeCommand("target select", 7470, CLI_SOURCE_USB);
@@ -5677,16 +5692,20 @@ void test_serial_cli_target_presets_usb_and_ble() {
     cli.executeCommand("target 99", 7480, CLI_SOURCE_USB);
     ASSERT_TRUE(usbOut.find("[TARGET ERROR] Preset #99 out of range") != std::string::npos);
 
-    // 10. USB: target del by 1-based index and by grid
+    // 10. USB: target del by 1-based order-added index (#1 = CM97bb) and by grid
     usbOut.clear();
     cli.executeCommand("target del 1", 7500, CLI_SOURCE_USB);
-    ASSERT_TRUE(usbOut.find("[TARGET] Deleted #1:") != std::string::npos);
+    ASSERT_TRUE(usbOut.find("[TARGET] Deleted #1: CM97bb") != std::string::npos);
     ASSERT_TRUE(presetMgr.getCount() == 2);
+    // Remaining CLI order: #1 CM87vu, #2 CM88no (preserved across NVS reload)
+    TargetPresetManager reloadedCli;
+    reloadedCli.begin();
+    ASSERT_STR_EQ(reloadedCli.getPresetByAddedOrder(0)->grid, "CM87vu");
+    ASSERT_STR_EQ(reloadedCli.getPresetByAddedOrder(1)->grid, "CM88no");
 
     usbOut.clear();
     cli.executeCommand("target del cm87vu", 7600, CLI_SOURCE_USB);
-    ASSERT_TRUE(usbOut.find("[TARGET] Deleted #") != std::string::npos);
-    ASSERT_TRUE(usbOut.find("CM87vu") != std::string::npos);
+    ASSERT_TRUE(usbOut.find("[TARGET] Deleted #1: CM87vu") != std::string::npos);
     ASSERT_TRUE(presetMgr.getCount() == 1);
 
     usbOut.clear();

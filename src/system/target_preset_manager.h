@@ -64,14 +64,18 @@ public:
     // CRUD & usage tracking
     bool addOrUpdatePreset(const char *grid, const char *label = nullptr, uint32_t nowSec = 0);
     bool recordUse(size_t index, uint32_t nowSec = 0);
+    bool recordUseByAddedOrder(size_t addedIndex, uint32_t nowSec = 0);
     bool removePreset(size_t index);
+    bool removePresetByAddedOrder(size_t addedIndex);
     bool removePresetByGrid(const char *grid);
     void clearAll();
 
-    // Lookup & accessors
+    // Lookup & accessors (default ordering is usage-sorted for GUI; *ByAddedOrder is static for CLI)
     int findIndexByGrid(const char *grid) const;
+    int findAddedIndexByGrid(const char *grid) const;
     const TargetPreset* findByGrid(const char *grid) const;
     const TargetPreset* getPreset(size_t index) const;
+    const TargetPreset* getPresetByAddedOrder(size_t addedIndex) const;
     const std::vector<TargetPreset>& getPresets() const { return presets_; }
     size_t getCount() const { return presets_.size(); }
     bool isEmpty() const { return presets_.empty(); }
@@ -99,6 +103,7 @@ public:
 
 private:
     void sortPresets();
+    int findGuiIndexByAddedIndex(size_t addedIndex) const;
 
     std::vector<TargetPreset> presets_;
     std::vector<size_t> nvsSlots_;

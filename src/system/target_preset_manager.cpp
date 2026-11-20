@@ -108,6 +108,30 @@ const TargetPreset* TargetPresetManager::getPreset(size_t index) const {
     return &presets_[index];
 }
 
+int TargetPresetManager::findGuiIndexByAddedIndex(size_t addedIndex) const {
+    if (addedIndex >= presets_.size()) return -1;
+    for (size_t i = 0; i < nvsSlots_.size() && i < presets_.size(); ++i) {
+        if (nvsSlots_[i] == addedIndex) {
+            return static_cast<int>(i);
+        }
+    }
+    return -1;
+}
+
+int TargetPresetManager::findAddedIndexByGrid(const char *grid) const {
+    int guiIdx = findIndexByGrid(grid);
+    if (guiIdx < 0 || static_cast<size_t>(guiIdx) >= nvsSlots_.size()) {
+        return -1;
+    }
+    return static_cast<int>(nvsSlots_[static_cast<size_t>(guiIdx)]);
+}
+
+const TargetPreset* TargetPresetManager::getPresetByAddedOrder(size_t addedIndex) const {
+    int guiIdx = findGuiIndexByAddedIndex(addedIndex);
+    if (guiIdx < 0) return nullptr;
+    return &presets_[static_cast<size_t>(guiIdx)];
+}
+
 void TargetPresetManager::sortPresets() {
     if (presets_.size() <= 1) return;
     if (nvsSlots_.size() != presets_.size()) {
@@ -203,20 +227,38 @@ bool TargetPresetManager::addOrUpdatePreset(const char *grid, const char *label,
 
     if (needsTruncateSave) {
         presets_.pop_back();
+        if (!nvsSlots_.empty()) nvsSlots_.pop_back();
+        size_t nextSlot = presets_.size();
+        for (size_t s : nvsSlots_) {
+            if (s >= nextSlot) nextSlot = s + 1;
+        }
         presets_.push_back(preset);
+        nvsSlots_.push_back(nextSlot);
         sortPresets();
         saveToNvs();
         return true;
     }
 
     size_t evictedSlot = nvsSlots_.empty() ? (presets_.size() - 1) : nvsSlots_.back();
-    if (!listStore_.putSlot(evictedSlot, preset)) {
-        return false;
-    }
+    size_t lastSlot = presets_.size() - 1;
     presets_.pop_back();
     if (!nvsSlots_.empty()) nvsSlots_.pop_back();
+
+    // Shift surviving presets after evictedSlot down by 1 in NVS to preserve order added
+    for (size_t s = evictedSlot + 1; s <= lastSlot; ++s) {
+        for (size_t i = 0; i < nvsSlots_.size(); ++i) {
+            if (nvsSlots_[i] == s) {
+                listStore_.putSlot(s - 1, presets_[i]);
+                nvsSlots_[i] = s - 1;
+                break;
+            }
+        }
+    }
+    if (!listStore_.putSlot(lastSlot, preset)) {
+        return false;
+    }
     presets_.push_back(preset);
-    nvsSlots_.push_back(evictedSlot);
+    nvsSlots_.push_back(lastSlot);
     sortPresets();
     return true;
 }
@@ -240,6 +282,12 @@ bool TargetPresetManager::recordUse(size_t index, uint32_t nowSec) {
     return true;
 }
 
+bool TargetPresetManager::recordUseByAddedOrder(size_t addedIndex, uint32_t nowSec) {
+    int guiIdx = findGuiIndexByAddedIndex(addedIndex);
+    if (guiIdx < 0) return false;
+    return recordUse(static_cast<size_t>(guiIdx), nowSec);
+}
+
 bool TargetPresetManager::removePreset(size_t index) {
     if (index >= presets_.size()) {
         return false;
@@ -247,11 +295,12 @@ bool TargetPresetManager::removePreset(size_t index) {
     size_t freedSlot = (index < nvsSlots_.size()) ? nvsSlots_[index] : index;
     size_t lastSlot = presets_.size() - 1;
 
-    if (freedSlot != lastSlot) {
+    // Shift presets after freedSlot down by 1 in NVS to preserve static order added
+    for (size_t s = freedSlot + 1; s <= lastSlot; ++s) {
         for (size_t i = 0; i < nvsSlots_.size(); ++i) {
-            if (i != index && nvsSlots_[i] == lastSlot) {
-                listStore_.putSlot(freedSlot, presets_[i]);
-                nvsSlots_[i] = freedSlot;
+            if (i != index && nvsSlots_[i] == s) {
+                listStore_.putSlot(s - 1, presets_[i]);
+                nvsSlots_[i] = s - 1;
                 break;
             }
         }
@@ -263,6 +312,12 @@ bool TargetPresetManager::removePreset(size_t index) {
         nvsSlots_.erase(nvsSlots_.begin() + static_cast<std::ptrdiff_t>(index));
     }
     return true;
+}
+
+bool TargetPresetManager::removePresetByAddedOrder(size_t addedIndex) {
+    int guiIdx = findGuiIndexByAddedIndex(addedIndex);
+    if (guiIdx < 0) return false;
+    return removePreset(static_cast<size_t>(guiIdx));
 }
 
 bool TargetPresetManager::removePresetByGrid(const char *grid) {
@@ -330,11 +385,31 @@ void TargetPresetManager::loadFromNvs() {
 }
 
 void TargetPresetManager::saveToNvs() {
-    nvsSlots_.resize(presets_.size());
-    for (size_t i = 0; i < presets_.size(); ++i) {
-        nvsSlots_[i] = i;
+    if (nvsSlots_.size() != presets_.size()) {
+        nvsSlots_.resize(presets_.size());
+        for (size_t i = 0; i < presets_.size(); ++i) {
+            nvsSlots_[i] = i;
+        }
+        listStore_.save(presets_);
+        return;
     }
-    listStore_.save(presets_);
+
+    // Persist in static order added (ascending nvsSlots_) and re-pack slot indices 0..N-1
+    std::vector<size_t> order(presets_.size());
+    for (size_t i = 0; i < order.size(); ++i) {
+        order[i] = i;
+    }
+    std::stable_sort(order.begin(), order.end(),
+        [this](size_t a, size_t b) { return nvsSlots_[a] < nvsSlots_[b]; });
+
+    std::vector<TargetPreset> orderedPresets;
+    orderedPresets.reserve(presets_.size());
+    for (size_t slot = 0; slot < order.size(); ++slot) {
+        size_t guiIdx = order[slot];
+        orderedPresets.push_back(presets_[guiIdx]);
+        nvsSlots_[guiIdx] = slot;
+    }
+    listStore_.save(orderedPresets);
 }
 
 #if !defined(ARDUINO)

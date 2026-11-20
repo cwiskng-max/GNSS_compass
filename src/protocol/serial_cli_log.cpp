@@ -315,7 +315,7 @@ void SerialCli::servicePendingExport(bool fromUpdate) {
         }
 
         if (pendingExportFormat_ == ExportFormat::TargetList) {
-            const TargetPreset *p = targetPresetManager_->getPreset(pendingExportIndex_);
+            const TargetPreset *p = targetPresetManager_->getPresetByAddedOrder(pendingExportIndex_);
             if (p) {
                 const char *lbl = (p->label[0] != '\0') ? p->label : "(none)";
                 printFormat("  #%zu: %s - %-16s (uses: %u, slot: t%zu)\r\n",

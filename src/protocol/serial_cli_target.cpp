@@ -110,8 +110,8 @@ void SerialCli::handleTargetCommand(const char *arg, unsigned long nowMs) {
             return;
         }
 
-        int idx = targetPresetManager_->findIndexByGrid(normGrid);
-        const TargetPreset *preset = (idx >= 0) ? targetPresetManager_->getPreset(static_cast<size_t>(idx)) : nullptr;
+        int idx = targetPresetManager_->findAddedIndexByGrid(normGrid);
+        const TargetPreset *preset = (idx >= 0) ? targetPresetManager_->getPresetByAddedOrder(static_cast<size_t>(idx)) : nullptr;
         const char *verb = existed ? "Updated" : "Added";
         if (preset && preset->label[0] != '\0') {
             printFormat("[TARGET] %s #%d: %s (%s)\r\n", verb, idx + 1, preset->grid, preset->label);
@@ -151,8 +151,8 @@ void SerialCli::handleTargetCommand(const char *arg, unsigned long nowMs) {
             return;
         }
 
-        int idx = targetPresetManager_->findIndexByGrid(normGrid);
-        const TargetPreset *preset = (idx >= 0) ? targetPresetManager_->getPreset(static_cast<size_t>(idx)) : nullptr;
+        int idx = targetPresetManager_->findAddedIndexByGrid(normGrid);
+        const TargetPreset *preset = (idx >= 0) ? targetPresetManager_->getPresetByAddedOrder(static_cast<size_t>(idx)) : nullptr;
         if (preset && preset->label[0] != '\0') {
             printFormat("[TARGET] Saved #%d: %s (%s)\r\n", idx + 1, preset->grid, preset->label);
         } else {
@@ -184,12 +184,12 @@ void SerialCli::handleTargetCommand(const char *arg, unsigned long nowMs) {
                 printFormat("[TARGET ERROR] Preset #%d out of range (1-%zu).\r\n", index1Based, count);
                 return;
             }
-            const TargetPreset *existing = targetPresetManager_->getPreset(static_cast<size_t>(index1Based - 1));
+            const TargetPreset *existing = targetPresetManager_->getPresetByAddedOrder(static_cast<size_t>(index1Based - 1));
             char deletedGrid[7] = {0};
             if (existing) {
                 std::snprintf(deletedGrid, sizeof(deletedGrid), "%s", existing->grid);
             }
-            targetPresetManager_->removePreset(static_cast<size_t>(index1Based - 1));
+            targetPresetManager_->removePresetByAddedOrder(static_cast<size_t>(index1Based - 1));
             printFormat("[TARGET] Deleted #%d: %s\r\n", index1Based, deletedGrid);
             if (stateChangedCb_) stateChangedCb_(stateChangedContext_);
             return;
@@ -200,7 +200,7 @@ void SerialCli::handleTargetCommand(const char *arg, unsigned long nowMs) {
         if (TargetPresetManager::normalizeGrid(p, normGrid) ||
             (VoiceQsoParser::parseGrid(p, parsedGrid) &&
              TargetPresetManager::normalizeGrid(parsedGrid.c_str(), normGrid))) {
-            int idx = targetPresetManager_->findIndexByGrid(normGrid);
+            int idx = targetPresetManager_->findAddedIndexByGrid(normGrid);
             if (idx < 0) {
                 printFormat("[TARGET ERROR] Preset '%s' not found.\r\n", normGrid);
                 return;
@@ -308,7 +308,7 @@ void SerialCli::handleTargetCommand(const char *arg, unsigned long nowMs) {
             printFormat("[TARGET ERROR] Preset #%d out of range (1-%zu).\r\n", index1Based, count);
             return;
         }
-        const TargetPreset *preset = targetPresetManager_->getPreset(static_cast<size_t>(index1Based - 1));
+        const TargetPreset *preset = targetPresetManager_->getPresetByAddedOrder(static_cast<size_t>(index1Based - 1));
         if (!preset) {
             printFormat("[TARGET ERROR] Preset #%d not found.\r\n", index1Based);
             return;
@@ -318,7 +318,7 @@ void SerialCli::handleTargetCommand(const char *arg, unsigned long nowMs) {
         std::snprintf(selectedGrid, sizeof(selectedGrid), "%s", preset->grid);
         std::snprintf(selectedLabel, sizeof(selectedLabel), "%s", preset->label);
 
-        targetPresetManager_->recordUse(static_cast<size_t>(index1Based - 1), nowSec);
+        targetPresetManager_->recordUseByAddedOrder(static_cast<size_t>(index1Based - 1), nowSec);
 
         double bearing = 0.0, distKm = 0.0;
         applyActiveTarget(selectedGrid, bearing, distKm);

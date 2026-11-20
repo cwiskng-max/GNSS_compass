@@ -584,11 +584,11 @@ Pre-load contest summit rosters before heading into the field or manage presets 
 
 | Subcommand | Description |
 | :--- | :--- |
-| **`target <INDEX>`** / **`target select <INDEX>`** | Select a saved preset by 1-based list index (supports spoken numbers like `target select two`), increment its use count, and set it as the active target grid. |
+| **`target <INDEX>`** / **`target select <INDEX>`** | Select a saved preset by 1-based CLI list index (static order added; supports spoken numbers like `target select two`), increment its use count, and set it as the active target grid. |
 | **`target add <GRID> [LABEL...]`** | Add or update a 6-char target preset (spaces allowed in label, max 16 chars, truncated if longer; auto-fills regional summit name if omitted). |
 | **`target save [LABEL...]`** | Save the current active target grid into presets (optional label, spaces allowed). |
-| **`target del <INDEX\|GRID>`** | Remove a preset by 1-based list index or 6-char grid. |
-| **`target list`** | Print all saved presets with index, grid, label, use count, and capacity. |
+| **`target del <INDEX\|GRID>`** | Remove a preset by 1-based CLI list index or 6-char grid. |
+| **`target list`** | Print all saved presets in static order added with index, grid, label, use count, and capacity. *(The touchscreen modal sorts by most used.)* |
 | **`target max [N]`** | Show or set max preset capacity (`10`–`500`, default `100`). |
 | **`target clear`** | Wipe all saved target presets from NVS. |
 | **`target help`** | Show `target` command help. |
