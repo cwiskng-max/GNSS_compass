@@ -4,11 +4,12 @@
 #if BLE_SERIAL_HW
 
 #include <Arduino.h>
-#include <Preferences.h>
+#include "../system/nvs_store.h"
 #include <BLEDevice.h>
 #include <BLEServer.h>
 #include <BLEUtils.h>
 #include <BLE2902.h>
+#include <esp_bt.h>
 #include <esp_mac.h>
 #include <esp_gap_ble_api.h>
 #include <esp_gatts_api.h>
@@ -22,6 +23,7 @@ namespace {
 // Bluedroid's custom handlers are plain function pointers, so they reach the manager through
 // this pointer. Only one BleSerialManager may be started (enforced in platformBegin()).
 BleSerialManager *s_bleInstance = nullptr;
+portMUX_TYPE s_bdaMux = portMUX_INITIALIZER_UNLOCKED;
 
 // Restart advertising if disconnected and the controller has not confirmed advertising
 constexpr unsigned long kAdvWatchdogMs = 2000;
@@ -99,12 +101,9 @@ bool BleSerialManager::platformBegin(bool haveCustomName) {
     }
 
     if (!haveCustomName) {
-        Preferences prefs;
-        prefs.begin("compass", true);
-        String savedSuffix = prefs.getString("ble_suffix", "");
-        prefs.end();
+        std::string savedSuffix = NvsConfig("compass").getString("ble_suffix", "");
 
-        if (savedSuffix.length() > 0 && savedSuffix.length() <= kMaxSuffixLength) {
+        if (!savedSuffix.empty() && savedSuffix.length() <= kMaxSuffixLength) {
             std::strncpy(deviceSuffix_, savedSuffix.c_str(), sizeof(deviceSuffix_) - 1);
             deviceSuffix_[sizeof(deviceSuffix_) - 1] = '\0';
         } else {
@@ -116,6 +115,9 @@ bool BleSerialManager::platformBegin(bool haveCustomName) {
 
     s_bleInstance = this;
     BLEDevice::init(deviceName_);
+    // Maximize BLE TX power for advertising and active connections (power is not constrained)
+    esp_ble_tx_power_set(ESP_BLE_PWR_TYPE_ADV, ESP_PWR_LVL_P9);
+    esp_ble_tx_power_set(ESP_BLE_PWR_TYPE_DEFAULT, ESP_PWR_LVL_P9);
     // Largest MTU we accept. The client decides whether to start an MTU exchange; the
     // result arrives as ESP_GATTS_MTU_EVT.
     BLEDevice::setMTU(512);
@@ -167,8 +169,8 @@ bool BleSerialManager::platformBegin(bool haveCustomName) {
     BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
     pAdvertising->setAdvertisementData(advData);
     pAdvertising->setScanResponseData(scanResponseData);
-    pAdvertising->setMinInterval(0x50); // 50 ms (80 * 0.625 ms)
-    pAdvertising->setMaxInterval(0xA0); // 100 ms (160 * 0.625 ms)
+    pAdvertising->setMinInterval(0x20); // 20 ms (32 * 0.625 ms, BLE spec minimum)
+    pAdvertising->setMaxInterval(0x30); // 30 ms (48 * 0.625 ms)
 
     requestAdvertisingStart();
     return true;
@@ -177,19 +179,25 @@ bool BleSerialManager::platformBegin(bool haveCustomName) {
 void BleSerialManager::platformUpdate(unsigned long nowMs) {
     const uint8_t *peer = nullptr;
     uint8_t bda[6];
+    portENTER_CRITICAL(&s_bdaMux);
     if (connected_.load() && haveRemoteBda_.load(std::memory_order_acquire)) {
         std::memcpy(bda, remoteBda_, sizeof(bda));
         peer = bda;
     }
+    portEXIT_CRITICAL(&s_bdaMux);
     diag_.update(nowMs, peer);
 
-    // Advertising watchdog: if we are disconnected and the controller has not confirmed
-    // that advertising is running, (re)start it. Normal path is the immediate restart in
-    // onBtDisconnect(); this only fires if that start was lost or rejected.
-    if (initialized_ && !connected_.load() && !advertising_.load() &&
-        (static_cast<uint32_t>(nowMs) - lastAdvStartRequestMs_.load()) >= kAdvWatchdogMs) {
-        Serial.println("[BLE] watchdog: not advertising while disconnected -> restarting advertising");
-        requestAdvertisingStart();
+    // Advertising supervision: restarts requested from onBtDisconnect() or the watchdog
+    // are executed here on the main loop so all BLEAdvertising calls stay single-task.
+    if (initialized_ && !connected_.load()) {
+        bool restartPending = advRestartPending_.exchange(false, std::memory_order_acq_rel);
+        if (restartPending) {
+            requestAdvertisingStart();
+        } else if (!advertising_.load() &&
+                   (static_cast<uint32_t>(nowMs) - lastAdvStartRequestMs_.load()) >= kAdvWatchdogMs) {
+            Serial.println("[BLE] watchdog: not advertising while disconnected -> restarting advertising");
+            requestAdvertisingStart();
+        }
     }
 }
 
@@ -209,9 +217,15 @@ void BleSerialManager::platformDisconnect() {
     // Terminate the link-layer connection directly (HCI Disconnect, reason 0x13).
     // BLEServer::disconnect() only calls esp_ble_gatts_close(), which closes the GATT
     // virtual connection and leaves the ACL link to be torn down later by an idle timer.
+    uint8_t bda[6];
+    bool haveBda = false;
+    portENTER_CRITICAL(&s_bdaMux);
     if (haveRemoteBda_.load(std::memory_order_acquire)) {
-        uint8_t bda[6];
         std::memcpy(bda, remoteBda_, sizeof(bda));
+        haveBda = true;
+    }
+    portEXIT_CRITICAL(&s_bdaMux);
+    if (haveBda) {
         esp_err_t rc = esp_ble_gap_disconnect(bda);
         if (diag_.isEnabled() || rc != ESP_OK) {
             Serial.printf("[BLE] disconnect requested (gap_disconnect rc=%d)\r\n", (int)rc);
@@ -226,6 +240,10 @@ void BleSerialManager::platformDisconnect() {
 
 unsigned long BleSerialManager::platformMillis() {
     return millis();
+}
+
+void BleSerialManager::platformDelay(unsigned long ms) {
+    delay(ms);
 }
 
 uint8_t *BleSerialManager::platformAllocTx(size_t size) {
@@ -243,9 +261,12 @@ bool BleSerialManager::isAdvertising() const {
 // ---------------------------------------------------------------------------
 
 void BleSerialManager::onBtConnect(uint16_t connId, const uint8_t *bda) {
+    advRestartPending_.store(false, std::memory_order_relaxed);
     if (bda) {
+        portENTER_CRITICAL(&s_bdaMux);
         std::memcpy(remoteBda_, bda, sizeof(remoteBda_));
         haveRemoteBda_.store(true, std::memory_order_release);
+        portEXIT_CRITICAL(&s_bdaMux);
     }
     // The controller stops legacy advertising automatically when a connection is created
     advertising_ = false;
@@ -257,14 +278,15 @@ void BleSerialManager::onBtDisconnect() {
     // cannot see "disconnected + not advertising + stale timestamp" in the window before
     // the advertising restart below.
     lastAdvStartRequestMs_ = millis();
-    haveRemoteBda_ = false;
+    portENTER_CRITICAL(&s_bdaMux);
+    haveRemoteBda_.store(false, std::memory_order_release);
+    portEXIT_CRITICAL(&s_bdaMux);
     advertising_ = false;
     handleDisconnect();
     // The library keeps the CCCD value across connections; the next client must subscribe again
     if (p2902_) p2902_->setNotifications(false);
-    // Restart advertising exactly once, right away. The update() watchdog covers
-    // the case where this start is rejected by the controller.
-    requestAdvertisingStart();
+    // Defer advertising restart to platformUpdate() on the main loop
+    advRestartPending_.store(true, std::memory_order_release);
 }
 
 void BleSerialManager::requestAdvertisingStart() {
@@ -340,6 +362,8 @@ void BleSerialManager::onGattsEvent(int event, uint8_t gattsIf, const void *p) {
 }
 
 void BleSerialManager::platformUpdateDeviceName() {
+    if (!initialized_) return;
+    esp_ble_gap_set_device_name(deviceName_);
     BLEAdvertisementData scanResponseData;
     scanResponseData.setName(deviceName_);
     BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
@@ -353,14 +377,12 @@ void BleSerialManager::platformUpdateDeviceName() {
 }
 
 void BleSerialManager::platformSaveSuffix(const char *suffix) {
-    Preferences prefs;
-    prefs.begin("compass", false);
+    NvsConfig cfg("compass");
     if (suffix && suffix[0]) {
-        prefs.putString("ble_suffix", suffix);
+        cfg.putString("ble_suffix", suffix);
     } else {
-        prefs.remove("ble_suffix");
+        cfg.remove("ble_suffix");
     }
-    prefs.end();
 }
 
 #endif // BLE_SERIAL_HW

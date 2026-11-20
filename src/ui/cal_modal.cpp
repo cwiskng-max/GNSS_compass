@@ -1,4 +1,5 @@
 #include "cal_modal.h"
+#include "modal_widgets.h"
 #include <cstring>
 #include <cstdio>
 
@@ -152,25 +153,12 @@ void CalModal::drawResetButton(bool highlighted) {
 }
 
 void CalModal::drawSaveButton(bool isHolding, float progress) {
-    if (!gfx_) return;
-
     uint16_t bg = isHolding ? BUTTON_SAVE_HOLD_BG : BUTTON_SAVE_IDLE_BG;
-    gfx_->fillRoundRect(CAL_BTN_SAVE_X, CAL_BTN_SAVE_Y, CAL_BTN_SAVE_W, CAL_BTN_SAVE_H, 8, bg);
-    gfx_->drawRoundRect(CAL_BTN_SAVE_X, CAL_BTN_SAVE_Y, CAL_BTN_SAVE_W, CAL_BTN_SAVE_H, 8, GREEN);
-
-    if (isHolding && progress > 0.0f) {
-        int fillW = static_cast<int>(366.0f * progress);
-        if (fillW > 366) fillW = 366;
-        gfx_->fillRoundRect(CAL_BTN_SAVE_X + 2, CAL_BTN_SAVE_Y + 2, fillW, CAL_BTN_SAVE_H - 4, 6, GREEN);
-    }
-
     const char *saveText = isHolding ? "HOLDING TO SAVE..." : "HOLD TO SAVE OFFSET";
-    int stw = strlen(saveText) * CHAR_W(2);
-    gfx_->setTextColor(WHITE, (isHolding && progress > 0.5f) ? GREEN : bg);
-    gfx_->setTextSize(2);
-    gfx_->setCursor((SCREEN_WIDTH - stw) / 2, 300);
-    gfx_->print(saveText);
-    gfx_->setTextColor(WHITE, BLACK);
+    ui_widgets::drawHoldProgressButton(
+        gfx_,
+        CAL_BTN_SAVE_X, CAL_BTN_SAVE_Y, CAL_BTN_SAVE_W, CAL_BTN_SAVE_H,
+        300, bg, GREEN, GREEN, WHITE, saveText, isHolding, progress);
 }
 
 void CalModal::drawCancelButton(bool highlighted) {

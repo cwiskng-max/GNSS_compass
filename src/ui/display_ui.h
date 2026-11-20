@@ -9,6 +9,7 @@
 #include "rover_card.h"
 #include "rover_history_modal.h"
 #include "qso_card.h"
+#include "target_list_modal.h"
 
 #if defined(ARDUINO)
 #include <Arduino_GFX_Library.h>
@@ -20,6 +21,7 @@
 struct MainScreenState {
     const char *myGrid = nullptr;
     const char *targetGrid = nullptr;
+    const char *targetLabel = nullptr;
     uint8_t cursorColumn = 0;
     bool isEditing = false;
     double targetBearing = 0.0;
@@ -50,7 +52,7 @@ public:
 
     // Screen Renderers
     void renderMyGrid(const char *grid);
-    void renderTargetGrid(const char *grid, uint8_t cursorCol, bool isEditing);
+    void renderTargetGrid(const char *grid, uint8_t cursorCol, bool isEditing, const char *label = nullptr);
     void renderCurrentBearing(double heading, BearingQuality quality, bool hasHeading);
     void renderCalibrationPill(float offset, bool isCalibrated);
     void renderTargetBearing(double targetBearing);
@@ -69,6 +71,7 @@ public:
     CalModal &getCalModal() { return calModal_; }
     RoverHistoryModal &getRoverHistoryModal() { return roverHistoryModal_; }
     QsoCard &getQsoCard() { return qsoCard_; }
+    TargetListModal &getTargetListModal() { return targetListModal_; }
 
 #if defined(ARDUINO)
     Arduino_GFX *getGfx() const { return gfx_; }
@@ -81,11 +84,13 @@ public:
     static void formatBearingString(double heading, bool hasHeading, char *outBuf, size_t bufSize);
     static void formatCalibrationPillText(float offset, bool isCalibrated, char *outBuf, size_t bufSize);
     static void formatSelfTestFailure(const int *failedTests, int count, char *outBuf, size_t bufSize);
+    static void formatTargetLabel(const char *label, bool isEditing, bool isRoverMode, char *outBuf, size_t bufSize);
 
 private:
     CalModal calModal_;
     RoverHistoryModal roverHistoryModal_;
     QsoCard qsoCard_;
+    TargetListModal targetListModal_;
     char lastRoverCardBuf_[24] = {0};
     RoverState lastRoverCardState_ = static_cast<RoverState>(-1);
     uint16_t lastRoverCardDistColor_ = 0xFFFF;

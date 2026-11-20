@@ -1,17 +1,9 @@
 #include "rover_log_manager.h"
-#include <cstdio>
-
-#if defined(ARDUINO)
-#include <Arduino.h>
-#include <Preferences.h>
-#else
-std::vector<RoverStop> RoverLogManager::s_hostNvsStops;
-size_t RoverLogManager::s_hostNvsMaxStops = DEFAULT_MAX_ROVER_STOPS;
-bool RoverLogManager::s_hostNvsMaxStopsStored = false;
-#endif
 
 RoverLogManager::RoverLogManager()
-    : maxStops_(DEFAULT_MAX_ROVER_STOPS) {}
+    : maxStops_(DEFAULT_MAX_ROVER_STOPS),
+      cfgStore_(ROVER_CFG_NAMESPACE),
+      listStore_(ROVER_LOG_NAMESPACE, ROVER_LOG_KEY_COUNT, 's') {}
 
 void RoverLogManager::begin() {
     loadFromNvs();
@@ -34,16 +26,7 @@ void RoverLogManager::setMaxStops(size_t maxStops, bool persist) {
     }
 
     if (persist) {
-#if defined(ARDUINO)
-        Preferences cfgPrefs;
-        if (cfgPrefs.begin(ROVER_CFG_NAMESPACE, false)) {
-            cfgPrefs.putUShort(ROVER_CFG_KEY_MAX_STOPS, (uint16_t)maxStops_);
-            cfgPrefs.end();
-        }
-#else
-        s_hostNvsMaxStops = maxStops_;
-        s_hostNvsMaxStopsStored = true;
-#endif
+        cfgStore_.putUShort(ROVER_CFG_KEY_MAX_STOPS, static_cast<uint16_t>(maxStops_));
     }
 
     if (truncated) {
@@ -63,18 +46,7 @@ bool RoverLogManager::appendStop(const RoverStop &stop) {
         saveToNvs();
     } else {
         stops_.push_back(stop);
-#if defined(ARDUINO)
-        Preferences logPrefs;
-        if (logPrefs.begin(ROVER_LOG_NAMESPACE, false)) {
-            char key[16];
-            snprintf(key, sizeof(key), "s%u", (unsigned int)(stops_.size() - 1));
-            logPrefs.putBytes(key, &stops_.back(), sizeof(RoverStop));
-            logPrefs.putUShort(ROVER_LOG_KEY_COUNT, (uint16_t)stops_.size());
-            logPrefs.end();
-        }
-#else
-        s_hostNvsStops.push_back(stop);
-#endif
+        listStore_.putSlotAndCount(stops_.size() - 1, stops_.back(), stops_.size());
     }
     return true;
 }
@@ -84,41 +56,16 @@ bool RoverLogManager::popLastStop() {
         return false;
     }
 
-#if defined(ARDUINO)
     size_t removedIndex = stops_.size() - 1;
-#endif
     stops_.pop_back();
-
-#if defined(ARDUINO)
-    Preferences logPrefs;
-    if (logPrefs.begin(ROVER_LOG_NAMESPACE, false)) {
-        char key[16];
-        snprintf(key, sizeof(key), "s%u", (unsigned int)removedIndex);
-        logPrefs.remove(key);
-        logPrefs.putUShort(ROVER_LOG_KEY_COUNT, (uint16_t)stops_.size());
-        logPrefs.end();
-    }
-#else
-    if (!s_hostNvsStops.empty()) {
-        s_hostNvsStops.pop_back();
-    }
-#endif
+    listStore_.removeSlotAndCount(removedIndex, stops_.size());
 
     return true;
 }
 
 void RoverLogManager::clearHistory() {
     stops_.clear();
-
-#if defined(ARDUINO)
-    Preferences logPrefs;
-    if (logPrefs.begin(ROVER_LOG_NAMESPACE, false)) {
-        logPrefs.clear();
-        logPrefs.end();
-    }
-#else
-    s_hostNvsStops.clear();
-#endif
+    listStore_.clear();
 }
 
 const RoverStop* RoverLogManager::getStop(size_t index) const {
@@ -177,101 +124,52 @@ bool RoverLogManager::hasVisitedGrid(const char *grid) const {
 }
 
 void RoverLogManager::loadFromNvs() {
-#if defined(ARDUINO)
-    Preferences cfgPrefs;
-    if (cfgPrefs.begin(ROVER_CFG_NAMESPACE, true)) {
-        uint16_t storedMax = cfgPrefs.getUShort(ROVER_CFG_KEY_MAX_STOPS, DEFAULT_MAX_ROVER_STOPS);
-        maxStops_ = clampMaxStops(storedMax);
-        cfgPrefs.end();
-    } else {
-        maxStops_ = DEFAULT_MAX_ROVER_STOPS;
-    }
+    uint16_t storedMax = cfgStore_.getUShort(ROVER_CFG_KEY_MAX_STOPS, DEFAULT_MAX_ROVER_STOPS);
+    maxStops_ = clampMaxStops(storedMax);
+    listStore_.load(stops_, maxStops_);
 
-    stops_.clear();
-    Preferences logPrefs;
-    if (logPrefs.begin(ROVER_LOG_NAMESPACE, true)) {
-        uint16_t count = logPrefs.getUShort(ROVER_LOG_KEY_COUNT, 0);
-        if (count > maxStops_) {
-            count = (uint16_t)maxStops_;
+    bool hadCorrupt = false;
+    std::vector<RoverStop> clean;
+    clean.reserve(stops_.size());
+    for (size_t i = 0; i < stops_.size(); ++i) {
+        RoverStop s = stops_[i];
+        s.grid[sizeof(s.grid) - 1] = '\0';
+        if (!std::isfinite(s.latitude) || !std::isfinite(s.longitude) ||
+            !std::isfinite(s.displacement_km) ||
+            s.latitude < -90.0 || s.latitude > 90.0 ||
+            s.longitude < -180.0 || s.longitude > 180.0 ||
+            s.displacement_km < 0.0f) {
+            hadCorrupt = true;
+            continue;
         }
-        stops_.reserve(count);
-        for (uint16_t i = 0; i < count; ++i) {
-            char key[16];
-            snprintf(key, sizeof(key), "s%u", (unsigned int)i);
-            RoverStop stop;
-            size_t bytesRead = logPrefs.getBytes(key, &stop, sizeof(RoverStop));
-            if (bytesRead == sizeof(RoverStop)) {
-                stops_.push_back(stop);
-            } else {
-                break;
-            }
-        }
-        logPrefs.end();
+        clean.push_back(s);
     }
-#else
-    if (s_hostNvsMaxStopsStored) {
-        maxStops_ = clampMaxStops(s_hostNvsMaxStops);
-    } else {
-        maxStops_ = DEFAULT_MAX_ROVER_STOPS;
+    stops_.swap(clean);
+    if (hadCorrupt) {
+        saveToNvs();
     }
-
-    stops_.clear();
-    size_t count = s_hostNvsStops.size();
-    if (count > maxStops_) {
-        count = maxStops_;
-    }
-    stops_.reserve(count);
-    for (size_t i = 0; i < count; ++i) {
-        stops_.push_back(s_hostNvsStops[i]);
-    }
-#endif
 }
 
 void RoverLogManager::saveToNvs() {
-#if defined(ARDUINO)
-    Preferences logPrefs;
-    if (logPrefs.begin(ROVER_LOG_NAMESPACE, false)) {
-        uint16_t oldCount = logPrefs.getUShort(ROVER_LOG_KEY_COUNT, 0);
-
-        // Overwrite entries in place (never clear() to protect against mid-write power loss)
-        for (size_t i = 0; i < stops_.size(); ++i) {
-            char key[16];
-            snprintf(key, sizeof(key), "s%u", (unsigned int)i);
-            logPrefs.putBytes(key, &stops_[i], sizeof(RoverStop));
-        }
-
-        // Clean up any trailing orphaned keys if capacity shrunk
-        for (size_t i = stops_.size(); i < oldCount; ++i) {
-            char key[16];
-            snprintf(key, sizeof(key), "s%u", (unsigned int)i);
-            logPrefs.remove(key);
-        }
-
-        logPrefs.putUShort(ROVER_LOG_KEY_COUNT, (uint16_t)stops_.size());
-        logPrefs.end();
-    }
-#else
-    s_hostNvsStops = stops_;
-#endif
+    listStore_.save(stops_);
 }
 
 #if !defined(ARDUINO)
 void RoverLogManager::resetHostStorage() {
-    s_hostNvsStops.clear();
-    s_hostNvsMaxStops = DEFAULT_MAX_ROVER_STOPS;
-    s_hostNvsMaxStopsStored = false;
+    NvsConfig::resetHostStorage(ROVER_CFG_NAMESPACE);
+    NvsListStore<RoverStop>::resetHostStorage(ROVER_LOG_NAMESPACE);
 }
 
 size_t RoverLogManager::getHostStorageCount() {
-    return s_hostNvsStops.size();
+    return NvsListStore<RoverStop>(ROVER_LOG_NAMESPACE, ROVER_LOG_KEY_COUNT, 's').getHostCount();
 }
 
 size_t RoverLogManager::getHostStorageMaxStops() {
-    return s_hostNvsMaxStops;
+    return NvsConfig(ROVER_CFG_NAMESPACE).getUShort(ROVER_CFG_KEY_MAX_STOPS, DEFAULT_MAX_ROVER_STOPS);
 }
 
 bool RoverLogManager::isHostStorageMaxStopsExplicit() {
-    return s_hostNvsMaxStopsStored;
+    return NvsConfig(ROVER_CFG_NAMESPACE).hasHostKey(ROVER_CFG_KEY_MAX_STOPS);
 }
 #endif
 

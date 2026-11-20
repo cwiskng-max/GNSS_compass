@@ -53,7 +53,7 @@ Because the Elecrow 2.1" display is often mounted on a mast, tripod, or vehicle 
    * **M6 (`exit`):** `disconnect\n` (Cleanly release BLE radio link)
 
 > [!TIP]
-> For active microwave contest logging and remote target setting, see the **[Contest Voice Dictation Field Macro Profile](#3132-recommended-field-macro-button-configurations)** in Section 3.13.2.
+> For active microwave contest logging and remote target setting, see the **[Contest Voice Dictation Field Macro Profile](#3142-recommended-field-macro-button-configurations)** in Section 3.14.2.
 
 > [!TIP]
 > In *Serial Bluetooth Terminal*, go to **Settings -> Bluetooth LE** and verify that **"Close GATT on disconnect"** is enabled, or simply type `disconnect` in the terminal before switching devices to release the Bluetooth link immediately.
@@ -77,11 +77,12 @@ You can connect directly from **Google Chrome**, **Microsoft Edge**, or **Chromi
 
 ## 2. Boot Output
 
-Upon power-up or reboot, the ESP32 outputs initial startup identification and a summary prompt:
+Upon power-up or reboot, the ESP32 outputs initial startup identification (reflecting the firmware build version) and a summary prompt:
 
 ```text
-GNSS Compass v1.0.0
-Commands: 'status' (GPS stream diagnosis), 'test' (visual demo), 'sim' (simulation)
+GNSS Compass v1.0 (Built Nov 18 2026 15:00:00)
+Commands: 'status' (GPS stream), 'gps' (receiver config), 'rover' (transit), 'cal' (antenna), 'sim' (simulation), 'help'
+BLE Device: GNSS-Compass-8a4f2b
 ```
 
 ---
@@ -102,7 +103,9 @@ Displays a summary of available serial commands.
                         - UM982 GNSS receiver setup and diagnostics
   rover [status|start|stop|history|undo|max|clear]
                         - Rover transit tracking
-  target <grid>         - Remote target grid setting (supports phonetics)
+  target <grid|index>   - Set active target grid or select saved preset #
+  target [add|save|select|del|list|max|zero|clear]
+                        - Manage saved target grid presets
   log <call> [band/freq]- Voice-friendly contest QSO logging (10 GHz default)
   log [undo|del|list|stats|export|mycall|default|clear]
                         - QSO log management and contest export
@@ -112,6 +115,7 @@ Displays a summary of available serial commands.
                         - GPS simulation commands
   exit (or disconnect)  - Terminate wireless BLE connection cleanly
   restart (or reboot)   - Restart the ESP32 controller
+  factory reset         - Erase all NVS settings/logs and reboot (requires 'yes')
   version (or ver)      - Display firmware build version and compile time
   ble [diag on|off]     - BLE link status / toggle BLE RF diagnostics
   ble suffix [<val>|reset]
@@ -121,6 +125,8 @@ Displays a summary of available serial commands.
 ====================================
 ```
 
+*(Note: All multi-subcommand groups—`gps`, `rover`, `target`, `log`, `cal`, and `sim`—also accept `<cmd> help` or `<cmd> ?` for detailed usage, e.g. `target help` or `rover ?`.)*
+
 #### Top-Level CLI Command Reference
 
 | Command | Subcommands / Arguments | Transport | Description |
@@ -128,18 +134,19 @@ Displays a summary of available serial commands.
 | **`status`** *(or `gps`)* | None | USB, BLE | Live GNSS receiver stream & link diagnostic, RTK fix health |
 | **`gps`** | `probe` \| `config` \| `check` \| `send <cmd>` \| `help` | USB, BLE | UM982 receiver setup, TX line discovery, in-system config |
 | **`rover`** | `status` \| `start` \| `stop` \| `history` \| `undo` \| `max` \| `clear` \| `help` | USB, BLE | Rover transit tracking (16 km displacement rule & qualification) |
-| **`target`** | `<grid>` *(supports NATO phonetics)* | USB, BLE | Remote target Maidenhead grid locator setting & bearing recalculation |
+| **`target`** | `<grid>` \| `add` \| `save` \| `del` \| `list` \| `max` \| `zero` \| `clear` \| `help` | USB, BLE | Remote target Maidenhead grid setting & NVS target preset manager |
 | **`log`** | `<call> [band/freq]` *(supports NATO phonetics)* | USB, BLE | Voice-friendly contest QSO logging (10 GHz default, phonetics & band auto-mapping) |
 | **`log`** | `undo` \| `delete <#>` \| `clear` | USB, BLE | Contest QSO log editing, deletion, and rollback |
 | **`log`** | `list` *(or `show`)* \| `stats` \| `help` | USB, BLE | Formatted ASCII log table, contest statistics (DX, bands, grids), and log help |
 | **`log`** | `export <cabrillo\|adif\|csv>` | USB, BLE | Stream contest log export in ARRL Cabrillo 3.0, ADIF, or CSV |
-| **`log`** | `mycall [<call>\|reset]` \| `default band <band>` \| `max <#>` | USB, BLE | Set Cabrillo station callsign, default band, and NVS QSO storage capacity (10–1000) |
+| **`log`** | `mycall [<call>\|reset]` \| `default band <band>` \| `max <#>` \| `timeout [<sec>\|reset]` | USB, BLE | Set Cabrillo station callsign, default band, NVS QSO storage capacity (`10–1000`), and QSO pop-up card auto-dismiss timeout (`1–60 s`, default `5 s`) |
 | **`cal`** | `snap` \| `zero` \| `[set] <deg>` \| `help` | USB, BLE | Antenna heading offset calibration |
 | **`test`** *(or `demo`)* | None | USB, BLE | 9-stage visual display self-test demo |
 | **`sim`** | `on` \| `off` \| `hdg` \| `pos` \| `grid` \| `rover` \| `status` \| `help` | USB, BLE | GPS simulation mode and synthetic sentence injection |
 | **`ble`** | `status` \| `suffix [<val>\|reset]` \| `diag on\|off` | USB, BLE | Bluetooth Low Energy diagnostics and device name customization |
 | **`exit`** *(or `disconnect`)*| None | BLE | Clean wireless disconnect from the ESP32 side |
 | **`restart`** *(or `reboot`)* | None | USB, BLE | Restart the ESP32 microcontroller |
+| **`factory reset`** | None *(prompts for `yes`)* | USB, BLE | Erase all saved NVS settings/logs and reboot to defaults |
 | **`version`** *(or `ver`)* | None | USB, BLE | Display firmware version and build timestamp |
 | **`$<sentence>`** | Raw NMEA / Unicore sentence | USB, BLE | Direct GNSS sentence injection into parser |
 | **`help`** *(or `?`)* | None | USB, BLE | Display CLI help menu |
@@ -409,7 +416,7 @@ The simulation interface allows desktop verification of **Rover Mode**, transit 
   Last Sim Packet   : 180 ms ago
   Current Heading   : 145.2 deg (Quality: FIXED)
   Current Position  :  38.35400, -119.45800 (Grid: CM87wa)
-  Rover Mode Active : YES (<16k alert tracking)
+  Rover Mode Active : YES (Rover Mode)
   Rover Distance    :  14.8 km (Alert: ACTIVE (RED on WHITE))
 ==================================
 ```
@@ -499,6 +506,24 @@ Restarts the ESP32-S3 microcontroller via software reset:
 
 Accepts both `restart` and `reboot`. Over physical USB CDC or wireless BLE, the confirmation message is dispatched before triggering software reset via `esp_restart()`.
 
+#### Factory Reset (`factory reset`)
+Erases all saved NVS settings and logs (antenna calibration offset, custom BLE name suffix, rover stop history and capacity, contest QSO log and settings, and target grid presets and capacity) and reboots the ESP32-S3 to factory defaults. As a safety guard, it requires typing the full word `yes` (`y` or any other input aborts):
+
+```text
+> factory reset
+[SYSTEM] WARNING: This will erase ALL saved NVS data:
+  - Antenna calibration offset
+  - Custom BLE device name suffix
+  - Rover stop history & capacity
+  - Contest QSO log & settings
+  - Target grid presets & capacity
+Type 'yes' to erase all saved data and reboot, or anything else to abort.
+> yes
+[SYSTEM] Factory reset complete. Restarting ESP32 controller...
+```
+
+*(Note: `factory reset` only wipes the ESP32 controller's NVS; the UM982 GNSS receiver's internal configuration is left untouched.)*
+
 ---
 
 ### 3.10 Firmware Version (`version` or `ver`)
@@ -534,7 +559,7 @@ target <grid>
 Upon receiving a valid target grid:
 1. **Row 2 Update:** Row 2 of the 2.1" round display updates immediately to the new target locator.
 2. **Needle Retargeting:** The dual-antenna compass needle immediately swings toward the new target station azimuth.
-3. **Geodesy Recalculation:** Geodesic path distance (Row 4) and ARRL contest distance update immediately in real time.
+3. **Geodesy Recalculation:** Geodesic path reverse bearing and distance (**Row 5**) update immediately in real time (and Row 6 ARRL contest distance if `ENABLE_ARRL_DIST` is enabled at compile time).
 
 #### Terminal Output Examples
 ```text
@@ -553,6 +578,64 @@ If the grid is missing or invalid:
 > target ZZ99
 [TARGET ERROR] Invalid Maidenhead grid: 'ZZ99'
 ```
+
+#### Target Preset Management Subcommands
+Pre-load contest summit rosters before heading into the field or manage presets over USB-C / BLE UART:
+
+| Subcommand | Description |
+| :--- | :--- |
+| **`target <INDEX>`** / **`target select <INDEX>`** | Select a saved preset by 1-based CLI list index (static order added; supports spoken numbers like `target select two`), increment its use count, and set it as the active target grid. |
+| **`target add <GRID> [LABEL...]`** | Add or update a 6-char target preset (spaces allowed in label, max 16 chars, truncated if longer; auto-fills regional summit name if omitted). |
+| **`target save [LABEL...]`** | Save the current active target grid into presets (optional label, spaces allowed). |
+| **`target del <INDEX\|GRID>`** | Remove a preset by 1-based CLI list index or 6-char grid. |
+| **`target list`** *(or `show` / `history`)* | Print all saved presets in static order added with index, grid, label, use count, and capacity. *(The touchscreen modal sorts by most used.)* |
+| **`target max [N]`** | Show or set max preset capacity (`10`–`500`, default `100`). |
+| **`target zero`** | Reset all preset use counts and recency timestamps to `0` while keeping the saved list intact (restarts "most used" sorting). |
+| **`target clear`** | Wipe all saved target presets from NVS. |
+| **`target help`** | Show `target` command help. |
+
+```text
+> target add CM87vu Mt Diablo
+[TARGET] Added #1: CM87vu (Mt Diablo)
+
+> target save
+[TARGET] Saved #2: CM97be (UMUNHUM)
+
+> target list
+=== Saved Target Presets (2/100) ===
+  #1: CM87vu - Mt Diablo (uses: 0)
+  #2: CM97be - UMUNHUM (uses: 0)
+=====================================
+
+> target 2
+[TARGET] Selected #2: CM97be (UMUNHUM) (Bearing: 175.4 deg, Distance: 62.1 km)
+```
+
+#### Pre-Trip Batch Preloading
+Preloading a target roster before leaving home or camp saves time on the hilltop and avoids dialing 6-character grids in gloves or bright sunlight. Ready-to-paste regional and beacon lists are available in **[TARGETS.md](TARGETS.md)**.
+
+1. **Prepare a plain-text command list** (e.g. `targets.txt`) with one command per line:
+   ```text
+   target clear
+   target add CM87vu Mt Diablo
+   target add CM97be
+   target add CM88qk K6MG/R Stop 1
+   target add DM04aa Frazier Mtn
+   target list
+   ```
+   * **Labels:** Optional, up to `16` characters (spaces allowed; longer labels are truncated). If omitted, built-in regional summit names are filled in automatically when matched.
+   * **Duplicates & Capacity:** Running `target add` on an already-saved 6-char grid updates its label in place rather than creating a duplicate. If the list reaches `target max` (`100` by default, configurable `10`–`500`), adding a new grid evicts the least-used / oldest entry.
+2. **Send over USB-C (or paste into a BLE terminal):**
+   * **Terminal paste:** Connect with `tio`, `picocom`, PuTTY, or Arduino Serial Monitor at `115200` baud and paste the block of `target add` commands.
+   * **Line-by-line from Linux/macOS shell:** Send lines with a brief pause (`0.05`–`0.1 s`) between lines so NVS writes complete cleanly without overrunning the serial buffer:
+     ```bash
+     stty -F /dev/ttyACM0 115200 raw -echo
+     while IFS= read -r line; do
+       printf '%s\r\n' "$line" > /dev/ttyACM0
+       sleep 0.1
+     done < targets.txt
+     ```
+3. **Verify persistence:** Check the `target list` output. Every `target add` / `target max` / `target del` / `target clear` command commits directly to ESP32 non-volatile storage (NVS), so your pre-loaded roster remains intact across power cycles and opens immediately on-device via a **long-press (> 500 ms) on Row 2 (Target Grid)**.
 
 ---
 
@@ -579,7 +662,7 @@ Logging a contact requires only the callsign and an optional band or frequency:
 [QSO LOGGED #15] K6MG | 10 GHz | 21:34z | CM87wa -> CM88qk (118.2 km @ 342 deg)
 
 > log k6mg 24
-[QSO LOGGED #16] K6MG | 24 GHz (24192.100 MHz) | 21:35z | CM87wa -> CM88qk (118.2 km @ 342 deg)
+[QSO LOGGED #16] K6MG | 24 GHz | 21:35z | CM87wa -> CM88qk (118.2 km @ 342 deg)
 
 > log k6mg 10368.1
 [QSO LOGGED #17] K6MG | 10 GHz (10368.100 MHz) | 21:36z | CM87wa -> CM88qk (118.2 km @ 342 deg)
@@ -589,15 +672,15 @@ Logging a contact requires only the callsign and an optional band or frequency:
 
 The built-in `VoiceQsoParser` provides robust natural dictation support:
 
-* **Band Shorthand without "GHz":** Numbers in `{10, 24, 47, 76, 122, 134, 241}` are automatically recognized as microwave gigahertz bands without needing to say `"gigahertz"`:
-  * `"log k6mg 10"` $\rightarrow$ 10 GHz (`10368.100 MHz`)
-  * `"log k6mg 24"` $\rightarrow$ 24 GHz (`24192.100 MHz`)
-  * `"log k6mg 47"` $\rightarrow$ 47 GHz (`47088.100 MHz`)
-  * `"log k6mg 76"` $\rightarrow$ 76 GHz (`76032.100 MHz`)
-  * `"log k6mg 122"` $\rightarrow$ 122 GHz (`122250.100 MHz`)
-  * `"log k6mg 134"` $\rightarrow$ 134 GHz (`134928.100 MHz`)
-  * `"log k6mg 241"` $\rightarrow$ 241 GHz (`241056.100 MHz`)
-  * `"log k6mg laser"` (or `light`) $\rightarrow$ Laser / Sub-mm band
+* **Band Shorthand without "GHz":** Numbers in `{10, 24, 47, 76, 122, 134, 241}` are automatically recognized as microwave gigahertz bands without needing to say `"gigahertz"` (band-only entries store `freq_khz = 0` and omit a specific frequency):
+  * `"log k6mg 10"` $\rightarrow$ `10 GHz`
+  * `"log k6mg 24"` $\rightarrow$ `24 GHz`
+  * `"log k6mg 47"` $\rightarrow$ `47 GHz`
+  * `"log k6mg 76"` $\rightarrow$ `76 GHz`
+  * `"log k6mg 122"` $\rightarrow$ `122 GHz`
+  * `"log k6mg 134"` $\rightarrow$ `134 GHz`
+  * `"log k6mg 241"` $\rightarrow$ `241 GHz`
+  * `"log k6mg laser"` (or `light`) $\rightarrow$ `LIGHT` (ADIF `submm`)
 * **Frequency Auto-Mapping:** Spoken frequencies automatically resolve to their corresponding band:
   * `10368.1` $\rightarrow$ 10 GHz
   * `5760` / `5.7` $\rightarrow$ 5.7 GHz
@@ -629,7 +712,7 @@ If the operator sends or speaks `log` with no arguments, the CLI prompts for the
 > log
 [QSO] Callsign? (e.g. 'K6MG' or 'Kilo Six Mike Golf', or 'cancel')
 > k6mg 24
-[QSO LOGGED #18] K6MG | 24 GHz (24192.100 MHz) | 21:38z | CM87wa -> CM88qk (118.2 km @ 342 deg)
+[QSO LOGGED #18] K6MG | 24 GHz | 21:38z | CM87wa -> CM88qk (118.2 km @ 342 deg)
 ```
 
 * **Automatic Save on Input:** Once the required callsign (and optional band/frequency) is entered, the contact is automatically saved to NVS storage and confirmed on the display without requiring an extra "confirm/save" step.
@@ -676,15 +759,15 @@ If the operator sends or speaks `log` with no arguments, the CLI prompts for the
 
 #### 3.12.5 Log Inspection & Statistics (`log list`, `log stats`)
 
-* **Display Log Table (`log list` or `log show`):**
+* **Display Log Table (`log list`, `log show`, or `log history`):**
   Prints a formatted ASCII table of all QSOs in memory:
   ```text
   > log list
   ====================================================================================================
    #  | Date & Time UTC     | Callsign     | Band    | Frequency      | My Grid  | His Grid | Dist(km) | Bearing
   ====================================================================================================
-    1 | 2026-11-11 21:34:00 | K6MG         | 10 GHz  |  10368.100 MHz | CM87wa   | CM88qk   |    118.2 |   342.0
-    2 | 2026-11-11 21:35:00 | K6MG         | 24 GHz  |  24192.100 MHz | CM87wa   | CM88qk   |    118.2 |   342.0
+    1 | 2026-11-11 21:34:00 | K6MG         | 10 GHz  |           ---  | CM87wa   | CM88qk   |    118.2 |   342.0
+    2 | 2026-11-11 21:35:00 | K6MG         | 24 GHz  |           ---  | CM87wa   | CM88qk   |    118.2 |   342.0
     3 | 2026-11-11 21:38:00 | W6OP/R       | 10 GHz  |  10368.100 MHz | CM87wa   | CM87wb   |     42.5 |    85.0
   ====================================================================================================
   ```
@@ -725,7 +808,7 @@ Streams the contest log in standard formats over serial for easy saving to disk 
   END-OF-LOG:
   ```
 * **Standard ADIF (`log export adif` or `adi`):**
-  Emits standard amateur radio data interchange records with `<CALL>`, `<QSO_DATE>`, `<TIME_ON>`, `<BAND>`, `<FREQ>`, `<MODE>`, `<MY_GRIDSQUARE>`, `<GRIDSQUARE>`, and `<DISTANCE>` for direct import into N1MM, Log4OM, MacLoggerDX, or LoTW:
+  Emits standard amateur radio data interchange records with `<CALL>`, `<QSO_DATE>`, `<TIME_ON>`, `<BAND>`, optional `<FREQ>` (included only when an explicit frequency was logged, i.e., `freq_khz > 0`), `<MODE>`, `<MY_GRIDSQUARE>`, `<GRIDSQUARE>`, and `<DISTANCE>` for direct import into N1MM, Log4OM, MacLoggerDX, or LoTW:
   ```text
   > log export adif
   ADIF Export from GNSS Compass
@@ -733,16 +816,18 @@ Streams the contest log in standard formats over serial for easy saving to disk 
   <PROGRAMID:12>GNSS Compass
   <EOH>
 
-  <CALL:4>K6MG <QSO_DATE:8>20261111 <TIME_ON:6>213400 <BAND:3>3cm <FREQ:9>10368.100 <MODE:3>SSB <MY_GRIDSQUARE:6>CM87wa <GRIDSQUARE:6>CM88qk <DISTANCE:5>118.2 <EOR>
-  <CALL:4>K6MG <QSO_DATE:8>20261111 <TIME_ON:6>213500 <BAND:5>1.2cm <FREQ:9>24192.100 <MODE:3>SSB <MY_GRIDSQUARE:6>CM87wa <GRIDSQUARE:6>CM88qk <DISTANCE:5>118.2 <EOR>
+  <CALL:4>K6MG <QSO_DATE:8>20261111 <TIME_ON:6>213400 <BAND:3>3cm <MODE:3>SSB <MY_GRIDSQUARE:6>CM87wa <GRIDSQUARE:6>CM88qk <DISTANCE:5>118.2 <EOR>
+  <CALL:4>K6MG <QSO_DATE:8>20261111 <TIME_ON:6>213500 <BAND:5>1.2cm <MODE:3>SSB <MY_GRIDSQUARE:6>CM87wa <GRIDSQUARE:6>CM88qk <DISTANCE:5>118.2 <EOR>
+  <CALL:6>W6OP/R <QSO_DATE:8>20261111 <TIME_ON:6>213800 <BAND:3>3cm <FREQ:9>10368.100 <MODE:3>SSB <MY_GRIDSQUARE:6>CM87wa <GRIDSQUARE:6>CM87wb <DISTANCE:4>42.5 <EOR>
   ```
 * **Comma-Separated Values (`log export csv`):**
-  Emits tabular CSV format with column headers for analysis in Excel or Google Sheets:
+  Emits tabular CSV format with column headers for analysis in Excel or Google Sheets (`Frequency_kHz` is `0` for band-only entries):
   ```text
   > log export csv
   Timestamp,Date,Time,Callsign,Band,Frequency_kHz,MyGrid,HisGrid,Distance_km,Bearing_deg
-  1762904040,2026-11-11,21:34:00,K6MG,10 GHz,10368100,CM87wa,CM88qk,118.2,342.0
-  1762904100,2026-11-11,21:35:00,K6MG,24 GHz,24192100,CM87wa,CM88qk,118.2,342.0
+  1762904040,2026-11-11,21:34:00,K6MG,10 GHz,0,CM87wa,CM88qk,118.2,342.0
+  1762904100,2026-11-11,21:35:00,K6MG,24 GHz,0,CM87wa,CM88qk,118.2,342.0
+  1762904280,2026-11-11,21:38:00,W6OP/R,10 GHz,10368100,CM87wa,CM87wb,42.5,85.0
   ```
 
 #### 3.12.7 Configuring Station Callsign, Default Band & Storage Capacity
@@ -777,6 +862,12 @@ Streams the contest log in standard formats over serial for easy saving to disk 
   > log max 300
   [QSO LOG] Maximum capacity set to 300 QSOs (saved to NVS).
   ```
+* **Pop-Up Card Timeout (`log timeout [<sec>|reset]`):**
+  Queries, sets, or resets the QSO confirmation pop-up card auto-dismiss timeout (1 to 60 seconds, default: 5 s). Stored in NVS:
+  ```text
+  > log timeout 10
+  [QSO LOG] Pop-up card timeout set to 10 s (saved to NVS).
+  ```
 
 #### 3.12.8 On-Display QSO Confirmation Pop-Up Card
 
@@ -796,21 +887,57 @@ Whenever a contact is successfully committed via `log`, the ESP32-S3 firmware im
 │               │   118.2 km @ 342 deg    │               │
 │               │     Time: 21:34 UTC     │               │
 │               │                         │               │
-│               │     [ OK (Auto 10s) ]   │               │
+│               │     [ OK (Auto 5s) ]    │               │
 │               └─────────────────────────┘               │
 │                                                         │
 └─────────────────────────────────────────────────────────┘
 ```
 
 * **Heads-Up Verification:** The operator can verify that their spoken contact was logged accurately without taking their eyes off the antenna mast or picking up their phone.
-* **10-Second Auto-Dismiss:** The card remains on screen for 10 seconds, then dismisses itself automatically, returning to the live compass needle view without stalling receiver tracking or RTK navigation.
+* **5-Second Auto-Dismiss (Default):** The card remains on screen for 5 seconds by default (configurable via `log timeout`), then dismisses itself automatically, returning to the live compass needle view without stalling receiver tracking or RTK navigation.
 * **Instant Dismissal:** Tapping the `[ OK ]` button, touching anywhere on the touch display, or turning/clicking the rotary knob closes the modal immediately.
 
 ---
 
-### 3.13 Mobile Voice Dictation Field Guide & Macros
+### 3.13 Rover Mode (`rover`)
 
-#### 3.13.1 Mobile Terminal Setup (iOS & Android)
+Manage Rover 16 km contest transit tracking, inspect visited grid history, and configure NVS stop storage remotely over USB-C or BLE.
+
+| Subcommand | Description |
+| :--- | :--- |
+| **`rover`** *(or `rover status`)* | Display active Rover Mode status, origin grid, current displacement (km), and 16 km qualification state (`TRANSIT`, `QUALIFIED`, `REVISIT`, or `NO GPS`). |
+| **`rover start`** | Emulate a Row 1 tap: snapshot the current position as the departure origin, log the stop in NVS, and arm Rover Mode. |
+| **`rover stop`** | Emulate a target exit: commit the stop and return Row 5 to Normal Bearing Mode. |
+| **`rover history`** *(or `list` / `show` / `log`)* | Print a formatted ASCII table of all logged contest stops, timestamps, displacements, and qualification flags. |
+| **`rover undo`** | Discard the most recent stop from NVS and re-arm Rover Mode from the previous stop. |
+| **`rover max [n]`** | Show or set the maximum number of rover stops stored in NVS (`10`–`500`). |
+| **`rover clear [confirm]`** | Erase all rover location history from NVS. Without `confirm` (`yes` / `-y` / `force`), prompts for confirmation (`cancel` / `no` / `-n` aborts). |
+| **`rover help`** *(or `rover ?`)* | Display the `rover` command help menu. |
+
+```text
+> rover start
+[ROVER] Rover mode started at CM87wa ( 37.02083, -122.12500)
+
+> rover status
+========================================
+          Rover Transit Status          
+========================================
+Mode:             ACTIVE (Rover Mode)
+Origin Coords:     37.020833, -122.125000
+Origin Grid:      CM87wa00
+Displacement:       6.4 km (Threshold: 16.0 km)
+Current Grid:     CM87wb00 (TRAVERSED GRID)
+Qualification:    STATE A: In-Transit (< 16.0 km alert)
+GPS Fix Health:   FIXED (High-Precision RTK) (Fresh)
+History Log:      1 stops logged (max 100)
+========================================
+```
+
+---
+
+### 3.14 Mobile Voice Dictation Field Guide & Macros
+
+#### 3.14.1 Mobile Terminal Setup (iOS & Android)
 
 ##### Android (*Serial Bluetooth Terminal* + Google Gboard)
 1. Open **[Serial Bluetooth Terminal](https://play.google.com/store/apps/details?id=de.kai_morich.serial_bluetooth_terminal)**.
@@ -828,7 +955,7 @@ Whenever a contact is successfully committed via `log`, the ESP32-S3 firmware im
 5. Speak: `"log w6op stroke rover 10"` or `"target CM88qk"`.
 6. Tap the send arrow.
 
-#### 3.13.2 Recommended Field Macro Button Configurations
+#### 3.14.2 Recommended Field Macro Button Configurations
 
 In *Serial Bluetooth Terminal* (Android), you can assign quick-action macros to the row of 6 buttons (`M1`–`M6`) across the bottom of the screen. Long-press any button to set its title and command string:
 
@@ -857,7 +984,7 @@ In *Serial Bluetooth Terminal* (Android), you can assign quick-action macros to 
 | **`M5`** | `undo` | `rover undo\n` | Discard accidental stop and re-arm transit tracking |
 | **`M6`** | `exit` | `disconnect\n` | Cleanly release BLE radio link |
 
-#### 3.13.3 Mountaintop Voice Dictation Tips
+#### 3.14.3 Mountaintop Voice Dictation Tips
 
 1. **Wind Noise Mitigation:**
    Microwave contest operating positions (mountain peaks, exposed ridgelines, coastal overlooks) frequently experience severe wind gusts. To prevent garbled speech-to-text recognition:
@@ -874,7 +1001,7 @@ In *Serial Bluetooth Terminal* (Android), you can assign quick-action macros to 
    Speak the command as a continuous phrase without hesitating between words:
    * Say: `"log k6mg 10"` or `"target charlie mike 88 quebec kilo"`.
 5. **Heads-Up Verification:**
-   After dictating, you do not need to look down at your smartphone screen. Simply look up at the round compass display on your tripod or mast — the 10-second confirmation modal displays the callsign, band, frequency, and distance in large high-contrast text.
+   After dictating, you do not need to look down at your smartphone screen. Simply look up at the round compass display on your tripod or mast — the 5-second confirmation modal displays the callsign, band, optional frequency, and distance in large high-contrast text.
 
 ---
 
@@ -936,7 +1063,7 @@ The `inject` subcommand provides one-shot or sustained injection of custom coord
 # 3. Simulate rover displacement relative to an origin (evaluates 16 km alert threshold)
 ./tools/gps_sim.py inject --rover-origin CM87wa --rover-dist 14.5 --hdg 45.0 --duration 15
 
-# 4. Set specific UTC time on the clock display (Row 6)
+# 4. Set specific UTC time on the clock display (Row 4)
 ./tools/gps_sim.py inject --grid CM87wa --time 23:45
 
 # 5. Test degraded RTK reception (Bright yellow float needle)

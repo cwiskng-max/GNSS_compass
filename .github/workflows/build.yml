@@ -45,11 +45,12 @@ jobs:
           pip install esptool
           mkdir -p build/gps_compass
           cp -r gps_compass.ino partitions.csv src build/gps_compass/
+          BASE_VER=$(sed -n 's/^#define FW_VERSION_BASE[[:space:]]*"\([^"]*\)".*/\1/p' src/config.h | head -n 1)
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
             HEAD_SHA="${{ github.event.pull_request.head.sha }}"
-            FW_VER="v0.5-${HEAD_SHA::7}"
+            FW_VER="${BASE_VER}-${HEAD_SHA::7}"
           else
-            FW_VER="v0.5-${GITHUB_SHA::7}"
+            FW_VER="${BASE_VER}-${GITHUB_SHA::7}"
           fi
           sed -i "s/#define FW_VERSION .*/#define FW_VERSION           \"$FW_VER\"/" build/gps_compass/src/config.h
           arduino-cli compile --fqbn esp32:esp32:esp32s3:FlashSize=16M,PSRAM=opi,CDCOnBoot=cdc --build-property upload.maximum_size=3670016 --export-binaries build/gps_compass

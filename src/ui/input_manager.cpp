@@ -2,18 +2,21 @@
 #include <cmath>
 
 #if defined(ARDUINO)
+portMUX_TYPE InputManager::s_encMux = portMUX_INITIALIZER_UNLOCKED;
 volatile int InputManager::s_counter = 0;
 volatile int InputManager::s_encState = 0;
 volatile int InputManager::s_oldState = -1;
 volatile bool InputManager::s_hasChanged = false;
 
 void IRAM_ATTR InputManager::encoderIrq() {
-    s_encState = digitalRead(ENCODER_CLK);
+    portENTER_CRITICAL_ISR(&s_encMux);
+    s_encState = gpio_get_level(static_cast<gpio_num_t>(ENCODER_CLK));
     if (s_encState != s_oldState) {
-        s_counter += (digitalRead(ENCODER_DT) == s_encState) ? +1 : -1;
+        s_counter += (gpio_get_level(static_cast<gpio_num_t>(ENCODER_DT)) == s_encState) ? +1 : -1;
         s_oldState = s_encState;
         s_hasChanged = true;
     }
+    portEXIT_CRITICAL_ISR(&s_encMux);
 }
 #endif
 
@@ -150,6 +153,44 @@ ModalButtonId InputManager::getQsoModalButtonFromTouch(int16_t x, int16_t y) {
     return ModalButtonId::None;
 }
 
+int InputManager::getTargetModalRowFromTouch(int16_t x, int16_t y) {
+    if (x < TARGET_LIST_X || x > (TARGET_LIST_X + TARGET_LIST_ROW_W)) {
+        return -1;
+    }
+    for (int r = 0; r < TARGET_LIST_VISIBLE_ROWS; ++r) {
+        int yMin = TARGET_LIST_Y + r * TARGET_LIST_ROW_PITCH;
+        int yMax = yMin + TARGET_LIST_ROW_H;
+        if (y >= yMin && y <= yMax) {
+            return r;
+        }
+    }
+    return -1;
+}
+
+ModalButtonId InputManager::getTargetModalButtonFromTouch(int16_t x, int16_t y) {
+    if (x >= TARGET_BTN_LOAD_X && x <= (TARGET_BTN_LOAD_X + TARGET_BTN_LOAD_W) &&
+        y >= TARGET_BTN_LOAD_Y && y <= (TARGET_BTN_LOAD_Y + TARGET_BTN_LOAD_H)) {
+        return ModalButtonId::TargetLoad;
+    }
+    if (x >= TARGET_BTN_DEL_X && x <= (TARGET_BTN_DEL_X + TARGET_BTN_DEL_W) &&
+        y >= TARGET_BTN_DEL_Y && y <= (TARGET_BTN_DEL_Y + TARGET_BTN_DEL_H)) {
+        return ModalButtonId::TargetDelete;
+    }
+    if (x >= TARGET_BTN_SAVE_X && x <= (TARGET_BTN_SAVE_X + TARGET_BTN_SAVE_W) &&
+        y >= TARGET_BTN_SAVE_Y && y <= (TARGET_BTN_SAVE_Y + TARGET_BTN_SAVE_H)) {
+        return ModalButtonId::TargetSave;
+    }
+    if (x >= TARGET_BTN_CLEAR_X && x <= (TARGET_BTN_CLEAR_X + TARGET_BTN_CLEAR_W) &&
+        y >= TARGET_BTN_CLEAR_Y && y <= (TARGET_BTN_CLEAR_Y + TARGET_BTN_CLEAR_H)) {
+        return ModalButtonId::TargetClear;
+    }
+    if (x >= (TARGET_BTN_CANCEL_X - 20) && x <= (TARGET_BTN_CANCEL_X + TARGET_BTN_CANCEL_W + 20) &&
+        y >= (TARGET_BTN_CANCEL_Y - 6) && y <= (TARGET_BTN_CANCEL_Y + TARGET_BTN_CANCEL_H + 12)) {
+        return ModalButtonId::Cancel;
+    }
+    return ModalButtonId::None;
+}
+
 void InputManager::handleTouchPoint(bool touched, int16_t x, int16_t y, unsigned long nowMs) {
     if (touched) {
         if (x != 0 || y != 0) {
@@ -162,6 +203,8 @@ void InputManager::handleTouchPoint(bool touched, int16_t x, int16_t y, unsigned
                     longPressTriggered_ = false;
                     holdingSaveBtn_ = false;
                     holdingDiscardBtn_ = false;
+                    holdingClearBtn_ = false;
+                    lastHoldProgressReported_ = -1.0f;
 
                     if (uiMode_ == UiMode::Calibrating) {
                         ModalButtonId btn = getModalButtonFromTouch(x, y);
@@ -191,6 +234,16 @@ void InputManager::handleTouchPoint(bool touched, int16_t x, int16_t y, unsigned
                             ev.buttonId = btn;
                             queueEvent(ev);
                         }
+                    } else if (uiMode_ == UiMode::TargetList) {
+                        ModalButtonId btn = getTargetModalButtonFromTouch(x, y);
+                        if (btn == ModalButtonId::TargetClear) {
+                            holdingClearBtn_ = true;
+                        } else if (btn != ModalButtonId::None) {
+                            UserEvent ev;
+                            ev.type = UserEventType::ModalButtonDown;
+                            ev.buttonId = btn;
+                            queueEvent(ev);
+                        }
                     }
                 }
             } else {
@@ -211,7 +264,15 @@ void InputManager::handleTouchPoint(bool touched, int16_t x, int16_t y, unsigned
                         ev.progress = 0.0f;
                         queueEvent(ev);
                     }
-                    if (uiMode_ == UiMode::Calibrating || uiMode_ == UiMode::RoverHistory || uiMode_ == UiMode::QsoCard) {
+                    if (holdingClearBtn_) {
+                        holdingClearBtn_ = false;
+                        UserEvent ev;
+                        ev.type = UserEventType::HoldClearButtonProgress;
+                        ev.progress = 0.0f;
+                        queueEvent(ev);
+                    }
+                    if (uiMode_ == UiMode::Calibrating || uiMode_ == UiMode::RoverHistory ||
+                        uiMode_ == UiMode::QsoCard || uiMode_ == UiMode::TargetList) {
                         UserEvent ev;
                         ev.type = UserEventType::ModalButtonUp;
                         queueEvent(ev);
@@ -227,39 +288,21 @@ void InputManager::handleTouchPoint(bool touched, int16_t x, int16_t y, unsigned
                     }
                 }
 
-                if (holdingSaveBtn_ && !longPressTriggered_) {
-                    float prog = static_cast<float>(holdDuration) / static_cast<float>(LONG_PRESS_MS);
-                    if (prog > 1.0f) prog = 1.0f;
-                    UserEvent ev;
-                    ev.type = UserEventType::HoldSaveButtonProgress;
-                    ev.progress = prog;
-                    queueEvent(ev);
-
-                    if (holdDuration >= LONG_PRESS_MS) {
+                if (uiMode_ == UiMode::Normal && isTargetGridTouched(touchStartX_, touchStartY_)) {
+                    if (!longPressTriggered_ && holdDuration >= TARGET_GRID_LONG_PRESS_MS) {
                         longPressTriggered_ = true;
-                        holdingSaveBtn_ = false;
-                        UserEvent commitEv;
-                        commitEv.type = UserEventType::SaveButtonCommitted;
-                        queueEvent(commitEv);
+                        UserEvent ev;
+                        ev.type = UserEventType::LongPressTargetGridTriggered;
+                        queueEvent(ev);
                     }
                 }
 
-                if (holdingDiscardBtn_ && !longPressTriggered_) {
-                    float prog = static_cast<float>(holdDuration) / static_cast<float>(LONG_PRESS_MS);
-                    if (prog > 1.0f) prog = 1.0f;
-                    UserEvent ev;
-                    ev.type = UserEventType::HoldDiscardButtonProgress;
-                    ev.progress = prog;
-                    queueEvent(ev);
-
-                    if (holdDuration >= LONG_PRESS_MS) {
-                        longPressTriggered_ = true;
-                        holdingDiscardBtn_ = false;
-                        UserEvent commitEv;
-                        commitEv.type = UserEventType::DiscardLastStopTriggered;
-                        queueEvent(commitEv);
-                    }
-                }
+                updateHoldButton(UserEventType::HoldSaveButtonProgress, UserEventType::SaveButtonCommitted,
+                                 holdingSaveBtn_, holdDuration, LONG_PRESS_MS);
+                updateHoldButton(UserEventType::HoldDiscardButtonProgress, UserEventType::DiscardLastStopTriggered,
+                                 holdingDiscardBtn_, holdDuration, LONG_PRESS_MS);
+                updateHoldButton(UserEventType::HoldClearButtonProgress, UserEventType::ClearButtonCommitted,
+                                 holdingClearBtn_, holdDuration, TARGET_CLEAR_HOLD_MS);
             }
         }
     } else {
@@ -281,7 +324,15 @@ void InputManager::handleTouchPoint(bool touched, int16_t x, int16_t y, unsigned
                 ev.type = UserEventType::HoldDiscardButtonProgress;
                 ev.progress = 0.0f;
                 queueEvent(ev);
-            } else if ((uiMode_ == UiMode::Calibrating || uiMode_ == UiMode::RoverHistory || uiMode_ == UiMode::QsoCard) && pressDuration >= LONG_PRESS_MS) {
+            } else if (holdingClearBtn_) {
+                holdingClearBtn_ = false;
+                UserEvent ev;
+                ev.type = UserEventType::HoldClearButtonProgress;
+                ev.progress = 0.0f;
+                queueEvent(ev);
+            } else if ((uiMode_ == UiMode::Calibrating || uiMode_ == UiMode::RoverHistory ||
+                        uiMode_ == UiMode::QsoCard || uiMode_ == UiMode::TargetList) &&
+                       pressDuration >= LONG_PRESS_MS) {
                 UserEvent ev;
                 ev.type = UserEventType::ModalButtonUp;
                 queueEvent(ev);
@@ -325,6 +376,37 @@ void InputManager::handleTouchPoint(bool touched, int16_t x, int16_t y, unsigned
                     UserEvent ev;
                     ev.type = UserEventType::DismissQsoCardTriggered;
                     queueEvent(ev);
+                } else if (uiMode_ == UiMode::TargetList) {
+                    int row = getTargetModalRowFromTouch(px, py);
+                    if (row >= 0) {
+                        UserEvent ev;
+                        ev.type = UserEventType::TargetRowTouched;
+                        ev.gridIndex = row;
+                        queueEvent(ev);
+                    } else {
+                        ModalButtonId btn = getTargetModalButtonFromTouch(px, py);
+                        if (btn == ModalButtonId::TargetLoad) {
+                            UserEvent ev;
+                            ev.type = UserEventType::LoadTargetTriggered;
+                            queueEvent(ev);
+                        } else if (btn == ModalButtonId::TargetDelete) {
+                            UserEvent ev;
+                            ev.type = UserEventType::DeleteTargetTriggered;
+                            queueEvent(ev);
+                        } else if (btn == ModalButtonId::TargetSave) {
+                            UserEvent ev;
+                            ev.type = UserEventType::SaveTargetTriggered;
+                            queueEvent(ev);
+                        } else if (btn == ModalButtonId::Cancel) {
+                            UserEvent ev;
+                            ev.type = UserEventType::CancelModalTriggered;
+                            queueEvent(ev);
+                        } else {
+                            UserEvent ev;
+                            ev.type = UserEventType::ModalButtonUp;
+                            queueEvent(ev);
+                        }
+                    }
                 } else {
                     // Normal mode short taps
                     if (isCalPillTouched(px, py)) {
@@ -351,6 +433,31 @@ void InputManager::handleTouchPoint(bool touched, int16_t x, int16_t y, unsigned
     }
 }
 
+void InputManager::updateHoldButton(UserEventType progressType, UserEventType commitType,
+                                    bool &holdingFlag, unsigned long holdDuration, unsigned long requiredMs) {
+    if (!holdingFlag || longPressTriggered_) {
+        return;
+    }
+    float prog = static_cast<float>(holdDuration) / static_cast<float>(requiredMs);
+    if (prog > 1.0f) prog = 1.0f;
+
+    if (prog >= 1.0f || lastHoldProgressReported_ < 0.0f || (prog - lastHoldProgressReported_) >= 0.03f) {
+        lastHoldProgressReported_ = prog;
+        UserEvent ev;
+        ev.type = progressType;
+        ev.progress = prog;
+        queueEvent(ev);
+    }
+
+    if (holdDuration >= requiredMs) {
+        longPressTriggered_ = true;
+        holdingFlag = false;
+        UserEvent commitEv;
+        commitEv.type = commitType;
+        queueEvent(commitEv);
+    }
+}
+
 void InputManager::update(unsigned long nowMs) {
 #if defined(ARDUINO)
     if (nowMs == 0) {
@@ -358,13 +465,13 @@ void InputManager::update(unsigned long nowMs) {
     }
 
     int delta = 0;
-    noInterrupts();
+    portENTER_CRITICAL(&s_encMux);
     if (s_hasChanged) {
         delta = s_counter;
         s_counter = 0;
         s_hasChanged = false;
     }
-    interrupts();
+    portEXIT_CRITICAL(&s_encMux);
 
     while (delta > 0) {
         UserEvent ev;

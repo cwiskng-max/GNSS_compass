@@ -1,4 +1,5 @@
 #include "rover_history_modal.h"
+#include "modal_widgets.h"
 #include <cstring>
 #include <cstdio>
 
@@ -80,26 +81,12 @@ void RoverHistoryModal::drawModal(const RoverStop *lastStop, size_t totalStops, 
 }
 
 void RoverHistoryModal::drawDiscardButton(bool isHolding, float progress) {
-    if (!gfx_) return;
     uint16_t bg = isHolding ? BUTTON_DISCARD_HOLD_BG : BUTTON_DISCARD_IDLE_BG;
-    uint16_t border = RED;
-
-    gfx_->fillRoundRect(ROVER_BTN_DISCARD_X, ROVER_BTN_DISCARD_Y, ROVER_BTN_DISCARD_W, ROVER_BTN_DISCARD_H, 8, bg);
-    gfx_->drawRoundRect(ROVER_BTN_DISCARD_X, ROVER_BTN_DISCARD_Y, ROVER_BTN_DISCARD_W, ROVER_BTN_DISCARD_H, 8, border);
-
-    if (isHolding && progress > 0.0f) {
-        int fillW = static_cast<int>((ROVER_BTN_DISCARD_W - 4) * progress);
-        if (fillW > ROVER_BTN_DISCARD_W - 4) fillW = ROVER_BTN_DISCARD_W - 4;
-        gfx_->fillRoundRect(ROVER_BTN_DISCARD_X + 2, ROVER_BTN_DISCARD_Y + 2, fillW, ROVER_BTN_DISCARD_H - 4, 6, RED);
-    }
-
     const char *lbl = isHolding ? "HOLDING TO DISCARD..." : "HOLD TO DISCARD LAST STOP";
-    int lw = strlen(lbl) * CHAR_W(2);
-    gfx_->setTextSize(2);
-    gfx_->setTextColor(WHITE, (isHolding && progress > 0.5f) ? RED : bg);
-    gfx_->setCursor(ROVER_BTN_DISCARD_X + (ROVER_BTN_DISCARD_W - lw) / 2, ROVER_BTN_DISCARD_Y + 15);
-    gfx_->print(lbl);
-    gfx_->setTextColor(WHITE, BLACK);
+    ui_widgets::drawHoldProgressButton(
+        gfx_,
+        ROVER_BTN_DISCARD_X, ROVER_BTN_DISCARD_Y, ROVER_BTN_DISCARD_W, ROVER_BTN_DISCARD_H,
+        ROVER_BTN_DISCARD_Y + 15, bg, RED, RED, WHITE, lbl, isHolding, progress);
 }
 
 void RoverHistoryModal::drawCancelButton(bool highlighted) {

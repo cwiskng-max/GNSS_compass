@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <cstring>
 #include <cmath>
+#include "../types.h"
 
 /**
  * @brief Represents a persistent contest QSO entry.
@@ -37,49 +38,10 @@ struct QsoEntry {
         setHisGrid(hisGrid);
     }
 
-    void setCallsign(const char *call) {
-        if (call) {
-            size_t len = std::strlen(call);
-            if (len > sizeof(callsign) - 1) len = sizeof(callsign) - 1;
-            std::memcpy(callsign, call, len);
-            callsign[len] = '\0';
-        } else {
-            std::memset(callsign, 0, sizeof(callsign));
-        }
-    }
-
-    void setBand(const char *bnd) {
-        if (bnd) {
-            size_t len = std::strlen(bnd);
-            if (len > sizeof(band) - 1) len = sizeof(band) - 1;
-            std::memcpy(band, bnd, len);
-            band[len] = '\0';
-        } else {
-            std::memset(band, 0, sizeof(band));
-        }
-    }
-
-    void setMyGrid(const char *grid) {
-        if (grid) {
-            size_t len = std::strlen(grid);
-            if (len > sizeof(my_grid) - 1) len = sizeof(my_grid) - 1;
-            std::memcpy(my_grid, grid, len);
-            my_grid[len] = '\0';
-        } else {
-            std::memset(my_grid, 0, sizeof(my_grid));
-        }
-    }
-
-    void setHisGrid(const char *grid) {
-        if (grid) {
-            size_t len = std::strlen(grid);
-            if (len > sizeof(his_grid) - 1) len = sizeof(his_grid) - 1;
-            std::memcpy(his_grid, grid, len);
-            his_grid[len] = '\0';
-        } else {
-            std::memset(his_grid, 0, sizeof(his_grid));
-        }
-    }
+    void setCallsign(const char *call) { copyBoundedString(callsign, sizeof(callsign), call); }
+    void setBand(const char *bnd) { copyBoundedString(band, sizeof(band), bnd); }
+    void setMyGrid(const char *grid) { copyBoundedString(my_grid, sizeof(my_grid), grid); }
+    void setHisGrid(const char *grid) { copyBoundedString(his_grid, sizeof(his_grid), grid); }
 
     bool operator==(const QsoEntry &other) const {
         return timestamp == other.timestamp &&

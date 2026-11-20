@@ -95,6 +95,10 @@ public:
     // Ends the connection once queued output has been sent (or after a timeout)
     void disconnect();
 
+    // Pumps remaining TX notifications without draining RX, then disconnects cleanly.
+    // Used before esp_restart() / factory reset so no re-entrant RX commands can run.
+    void flushAndDisconnect(unsigned long nowMs = 0);
+
     // Optional RF diagnostics on USB serial (see BleDiagnostics for what is always logged)
     void setDiagEnabled(bool enabled) { diag_.setEnabled(enabled); }
     bool isDiagEnabled() const { return diag_.isEnabled(); }
@@ -155,12 +159,13 @@ private:
     SendResult platformSend(const uint8_t *data, size_t len);
     void platformDisconnect();
     static unsigned long platformMillis();
+    static void platformDelay(unsigned long ms);
     static uint8_t *platformAllocTx(size_t size);
     void platformUpdateDeviceName();
     void platformSaveSuffix(const char *suffix);
 
     // Portable core
-    void serviceSessionChange();
+    void serviceSessionChange(unsigned long nowMs);
     void drainRx();
     void pumpTx(unsigned long nowMs);
     void serviceDisconnect(unsigned long nowMs);
@@ -206,6 +211,8 @@ private:
     bool pendingDisconnect_ = false;
     bool disconnectTimerStarted_ = false;
     unsigned long disconnectStartMs_ = 0;
+    bool subscribeTimerStarted_ = false;
+    unsigned long connectMs_ = 0;
 
     BleDataReceivedCallback dataCb_ = nullptr;
     void *dataCbContext_ = nullptr;
@@ -230,6 +237,7 @@ private:
     // Advertising supervision: advertising_ reflects controller state as reported by GAP events.
     // update() restarts advertising if we are disconnected and the controller is not advertising.
     std::atomic<bool> advertising_{false};
+    std::atomic<bool> advRestartPending_{false};
     std::atomic<uint32_t> lastAdvStartRequestMs_{0};
 #else
     std::string testTxBuffer_;

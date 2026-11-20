@@ -5,8 +5,9 @@
 // ==============================================================================
 // Firmware Version
 // ==============================================================================
+#define FW_VERSION_BASE      "v1.1"
 #ifndef FW_VERSION
-#define FW_VERSION           "v0.5-dev"
+#define FW_VERSION           FW_VERSION_BASE "-dev"
 #endif
 
 // ==============================================================================
@@ -18,7 +19,6 @@
 #define BKL_PIN              6
 #define I2C_TOUCH_ADDR       0x15
 #define PCF8574_ADDR         0x21
-#define PCF8574_I2C_ADDR     0x21
 
 // Hardware UART Pins for GNSS Receiver (Serial2)
 #define RXD2                 44
@@ -318,6 +318,75 @@
 #define ROVER_TOUCH_CANCEL_X_MAX     350
 #define ROVER_TOUCH_CANCEL_Y_MIN     315
 #define ROVER_TOUCH_CANCEL_Y_MAX     365
+
+// ==============================================================================
+// Target Grid Presets & History Manager Configuration
+// ==============================================================================
+#define TARGET_CFG_NAMESPACE         "target_cfg"
+#define TARGET_CFG_KEY_MAX_TARGETS   "max_targets"
+#define TARGET_LOG_NAMESPACE         "target_log"
+#define TARGET_LOG_KEY_COUNT         "count"
+
+#define DEFAULT_MAX_TARGET_PRESETS   100
+#define MIN_TARGET_PRESETS           10
+#define ABS_MAX_TARGET_PRESETS       500
+#define MAX_TARGET_LABEL_LEN         17
+
+#define TARGET_CLEAR_HOLD_MS         1500
+#define TARGET_MODAL_TIMEOUT_MS      30000
+#define TARGET_GRID_LONG_PRESS_MS    500
+
+// Row 2 Target Label Subtitle Y (shares caret row when not editing)
+#define REM_LABEL_Y                  (REMSTARTY + CHAR_H(REMSIZE))
+
+// Target Presets Modal Dialog Geometry (480x480 circular screen)
+#define TARGET_MODAL_X               45
+#define TARGET_MODAL_Y               65
+#define TARGET_MODAL_W               390
+#define TARGET_MODAL_H               350
+
+#define TARGET_MODAL_HEADER_X        60
+#define TARGET_MODAL_HEADER_Y        75
+#define TARGET_MODAL_HEADER_W        360
+#define TARGET_MODAL_HEADER_H        30
+
+#define TARGET_LIST_X                60
+#define TARGET_LIST_Y                115
+#define TARGET_LIST_ROW_W            348
+#define TARGET_LIST_ROW_H            44
+#define TARGET_LIST_ROW_PITCH        50
+#define TARGET_LIST_VISIBLE_ROWS     3
+
+#define TARGET_SCROLL_X              414
+#define TARGET_SCROLL_Y              115
+#define TARGET_SCROLL_W              8
+#define TARGET_SCROLL_H              145
+
+// Target Presets Modal Action Buttons
+#define TARGET_BTN_LOAD_X            55
+#define TARGET_BTN_LOAD_Y            270
+#define TARGET_BTN_LOAD_W            116
+#define TARGET_BTN_LOAD_H            44
+
+#define TARGET_BTN_DEL_X             182
+#define TARGET_BTN_DEL_Y             270
+#define TARGET_BTN_DEL_W             116
+#define TARGET_BTN_DEL_H             44
+
+#define TARGET_BTN_SAVE_X            309
+#define TARGET_BTN_SAVE_Y            270
+#define TARGET_BTN_SAVE_W            116
+#define TARGET_BTN_SAVE_H            44
+
+#define TARGET_BTN_CLEAR_X           55
+#define TARGET_BTN_CLEAR_Y           324
+#define TARGET_BTN_CLEAR_W           370
+#define TARGET_BTN_CLEAR_H           44
+
+#define TARGET_BTN_CANCEL_X          150
+#define TARGET_BTN_CANCEL_Y          376
+#define TARGET_BTN_CANCEL_W          180
+#define TARGET_BTN_CANCEL_H          32
 
 // ==============================================================================
 // Timeouts & Operational Thresholds
