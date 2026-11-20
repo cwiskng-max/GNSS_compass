@@ -17,6 +17,7 @@ void SerialCli::printTargetHelp() {
     println("  target del <INDEX|GRID>   - Delete preset by 1-based index or 6-char grid");
     println("  target list               - List all saved target presets (aliases: show, history)");
     println("  target max [N]            - Show or set max capacity (10-500, default 100)");
+    println("  target zero               - Zero all preset use counts (keep list)");
     println("  target clear              - Wipe all saved target presets");
     println("==============================");
     println();
@@ -254,6 +255,29 @@ void SerialCli::handleTargetCommand(const char *arg, unsigned long nowMs) {
         }
         targetPresetManager_->setMaxTargets(static_cast<size_t>(val), true);
         printFormat("[TARGET] Max presets capacity set to %zu\r\n", targetPresetManager_->getMaxTargets());
+        if (stateChangedCb_) stateChangedCb_(stateChangedContext_);
+        return;
+    }
+
+    if (hasSubcommandPrefix(arg, "zero")) {
+        if (!targetPresetManager_) {
+            println("[TARGET] Target preset manager not available.");
+            return;
+        }
+        const char *p = skipSubcommandPrefix(arg, 4);
+        bool validZeroArg = (*p == '\0');
+        if (!validZeroArg && hasSubcommandPrefix(p, "counts")) {
+            validZeroArg = (*skipSubcommandPrefix(p, 6) == '\0');
+        } else if (!validZeroArg && hasSubcommandPrefix(p, "count")) {
+            validZeroArg = (*skipSubcommandPrefix(p, 5) == '\0');
+        }
+        if (!validZeroArg) {
+            println("[TARGET ERROR] Usage: target zero");
+            return;
+        }
+        size_t count = targetPresetManager_->getCount();
+        targetPresetManager_->resetCounts();
+        printFormat("[TARGET] Zeroed use counts for %zu preset%s.\r\n", count, count == 1 ? "" : "s");
         if (stateChangedCb_) stateChangedCb_(stateChangedContext_);
         return;
     }

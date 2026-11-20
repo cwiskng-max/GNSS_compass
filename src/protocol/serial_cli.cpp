@@ -700,7 +700,7 @@ void SerialCli::printHelp() {
     println("  rover [status|start|stop|history|undo|max|clear]");
     println("                        - Rover transit tracking");
     println("  target <grid|index>   - Set active target grid or select saved preset #");
-    println("  target [add|save|select|del|list|max|clear]");
+    println("  target [add|save|select|del|list|max|zero|clear]");
     println("                        - Manage saved target grid presets");
     println("  log <call> [band/freq]- Voice-friendly contest QSO logging (10 GHz default)");
     println("  log [undo|del|list|stats|export|mycall|default|clear]");

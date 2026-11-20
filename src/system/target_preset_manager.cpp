@@ -328,6 +328,38 @@ bool TargetPresetManager::removePresetByGrid(const char *grid) {
     return removePreset(static_cast<size_t>(idx));
 }
 
+void TargetPresetManager::resetCounts() {
+    if (presets_.empty()) {
+        return;
+    }
+    if (nvsSlots_.size() == presets_.size()) {
+        std::vector<size_t> order(presets_.size());
+        for (size_t i = 0; i < order.size(); ++i) {
+            order[i] = i;
+        }
+        std::stable_sort(order.begin(), order.end(),
+            [this](size_t a, size_t b) { return nvsSlots_[a] < nvsSlots_[b]; });
+
+        std::vector<TargetPreset> orderedPresets;
+        orderedPresets.reserve(presets_.size());
+        for (size_t slot = 0; slot < order.size(); ++slot) {
+            orderedPresets.push_back(presets_[order[slot]]);
+            nvsSlots_[slot] = slot;
+        }
+        presets_.swap(orderedPresets);
+    } else {
+        nvsSlots_.resize(presets_.size());
+        for (size_t i = 0; i < presets_.size(); ++i) {
+            nvsSlots_[i] = i;
+        }
+    }
+    for (auto &preset : presets_) {
+        preset.useCount = 0;
+        preset.lastUsedTime = 0;
+    }
+    listStore_.save(presets_);
+}
+
 void TargetPresetManager::clearAll() {
     presets_.clear();
     nvsSlots_.clear();

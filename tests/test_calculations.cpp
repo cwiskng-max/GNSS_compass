@@ -5556,6 +5556,26 @@ void test_target_preset_deletion_and_clear() {
     ASSERT_TRUE(!mgr.removePreset(5));
     ASSERT_TRUE(!mgr.removePresetByGrid("DM99zz"));
 
+    // resetCounts retains the list, clears useCount and lastUsedTime, and restarts learning
+    ASSERT_TRUE(mgr.addOrUpdatePreset("CM97be", "UMUNHUM", 400));
+    ASSERT_TRUE(mgr.recordUseByAddedOrder(1, 500)); // CM97be -> useCount 1, moves to GUI index 0
+    ASSERT_STR_EQ(mgr.getPreset(0)->grid, "CM97be");
+    ASSERT_TRUE(mgr.getPreset(0)->useCount == 1);
+
+    mgr.resetCounts();
+    ASSERT_TRUE(mgr.getCount() == 2);
+    ASSERT_STR_EQ(mgr.getPreset(0)->grid, "CM87vu");
+    ASSERT_STR_EQ(mgr.getPreset(1)->grid, "CM97be");
+    ASSERT_TRUE(mgr.getPreset(0)->useCount == 0 && mgr.getPreset(0)->lastUsedTime == 0);
+    ASSERT_TRUE(mgr.getPreset(1)->useCount == 0 && mgr.getPreset(1)->lastUsedTime == 0);
+
+    TargetPresetManager reloadedAfterReset;
+    reloadedAfterReset.begin();
+    ASSERT_TRUE(reloadedAfterReset.getCount() == 2);
+    ASSERT_STR_EQ(reloadedAfterReset.getPreset(0)->grid, "CM87vu");
+    ASSERT_TRUE(reloadedAfterReset.getPreset(0)->useCount == 0 && reloadedAfterReset.getPreset(0)->lastUsedTime == 0);
+    ASSERT_TRUE(reloadedAfterReset.getPreset(1)->useCount == 0 && reloadedAfterReset.getPreset(1)->lastUsedTime == 0);
+
     // clearAll wipes memory and NVS
     mgr.clearAll();
     ASSERT_TRUE(mgr.isEmpty());
@@ -5714,6 +5734,41 @@ void test_serial_cli_target_presets_usb_and_ble() {
     usbOut.clear();
     cli.executeCommand("target 99", 7480, CLI_SOURCE_USB);
     ASSERT_TRUE(usbOut.find("[TARGET ERROR] Preset #99 out of range") != std::string::npos);
+
+    // 9c. USB: target zero clears all use counts while retaining the list (and bare target reset is rejected)
+    usbOut.clear();
+    cli.executeCommand("target reset", 7484, CLI_SOURCE_USB);
+    ASSERT_TRUE(usbOut.find("[TARGET ERROR]") != std::string::npos);
+
+    usbOut.clear();
+    cli.executeCommand("target zero foo", 7485, CLI_SOURCE_USB);
+    ASSERT_TRUE(usbOut.find("[TARGET ERROR] Usage: target zero") != std::string::npos);
+
+    usbOut.clear();
+    cli.executeCommand("target zero", 7490, CLI_SOURCE_USB);
+    ASSERT_TRUE(usbOut.find("[TARGET] Zeroed use counts for 3 presets.") != std::string::npos);
+    ASSERT_TRUE(presetMgr.getCount() == 3);
+    ASSERT_STR_EQ(presetMgr.getPreset(0)->grid, "CM97bb");
+    ASSERT_TRUE(presetMgr.getPreset(0)->useCount == 0 && presetMgr.getPreset(0)->lastUsedTime == 0);
+    ASSERT_TRUE(presetMgr.getPreset(1)->useCount == 0 && presetMgr.getPreset(1)->lastUsedTime == 0);
+    ASSERT_TRUE(presetMgr.getPreset(2)->useCount == 0 && presetMgr.getPreset(2)->lastUsedTime == 0);
+
+    usbOut.clear();
+    cli.executeCommand("target list", 7492, CLI_SOURCE_USB);
+    ASSERT_TRUE(usbOut.find("#2: CM87vu") != std::string::npos);
+    ASSERT_TRUE(usbOut.find("uses: 2") == std::string::npos);
+
+    // Selecting #3 after zeroing restarts "most used" learning with CM88no at GUI index 0
+    usbOut.clear();
+    cli.executeCommand("target 3", 7494, CLI_SOURCE_USB);
+    ASSERT_TRUE(usbOut.find("[TARGET] Selected #3: CM88no") != std::string::npos);
+    ASSERT_STR_EQ(presetMgr.getPreset(0)->grid, "CM88no");
+    ASSERT_TRUE(presetMgr.getPreset(0)->useCount == 1);
+
+    usbOut.clear();
+    cli.executeCommand("target zero counts", 7496, CLI_SOURCE_USB);
+    ASSERT_TRUE(usbOut.find("[TARGET] Zeroed use counts for 3 presets.") != std::string::npos);
+    ASSERT_TRUE(presetMgr.getPreset(0)->useCount == 0);
 
     // 10. USB: target del by 1-based order-added index (#1 = CM97bb) and by grid
     usbOut.clear();

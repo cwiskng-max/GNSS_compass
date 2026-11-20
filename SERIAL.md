@@ -104,7 +104,7 @@ Displays a summary of available serial commands.
   rover [status|start|stop|history|undo|max|clear]
                         - Rover transit tracking
   target <grid|index>   - Set active target grid or select saved preset #
-  target [add|save|select|del|list|max|clear]
+  target [add|save|select|del|list|max|zero|clear]
                         - Manage saved target grid presets
   log <call> [band/freq]- Voice-friendly contest QSO logging (10 GHz default)
   log [undo|del|list|stats|export|mycall|default|clear]
@@ -134,7 +134,7 @@ Displays a summary of available serial commands.
 | **`status`** *(or `gps`)* | None | USB, BLE | Live GNSS receiver stream & link diagnostic, RTK fix health |
 | **`gps`** | `probe` \| `config` \| `check` \| `send <cmd>` \| `help` | USB, BLE | UM982 receiver setup, TX line discovery, in-system config |
 | **`rover`** | `status` \| `start` \| `stop` \| `history` \| `undo` \| `max` \| `clear` \| `help` | USB, BLE | Rover transit tracking (16 km displacement rule & qualification) |
-| **`target`** | `<grid>` \| `add` \| `save` \| `del` \| `list` \| `max` \| `clear` \| `help` | USB, BLE | Remote target Maidenhead grid setting & NVS target preset manager |
+| **`target`** | `<grid>` \| `add` \| `save` \| `del` \| `list` \| `max` \| `zero` \| `clear` \| `help` | USB, BLE | Remote target Maidenhead grid setting & NVS target preset manager |
 | **`log`** | `<call> [band/freq]` *(supports NATO phonetics)* | USB, BLE | Voice-friendly contest QSO logging (10 GHz default, phonetics & band auto-mapping) |
 | **`log`** | `undo` \| `delete <#>` \| `clear` | USB, BLE | Contest QSO log editing, deletion, and rollback |
 | **`log`** | `list` *(or `show`)* \| `stats` \| `help` | USB, BLE | Formatted ASCII log table, contest statistics (DX, bands, grids), and log help |
@@ -590,6 +590,7 @@ Pre-load contest summit rosters before heading into the field or manage presets 
 | **`target del <INDEX\|GRID>`** | Remove a preset by 1-based CLI list index or 6-char grid. |
 | **`target list`** *(or `show` / `history`)* | Print all saved presets in static order added with index, grid, label, use count, and capacity. *(The touchscreen modal sorts by most used.)* |
 | **`target max [N]`** | Show or set max preset capacity (`10`–`500`, default `100`). |
+| **`target zero`** | Reset all preset use counts and recency timestamps to `0` while keeping the saved list intact (restarts "most used" sorting). |
 | **`target clear`** | Wipe all saved target presets from NVS. |
 | **`target help`** | Show `target` command help. |
 

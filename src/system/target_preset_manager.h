@@ -68,6 +68,7 @@ public:
     bool removePreset(size_t index);
     bool removePresetByAddedOrder(size_t addedIndex);
     bool removePresetByGrid(const char *grid);
+    void resetCounts();
     void clearAll();
 
     // Lookup & accessors (default ordering is usage-sorted for GUI; *ByAddedOrder is static for CLI)
