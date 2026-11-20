@@ -611,7 +611,7 @@ Pre-load contest summit rosters before heading into the field or manage presets 
 ```
 
 #### Pre-Trip Batch Preloading
-Preloading a target roster before leaving home or camp saves time on the hilltop and avoids dialing 6-character grids in gloves or bright sunlight:
+Preloading a target roster before leaving home or camp saves time on the hilltop and avoids dialing 6-character grids in gloves or bright sunlight. Ready-to-paste regional and beacon lists are available in **[TARGETS.md](TARGETS.md)**.
 
 1. **Prepare a plain-text command list** (e.g. `targets.txt`) with one command per line:
    ```text

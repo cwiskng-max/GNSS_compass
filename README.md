@@ -24,4 +24,5 @@ In addition to antenna heading several other functions are included:
 * **[Firmware Installation Guide](INSTALL.md):** How to flash the firmware binary onto the ESP32-S3 display using `esptool` (covers Fedora, Ubuntu, macOS, and Windows).
 * **[Testing & Self-Test Guide](tests/README.md):** Information on automated host unit tests and the on-device visual self-test.
 * **[Serial Interface & CLI Guide](SERIAL.md):** USB-C and wireless Bluetooth (BLE UART) serial terminal commands, live GNSS receiver diagnostics, visual self-test triggers, and antenna offset calibration.
+* **[Reference Target Lists](TARGETS.md):** Copy-and-paste `target add` preset lists (regional summits, contest sites, and beacons) for pre-loading before heading into the field.
 * **[Design Documentation](docs/design/README.md):** Technical specifications, UI/UX layouts, and architectural designs for compass subsystems and features.
