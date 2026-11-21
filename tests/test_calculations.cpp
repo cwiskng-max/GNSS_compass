@@ -2913,17 +2913,12 @@ void test_rover_history_undo_modal_and_autorearm() {
     app.handleUserEvent(evLongPress, 3000);
     ASSERT_TRUE(app.getUiMode() == UiMode::RoverHistory);
 
-    // Bezel depress while Rover History modal is open: must be ignored
-    UserEvent evBezel;
-    evBezel.type = UserEventType::EncoderButtonPressed;
-    app.handleUserEvent(evBezel, 3050);
-    ASSERT_TRUE(!app.getGridEditor().isEditing());
-
     // Bezel rotation while Rover History modal is open: must be ignored and not roll target grid
     UserEvent evTurn;
     evTurn.type = UserEventType::RotateClockwise;
     app.handleUserEvent(evTurn, 3060);
     ASSERT_TRUE(!app.getGridEditor().isEditing());
+    ASSERT_TRUE(app.getUiMode() == UiMode::RoverHistory);
 
     // Test Cancel button: modal closes, no change to history or mode
     UserEvent evCancel;
@@ -2934,13 +2929,38 @@ void test_rover_history_undo_modal_and_autorearm() {
     ASSERT_TRUE(app.getOperationalMode() == OperationalMode::Bearing);
     ASSERT_TRUE(app.getRoverLogManager().getStopCount() == 2);
 
-    // Reopen modal and trigger DISCARD LAST STOP
-    app.handleUserEvent(evLongPress, 4000);
+    // Reopen modal and test bezel press when NOT holding discard: closes modal without modifying history
+    app.handleUserEvent(evLongPress, 3400);
     ASSERT_TRUE(app.getUiMode() == UiMode::RoverHistory);
+    UserEvent evBezel;
+    evBezel.type = UserEventType::EncoderButtonPressed;
+    app.handleUserEvent(evBezel, 3450);
+    ASSERT_TRUE(app.getUiMode() == UiMode::Normal);
+    ASSERT_TRUE(!app.getGridEditor().isEditing());
+    ASSERT_TRUE(app.getRoverLogManager().getStopCount() == 2);
 
-    UserEvent evDiscard;
-    evDiscard.type = UserEventType::DiscardLastStopTriggered;
-    app.handleUserEvent(evDiscard, 4100);
+    // Reopen modal, hold DISCARD LAST STOP, and press bezel mid-hold:
+    // modal must stay open and hold clock must continue until LONG_PRESS_MS triggers discard
+    app.handleUserEvent(evLongPress, 3600);
+    ASSERT_TRUE(app.getUiMode() == UiMode::RoverHistory);
+    inputManager.injectTouch(true, 240, 280, 3700);
+    app.update(3700);
+    ASSERT_TRUE(inputManager.isHoldingDiscard());
+    inputManager.injectTouch(true, 240, 280, 4200);
+    app.update(4200);
+    inputManager.injectEncoderButton(true);
+    app.update(4250);
+    ASSERT_TRUE(app.getUiMode() == UiMode::RoverHistory);
+    ASSERT_TRUE(inputManager.isHoldingDiscard());
+    ASSERT_TRUE(app.getRoverLogManager().getStopCount() == 2);
+    inputManager.injectTouch(true, 240, 280, 3700 + LONG_PRESS_MS);
+    app.update(3700 + LONG_PRESS_MS);
+    ASSERT_TRUE(app.getRoverLogManager().getStopCount() == 1);
+    ASSERT_TRUE(app.getUiMode() == UiMode::Normal);
+    inputManager.injectTouch(false, 0, 0, 3700 + LONG_PRESS_MS + 50);
+    app.update(3700 + LONG_PRESS_MS + 50);
+
+    // Discard executed via completed hold:
 
     // Discard executed:
     // 1. Topmost stop (Site 2) popped from stack -> now 1 stop (Site 1)
@@ -2983,6 +3003,8 @@ void test_rover_history_undo_modal_and_autorearm() {
     ASSERT_TRUE(app.getUiMode() == UiMode::RoverHistory);
 
     // Trigger Discard at 12500 ms (stale GPS fix)
+    UserEvent evDiscard;
+    evDiscard.type = UserEventType::DiscardLastStopTriggered;
     app.handleUserEvent(evDiscard, 12500);
     ASSERT_TRUE(app.getUiMode() == UiMode::Normal);
     ASSERT_TRUE(app.getOperationalMode() == OperationalMode::Rover);
@@ -4728,7 +4750,7 @@ void test_app_controller_qso_card_interaction() {
     ASSERT_TRUE(app.getUiMode() == UiMode::Normal);
     ASSERT_TRUE(!display.getQsoCard().isVisible());
 
-    // 5. Manual dismiss via rotary encoder push
+    // 5. Manual dismiss via rotary encoder push (bezel press)
     app.showQsoCard(q, 4, 40000);
     ASSERT_TRUE(app.getUiMode() == UiMode::QsoCard);
 
@@ -5179,7 +5201,7 @@ void test_voice_logging_contest_session_e2e() {
     cli.executeCommand("log k6mg/r 47", 15000);
     app.update(15000);
     ASSERT_TRUE(cliOutput.find("[QSO LOGGED #3] K6MG/R | 47 GHz |") != std::string::npos);
-    // Dismiss via rotary knob press
+    // Dismiss via rotary knob press (bezel press)
     input.injectEncoderButton(true);
     app.update(15100);
     ASSERT_TRUE(app.getUiMode() == UiMode::Normal);
@@ -6182,15 +6204,30 @@ void test_app_controller_target_list_workflow_e2e() {
     ASSERT_STR_EQ(targetMgr.getPreset(0)->grid, "CM97be");
     ASSERT_TRUE(targetMgr.getPreset(0)->useCount == 1);
 
-    // 13. EncoderButtonPressed in TargetList also loads selected preset
+    // 13. EncoderButtonPressed in Normal mode does nothing; in TargetList with touch does nothing;
+    //     in TargetList with no touch loads selected preset ([ USE ])
+    UserEvent evEncBtn;
+    evEncBtn.type = UserEventType::EncoderButtonPressed;
+    app.handleUserEvent(evEncBtn, 40900);
+    ASSERT_TRUE(app.getUiMode() == UiMode::Normal);
+    ASSERT_TRUE(!app.getGridEditor().isEditing());
+
     app.handleUserEvent(evOpen, 41000);
     int diaIdx = targetMgr.findIndexByGrid("CM87vu");
     ASSERT_TRUE(diaIdx >= 0);
     while (app.getSelectedPresetIndex() < static_cast<size_t>(diaIdx)) {
         app.handleUserEvent(evCw, 41050);
     }
-    UserEvent evEncBtn;
-    evEncBtn.type = UserEventType::EncoderButtonPressed;
+    // Touching the screen while pressing the bezel must NOT execute [ USE ]
+    input.injectTouch(true, 240, 240, 41080);
+    ASSERT_TRUE(input.isTouching());
+    app.handleUserEvent(evEncBtn, 41090);
+    ASSERT_TRUE(app.getUiMode() == UiMode::TargetList);
+    ASSERT_STR_EQ(app.getTargetGrid(), "CM97be");
+    input.injectTouch(false, 0, 0, 41095);
+    ASSERT_TRUE(!input.isTouching());
+
+    // Pressing the bezel with no touch on the screen executes [ USE ]
     app.handleUserEvent(evEncBtn, 41100);
     ASSERT_TRUE(app.getUiMode() == UiMode::Normal);
     ASSERT_STR_EQ(app.getTargetGrid(), "CM87vu");

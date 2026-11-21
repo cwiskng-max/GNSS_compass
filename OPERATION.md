@@ -59,8 +59,8 @@ Row 3 (left) dynamically color-codes the carrier-phase RTK solution quality:
 ## 4. Touchscreen & Rotary Bezel Controls
 
 ### 4.1 Setting the Target Grid Square (Row 2)
-1. **Select Character (Touch) or Toggle Edit Mode (Encoder Press):**
-   * **Tap** directly on any of the 6 characters in **Row 2**, or **press the rotary knob** (in Normal Mode).
+1. **Select Character (Touch):**
+   * **Tap** directly on any of the 6 characters in **Row 2**.
    * A yellow caret (`^`) appears beneath the active character and the character turns yellow.
 2. **Change Value (Rotary Bezel):** Turn the outer rotary bezel clockwise/counter-clockwise:
    * **Positions 1 & 2 (Field):** `A`–`Z`
@@ -75,7 +75,7 @@ For rapid switching between pre-loaded contest summits or previously dialed grid
 2. **Live Geodetic Preview:** Displays up to **3 visible rows** at a time (with a vertical scroll track when more than 3 presets are saved). Each row shows its index, 6-character grid, label, and live true azimuth + distance in km calculated from your current GPS position. Presets are sorted by usage frequency (`useCount` descending, then most recently used).
 3. **Browse & Select:**
    * **Rotate Bezel** or **tap a visible row** to highlight a preset.
-   * **Tap `[ USE ]`** (or **press the rotary knob**) to load the selected grid as your active target, increment its usage count, and close the modal. *(If Rover Mode is active, selecting a preset stops Rover Mode just like manual target changes.)*
+   * **Tap `[ USE ]`** (or **press the rotary knob** with no touch on the screen) to load the selected grid as your active target, increment its usage count, and close the modal. *(If Rover Mode is active, selecting a preset stops Rover Mode just like manual target changes.)*
 4. **Save, Delete, Clear, or Close:**
    * **`[ ADD ]`:** Bookmarks (or updates) the current active target grid in NVS (auto-assigning a regional summit name if matched) and selects it.
    * **`[ DEL ]`:** Removes only the currently highlighted preset.
@@ -172,7 +172,7 @@ See **[SERIAL.md](SERIAL.md)** for full BLE setup, voice dictation tips, macro p
 | **Long-press Row 1 (1.5 s)** | Open Rover History & Undo Modal |
 | **Tap Row 2 (Target Grid)** | Select digit (`^`) for bezel editing (auto-locks after 5 s) |
 | **Long-press Row 2 (> 500 ms)** | Open Target Grid Presets Modal (30 s timeout) |
-| **Press Rotary Knob** | Toggle Target Grid edit mode (Normal Mode) / dismiss QSO card |
+| **Press Rotary Knob / Bezel** | Target Select: `[ USE ]` (if screen not touched); Rover History: close (unless holding discard); QSO Card: dismiss |
 | **Rotate Bezel** | Edit selected grid character / nudge Calibration Offset (`±0.1°`) |
 | **Tap Calibration Pill** | Open Antenna Calibration Modal (15 s timeout) |
 | **Tap Version Footer** | Run 9-step visual self-test |

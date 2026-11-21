@@ -78,6 +78,8 @@ public:
     void begin();
     void setUiMode(UiMode mode) { uiMode_ = mode; }
     UiMode getUiMode() const { return uiMode_; }
+    bool isTouching() const { return isTouching_; }
+    bool isHoldingDiscard() const { return holdingDiscardBtn_; }
 
     void update(unsigned long nowMs = 0);
     bool pollEvent(UserEvent &outEvent);

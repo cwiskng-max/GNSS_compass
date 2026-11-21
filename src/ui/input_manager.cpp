@@ -486,6 +486,13 @@ void InputManager::update(unsigned long nowMs) {
         delta++;
     }
 
+    if (tsPanel_.touched()) {
+        CST_TS_Point p = tsPanel_.getPoint(0);
+        handleTouchPoint(true, p.x, p.y, nowMs);
+    } else {
+        handleTouchPoint(false, 0, 0, nowMs);
+    }
+
     if (pcf8574_) {
         // Encoder switch is active-low (P5 with INPUT_PULLUP)
         uint8_t swVal = pcf8574_->digitalRead(P5);
@@ -497,13 +504,6 @@ void InputManager::update(unsigned long nowMs) {
         } else if (swVal == HIGH && encoderSwPressed_) {
             encoderSwPressed_ = false;
         }
-    }
-
-    if (tsPanel_.touched()) {
-        CST_TS_Point p = tsPanel_.getPoint(0);
-        handleTouchPoint(true, p.x, p.y, nowMs);
-    } else {
-        handleTouchPoint(false, 0, 0, nowMs);
     }
 #else
     (void)nowMs;

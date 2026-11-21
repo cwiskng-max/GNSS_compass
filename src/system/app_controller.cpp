@@ -722,20 +722,14 @@ void AppController::handleUserEvent(const UserEvent &event, unsigned long nowMs)
             break;
 
         case UserEventType::EncoderButtonPressed:
-            if (currentUiMode_ == UiMode::TargetList) {
+            if (currentUiMode_ == UiMode::TargetList && !inputManager_.isTouching()) {
+                targetModalOpenedMillis_ = nowMs;
                 loadSelectedTargetPreset(nowMs);
-                break;
+            } else if (currentUiMode_ == UiMode::RoverHistory && !inputManager_.isHoldingDiscard()) {
+                pendingModalButtonRelease_ = ModalButtonId::None;
+                setUiMode(UiMode::Normal);
+                redrawMainScreen();
             }
-            // Toggle edit mode on knob press in Normal Bearing Mode only.
-            // Disarmed in modals (Calibrating, RoverHistory) to prevent target grid poking through.
-            // Locked out in Rover Mode to enforce 2-step natural exit.
-            if (currentUiMode_ != UiMode::Normal || operationalMode_ == OperationalMode::Rover) {
-                break;
-            }
-            gridEditor_.setEditing(!gridEditor_.isEditing());
-            gridEditor_.recordActivity(nowMs);
-            displayUi_.renderTargetGrid(gridEditor_.getGrid(), gridEditor_.getCursorColumn(),
-                                        gridEditor_.isEditing(), resolveTargetLabel(gridEditor_.getGrid()));
             break;
 
         case UserEventType::TouchCalibrationPill:
