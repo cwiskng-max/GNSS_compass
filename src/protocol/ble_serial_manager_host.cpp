@@ -4,18 +4,16 @@
 
 #if !BLE_SERIAL_HW
 
+#include "../system/nvs_store.h"
 #include <cstdlib>
 #include <cstring>
-
-namespace {
-char s_hostBleSuffix[17] = {0};
-}
 
 bool BleSerialManager::platformBegin(bool haveCustomName) {
     std::snprintf(defaultSuffix_, sizeof(defaultSuffix_), "test");
     if (!haveCustomName) {
-        if (s_hostBleSuffix[0] != '\0') {
-            std::snprintf(deviceSuffix_, sizeof(deviceSuffix_), "%s", s_hostBleSuffix);
+        std::string savedSuffix = NvsConfig("compass").getString("ble_suffix", "");
+        if (!savedSuffix.empty() && savedSuffix.length() <= kMaxSuffixLength) {
+            std::snprintf(deviceSuffix_, sizeof(deviceSuffix_), "%s", savedSuffix.c_str());
         } else {
             std::snprintf(deviceSuffix_, sizeof(deviceSuffix_), "%s", defaultSuffix_);
         }
@@ -29,15 +27,16 @@ void BleSerialManager::platformUpdateDeviceName() {
 }
 
 void BleSerialManager::platformSaveSuffix(const char *suffix) {
+    NvsConfig cfg("compass");
     if (suffix && suffix[0]) {
-        std::snprintf(s_hostBleSuffix, sizeof(s_hostBleSuffix), "%s", suffix);
+        cfg.putString("ble_suffix", suffix);
     } else {
-        s_hostBleSuffix[0] = '\0';
+        cfg.remove("ble_suffix");
     }
 }
 
 void BleSerialManager::resetHostStorage() {
-    s_hostBleSuffix[0] = '\0';
+    NvsConfig("compass").remove("ble_suffix");
 }
 
 void BleSerialManager::platformUpdate(unsigned long nowMs) {
@@ -61,6 +60,10 @@ void BleSerialManager::platformDisconnect() {
 
 unsigned long BleSerialManager::platformMillis() {
     return 0;
+}
+
+void BleSerialManager::platformDelay(unsigned long ms) {
+    (void)ms;
 }
 
 uint8_t *BleSerialManager::platformAllocTx(size_t size) {

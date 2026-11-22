@@ -27,7 +27,7 @@ public:
 #endif
 
     // Modal drawing methods
-    void drawModal(const QsoEntry &qso, size_t qsoIndex = 0);
+    void drawModal(const QsoEntry &qso, size_t qsoIndex = 0, uint16_t timeoutSec = 0);
     void drawOkButton(bool highlighted);
 
     // Static text formatters (host testable)
@@ -37,22 +37,26 @@ public:
     static void formatGrids(const char *myGrid, const char *hisGrid, char *outBuf, size_t bufSize);
     static void formatDistanceBearing(float distanceKm, float bearingDeg, char *outBuf, size_t bufSize);
     static void formatTime(uint32_t timestamp, char *outBuf, size_t bufSize);
+    static void formatOkButtonLabel(uint16_t timeoutSec, char *outBuf, size_t bufSize);
 
     // Static button hit-testing helper
     static bool isOkButtonTouched(int16_t x, int16_t y);
 
     // Active card state tracking (host testable)
     bool isVisible() const { return visible_; }
-    void show(const QsoEntry &qso, size_t qsoIndex, unsigned long nowMs);
+    void show(const QsoEntry &qso, size_t qsoIndex, unsigned long nowMs,
+              uint16_t timeoutSec = DEFAULT_QSO_CARD_TIMEOUT_S);
     void dismiss();
     bool checkTimeout(unsigned long nowMs, unsigned long timeoutMs = QSO_MODAL_TIMEOUT_MS);
     unsigned long getOpenedMs() const { return openedMs_; }
+    uint16_t getTimeoutSec() const { return timeoutSec_; }
     const QsoEntry& getActiveQso() const { return activeQso_; }
     size_t getActiveQsoIndex() const { return activeQsoIndex_; }
 
 private:
     bool visible_ = false;
     unsigned long openedMs_ = 0;
+    uint16_t timeoutSec_ = DEFAULT_QSO_CARD_TIMEOUT_S;
     QsoEntry activeQso_{};
     size_t activeQsoIndex_ = 0;
 

@@ -31,7 +31,7 @@ char natoToChar(const std::string &w) {
     if (w == "juliet" || w == "juliett" || w == "john" || w == "japan") return 'J';
     if (w == "kilo" || w == "king") return 'K';
     if (w == "lima" || w == "london" || w == "lewis") return 'L';
-    if (w == "mike" || w == "mary" || w == "mexico") return 'M';
+    if (w == "mike" || w == "mic" || w == "mary" || w == "mexico") return 'M';
     if (w == "november" || w == "nancy") return 'N';
     if (w == "oscar" || w == "ocean") return 'O';
     if (w == "papa" || w == "peter") return 'P';
@@ -140,6 +140,74 @@ void appendPhoneticToken(const std::vector<std::string> &words, size_t &i,
     }
 }
 
+bool looksLikeFrequencyToken(const std::string &word) {
+    if (word.empty()) return false;
+    std::string s;
+    s.reserve(word.size());
+    for (char c : word) {
+        s.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+    }
+    if (s.size() > 3 && (s.substr(s.size() - 3) == "mhz" || s.substr(s.size() - 3) == "ghz")) {
+        s.resize(s.size() - 3);
+    } else if (s.size() > 1 && (s.back() == 'm' || s.back() == 'g')) {
+        s.pop_back();
+    }
+    if (s.empty()) return false;
+    size_t digits = 0;
+    size_t dots = 0;
+    for (char c : s) {
+        if (std::isdigit(static_cast<unsigned char>(c))) {
+            digits++;
+        } else if (c == '.') {
+            dots++;
+        } else {
+            return false;
+        }
+    }
+    return digits > 0 && dots <= 1 && (dots == 1 || digits >= 3);
+}
+
+struct BandSpec {
+    const char *matchSub;   // Substring matched in lowercased band name (order matters: 241 before 24)
+    const char *bandName;
+    const char *cabrillo;
+    const char *adif;
+    uint32_t nominalFreqKhz;
+};
+
+const BandSpec kBandSpecs[] = {
+    {"241",  "241 GHz", "241G",  "1mm",   241056100},
+    {"134",  "134 GHz", "134G",  "2mm",   134928100},
+    {"122",  "122 GHz", "122G",  "2.5mm", 122250100},
+    {"76",   "76 GHz",  "76G",   "4mm",   76032100},
+    {"77.5", "76 GHz",  "76G",   "4mm",   76032100},
+    {"47",   "47 GHz",  "47G",   "6mm",   47088100},
+    {"24",   "24 GHz",  "24G",   "1.2cm", 24192100},
+    {"10",   "10 GHz",  "10G",   "3cm",   10368100},
+    {"light","LIGHT",   "LIGHT", "submm", 0},
+    {"laser","LIGHT",   "LIGHT", "submm", 0},
+    {"5.7",  "5.7 GHz", "5.7G",  "6cm",   5760100},
+    {"3.4",  "3.4 GHz", "3.4G",  "9cm",   3456100},
+    {"2.3",  "2.3 GHz", "2.3G",  "13cm",  2304100},
+    {"2.4",  "2.3 GHz", "2.3G",  "13cm",  2304100},
+    {"1.2",  "1.2 GHz", "1.2G",  "23cm",  1296100},
+    {"902",  "902 MHz", "902",   "33cm",  902100},
+    {"432",  "432 MHz", "432",   "70cm",  432100},
+    {"222",  "222 MHz", "222",   "1.25m", 222100},
+    {"144",  "144 MHz", "144",   "2m",    144200},
+    {"50",   "50 MHz",  "50",    "6m",    50100}
+};
+
+const BandSpec* findBandSpec(const std::string &band) {
+    std::string b = toLower(band);
+    for (const auto &spec : kBandSpecs) {
+        if (b.find(spec.matchSub) != std::string::npos) {
+            return &spec;
+        }
+    }
+    return nullptr;
+}
+
 } // anonymous namespace
 
 std::string VoiceQsoParser::stripPunctuation(const std::string &input) {
@@ -235,69 +303,18 @@ std::string VoiceQsoParser::normalizeVoiceInput(const std::string &input) {
 }
 
 uint32_t VoiceQsoParser::getNominalCallingFreqKhz(const std::string &band) {
-    std::string b = toLower(band);
-    if (b.find("10") != std::string::npos) return 10368100;
-    if (b.find("241") != std::string::npos) return 241056100;
-    if (b.find("24") != std::string::npos) return 24192100;
-    if (b.find("47") != std::string::npos) return 47088100;
-    if (b.find("76") != std::string::npos || b.find("77.5") != std::string::npos) return 76032100;
-    if (b.find("122") != std::string::npos) return 122250100;
-    if (b.find("134") != std::string::npos) return 134928100;
-    if (b.find("light") != std::string::npos || b.find("laser") != std::string::npos) return 0;
-    if (b.find("5.7") != std::string::npos) return 5760100;
-    if (b.find("3.4") != std::string::npos) return 3456100;
-    if (b.find("2.3") != std::string::npos || b.find("2.4") != std::string::npos) return 2304100;
-    if (b.find("1.2") != std::string::npos) return 1296100;
-    if (b.find("902") != std::string::npos) return 902100;
-    if (b.find("432") != std::string::npos) return 432100;
-    if (b.find("222") != std::string::npos) return 222100;
-    if (b.find("144") != std::string::npos) return 144200;
-    if (b.find("50") != std::string::npos) return 50100;
-    return 10368100;
+    const BandSpec *spec = findBandSpec(band);
+    return spec ? spec->nominalFreqKhz : 10368100;
 }
 
 std::string VoiceQsoParser::bandToCabrillo(const std::string &band) {
-    std::string b = toLower(band);
-    if (b.find("241") != std::string::npos) return "241G";
-    if (b.find("134") != std::string::npos) return "134G";
-    if (b.find("122") != std::string::npos) return "122G";
-    if (b.find("76") != std::string::npos || b.find("77.5") != std::string::npos) return "76G";
-    if (b.find("47") != std::string::npos) return "47G";
-    if (b.find("24") != std::string::npos) return "24G";
-    if (b.find("10") != std::string::npos) return "10G";
-    if (b.find("light") != std::string::npos || b.find("laser") != std::string::npos) return "LIGHT";
-    if (b.find("5.7") != std::string::npos) return "5.7G";
-    if (b.find("3.4") != std::string::npos) return "3.4G";
-    if (b.find("2.3") != std::string::npos || b.find("2.4") != std::string::npos) return "2.3G";
-    if (b.find("1.2") != std::string::npos) return "1.2G";
-    if (b.find("902") != std::string::npos) return "902";
-    if (b.find("432") != std::string::npos) return "432";
-    if (b.find("222") != std::string::npos) return "222";
-    if (b.find("144") != std::string::npos) return "144";
-    if (b.find("50") != std::string::npos) return "50";
-    return "10G";
+    const BandSpec *spec = findBandSpec(band);
+    return spec ? spec->cabrillo : "10G";
 }
 
 std::string VoiceQsoParser::bandToAdif(const std::string &band) {
-    std::string b = toLower(band);
-    if (b.find("241") != std::string::npos) return "1mm";
-    if (b.find("134") != std::string::npos) return "2mm";
-    if (b.find("122") != std::string::npos) return "2.5mm";
-    if (b.find("76") != std::string::npos || b.find("77.5") != std::string::npos) return "4mm";
-    if (b.find("47") != std::string::npos) return "6mm";
-    if (b.find("24") != std::string::npos) return "1.2cm";
-    if (b.find("10") != std::string::npos) return "3cm";
-    if (b.find("light") != std::string::npos || b.find("laser") != std::string::npos) return "submm";
-    if (b.find("5.7") != std::string::npos) return "6cm";
-    if (b.find("3.4") != std::string::npos) return "9cm";
-    if (b.find("2.3") != std::string::npos || b.find("2.4") != std::string::npos) return "13cm";
-    if (b.find("1.2") != std::string::npos) return "23cm";
-    if (b.find("902") != std::string::npos) return "33cm";
-    if (b.find("432") != std::string::npos) return "70cm";
-    if (b.find("222") != std::string::npos) return "1.25m";
-    if (b.find("144") != std::string::npos) return "2m";
-    if (b.find("50") != std::string::npos) return "6m";
-    return "3cm";
+    const BandSpec *spec = findBandSpec(band);
+    return spec ? spec->adif : "3cm";
 }
 
 bool VoiceQsoParser::parseBandOrFreq(const std::string &token,
@@ -312,181 +329,50 @@ bool VoiceQsoParser::parseBandOrFreq(const std::string &token,
         }
     }
 
-    // Light / Laser
-    if (t == "light" || t == "laser") {
-        outBand = "LIGHT";
-        outFreqKhz = 0;
-        outCabrillo = "LIGHT";
-        outAdif = "submm";
-        return true;
-    }
-
-    // Standalone and suffixed microwave bands
-    if (t == "10" || t == "10g" || t == "10ghz") {
-        outBand = "10 GHz";
-        outFreqKhz = 10368100;
-        outCabrillo = "10G";
-        outAdif = "3cm";
-        return true;
-    }
-    if (t == "24" || t == "24g" || t == "24ghz") {
-        outBand = "24 GHz";
-        outFreqKhz = 24192100;
-        outCabrillo = "24G";
-        outAdif = "1.2cm";
-        return true;
-    }
-    if (t == "47" || t == "47g" || t == "47ghz") {
-        outBand = "47 GHz";
-        outFreqKhz = 47088100;
-        outCabrillo = "47G";
-        outAdif = "6mm";
-        return true;
-    }
-    if (t == "76" || t == "76g" || t == "76ghz" || t == "77.5" || t == "77.5g" || t == "77.5ghz") {
-        outBand = "76 GHz";
-        outFreqKhz = 76032100;
-        outCabrillo = "76G";
-        outAdif = "4mm";
-        return true;
-    }
-    if (t == "122" || t == "122g" || t == "122ghz") {
-        outBand = "122 GHz";
-        outFreqKhz = 122250100;
-        outCabrillo = "122G";
-        outAdif = "2.5mm";
-        return true;
-    }
-    if (t == "134" || t == "134g" || t == "134ghz") {
-        outBand = "134 GHz";
-        outFreqKhz = 134928100;
-        outCabrillo = "134G";
-        outAdif = "2mm";
-        return true;
-    }
-    if (t == "241" || t == "241g" || t == "241ghz") {
-        outBand = "241 GHz";
-        outFreqKhz = 241056100;
-        outCabrillo = "241G";
-        outAdif = "1mm";
-        return true;
-    }
-
-    // Sub-10 GHz & VHF/UHF bands
-    if (t == "5.7" || t == "5.7g" || t == "5.7ghz" || t == "5760") {
-        outBand = "5.7 GHz";
-        outFreqKhz = 5760100;
-        outCabrillo = "5.7G";
-        outAdif = "6cm";
-        return true;
-    }
-    if (t == "3.4" || t == "3.4g" || t == "3.4ghz" || t == "3456" || t == "3400") {
-        outBand = "3.4 GHz";
-        outFreqKhz = 3456100;
-        outCabrillo = "3.4G";
-        outAdif = "9cm";
-        return true;
-    }
-    if (t == "2.3" || t == "2.3g" || t == "2.3ghz" || t == "2.4" || t == "2.4g" || t == "2.4ghz" ||
-        t == "2304" || t == "2400") {
-        outBand = "2.3 GHz";
-        outFreqKhz = 2304100;
-        outCabrillo = "2.3G";
-        outAdif = "13cm";
-        return true;
-    }
-    if (t == "1.2" || t == "1.2g" || t == "1.2ghz" || t == "1296") {
-        outBand = "1.2 GHz";
-        outFreqKhz = 1296100;
-        outCabrillo = "1.2G";
-        outAdif = "23cm";
-        return true;
-    }
-    if (t == "902" || t == "903" || t == "902m" || t == "902mhz" || t == "33cm") {
-        outBand = "902 MHz";
-        outFreqKhz = 902100;
-        outCabrillo = "902";
-        outAdif = "33cm";
-        return true;
-    }
-    if (t == "432" || t == "432m" || t == "432mhz" || t == "70cm") {
-        outBand = "432 MHz";
-        outFreqKhz = 432100;
-        outCabrillo = "432";
-        outAdif = "70cm";
-        return true;
-    }
-    if (t == "222" || t == "222m" || t == "222mhz" || t == "1.25m") {
-        outBand = "222 MHz";
-        outFreqKhz = 222100;
-        outCabrillo = "222";
-        outAdif = "1.25m";
-        return true;
-    }
-    if (t == "144" || t == "144m" || t == "144mhz" || t == "2m") {
-        outBand = "144 MHz";
-        outFreqKhz = 144200;
-        outCabrillo = "144";
-        outAdif = "2m";
-        return true;
-    }
-    if (t == "50" || t == "50m" || t == "50mhz" || t == "6m") {
-        outBand = "50 MHz";
-        outFreqKhz = 50100;
-        outCabrillo = "50";
-        outAdif = "6m";
-        return true;
-    }
-
-    // Exact calling frequencies as integers
-    if (t == "10368") {
-        outBand = "10 GHz";
-        outFreqKhz = 10368000;
-        outCabrillo = "10G";
-        outAdif = "3cm";
-        return true;
-    }
-    if (t == "24192") {
-        outBand = "24 GHz";
-        outFreqKhz = 24192000;
-        outCabrillo = "24G";
-        outAdif = "1.2cm";
-        return true;
-    }
-    if (t == "47088") {
-        outBand = "47 GHz";
-        outFreqKhz = 47088000;
-        outCabrillo = "47G";
-        outAdif = "6mm";
-        return true;
-    }
-    if (t == "76032") {
-        outBand = "76 GHz";
-        outFreqKhz = 76032000;
-        outCabrillo = "76G";
-        outAdif = "4mm";
-        return true;
-    }
-    if (t == "122250") {
-        outBand = "122 GHz";
-        outFreqKhz = 122250000;
-        outCabrillo = "122G";
-        outAdif = "2.5mm";
-        return true;
-    }
-    if (t == "134928") {
-        outBand = "134 GHz";
-        outFreqKhz = 134928000;
-        outCabrillo = "134G";
-        outAdif = "2mm";
-        return true;
-    }
-    if (t == "241056") {
-        outBand = "241 GHz";
-        outFreqKhz = 241056000;
-        outCabrillo = "241G";
-        outAdif = "1mm";
-        return true;
+    struct TokenBandAlias {
+        const char *token;
+        const char *matchKey;
+        uint32_t freqKhz;
+    };
+    static const TokenBandAlias kTokenAliases[] = {
+        {"light",  "light", 0}, {"laser",   "light", 0},
+        {"10",     "10",    0}, {"10g",     "10",    0}, {"10ghz",   "10",    0},
+        {"24",     "24",    0}, {"24g",     "24",    0}, {"24ghz",   "24",    0},
+        {"47",     "47",    0}, {"47g",     "47",    0}, {"47ghz",   "47",    0},
+        {"76",     "76",    0}, {"76g",     "76",    0}, {"76ghz",   "76",    0},
+        {"77.5",   "76",    0}, {"77.5g",   "76",    0}, {"77.5ghz", "76",    0},
+        {"122",    "122",   0}, {"122g",    "122",   0}, {"122ghz",  "122",   0},
+        {"134",    "134",   0}, {"134g",    "134",   0}, {"134ghz",  "134",   0},
+        {"241",    "241",   0}, {"241g",    "241",   0}, {"241ghz",  "241",   0},
+        {"5.7",    "5.7",   0}, {"5.7g",    "5.7",   0}, {"5.7ghz",  "5.7",   0}, {"5760", "5.7", 0},
+        {"3.4",    "3.4",   0}, {"3.4g",    "3.4",   0}, {"3.4ghz",  "3.4",   0}, {"3456", "3.4", 0}, {"3400", "3.4", 0},
+        {"2.3",    "2.3",   0}, {"2.3g",    "2.3",   0}, {"2.3ghz",  "2.3",   0},
+        {"2.4",    "2.3",   0}, {"2.4g",    "2.3",   0}, {"2.4ghz",  "2.3",   0}, {"2304", "2.3", 0}, {"2400", "2.3", 0},
+        {"1.2",    "1.2",   0}, {"1.2g",    "1.2",   0}, {"1.2ghz",  "1.2",   0}, {"1296", "1.2", 0},
+        {"902",    "902",   0}, {"903",     "902",   0}, {"902m",    "902",   0}, {"902mhz", "902", 0}, {"33cm", "902", 0},
+        {"432",    "432",   0}, {"432m",    "432",   0}, {"432mhz",  "432",   0}, {"70cm", "432", 0},
+        {"222",    "222",   0}, {"222m",    "222",   0}, {"222mhz",  "222",   0}, {"1.25m", "222", 0},
+        {"144",    "144",   0}, {"144m",    "144",   0}, {"144mhz",  "144",   0}, {"2m",   "144", 0},
+        {"50",     "50",    0}, {"50m",     "50",    0}, {"50mhz",   "50",    0}, {"6m",   "50",  0},
+        {"10368",  "10",    10368000},
+        {"24192",  "24",    24192000},
+        {"47088",  "47",    47088000},
+        {"76032",  "76",    76032000},
+        {"122250", "122",   122250000},
+        {"134928", "134",   134928000},
+        {"241056", "241",   241056000}
+    };
+    for (const auto &alias : kTokenAliases) {
+        if (t == alias.token) {
+            const BandSpec *spec = findBandSpec(alias.matchKey);
+            if (spec) {
+                outBand = spec->bandName;
+                outFreqKhz = alias.freqKhz;
+                outCabrillo = spec->cabrillo;
+                outAdif = spec->adif;
+                return true;
+            }
+        }
     }
 
     // Floating-point frequency in MHz (or GHz if suffixed with g/ghz)
@@ -783,7 +669,8 @@ bool VoiceQsoParser::parseQso(const std::string &input,
     // In international amateur radio regulations (ITU RR Article 19.68), callsigns
     // NEVER end in digits; suffixes must terminate in letters (or slash-rover/portable).
     std::vector<std::string> splitWords;
-    for (const auto &word : words) {
+    for (size_t i = 0; i < words.size(); ++i) {
+        const std::string &word = words[i];
         std::string dummyBand, dummyCab, dummyAdif;
         uint32_t dummyFreq = 0;
         // If the entire word is already a valid band, keep it intact
@@ -792,9 +679,19 @@ bool VoiceQsoParser::parseQso(const std::string &input,
             continue;
         }
 
+        std::string nextUnit;
+        if (i + 1 < words.size()) {
+            std::string nextLow = toLower(words[i + 1]);
+            if (nextLow == "ghz" || nextLow == "mhz" || nextLow == "g") {
+                nextUnit = nextLow;
+            } else if (nextLow == "meter" || nextLow == "meters") {
+                nextUnit = "m";
+            }
+        }
+
         bool splitDone = false;
         // Search right-to-left for a split point where prefix ends in a letter (or /R or /P)
-        // and suffix is a valid microwave band or calling frequency
+        // and suffix (optionally combined with a trailing unit like "ghz") is a valid band or frequency
         for (size_t k = word.size(); k > 1; --k) {
             std::string prefix = word.substr(0, k - 1);
             std::string suffix = word.substr(k - 1);
@@ -815,6 +712,14 @@ bool VoiceQsoParser::parseQso(const std::string &input,
             if (parseBandOrFreq(suffix, dummyBand, dummyFreq, dummyCab, dummyAdif)) {
                 splitWords.push_back(prefix);
                 splitWords.push_back(suffix);
+                splitDone = true;
+                break;
+            }
+            if (!nextUnit.empty() &&
+                parseBandOrFreq(suffix + nextUnit, dummyBand, dummyFreq, dummyCab, dummyAdif)) {
+                splitWords.push_back(prefix);
+                splitWords.push_back(suffix + nextUnit);
+                i++;
                 splitDone = true;
                 break;
             }
@@ -882,6 +787,9 @@ bool VoiceQsoParser::parseQso(const std::string &input,
             out.cabrillo_band = cab;
             out.adif_band = adif;
             bandFound = true;
+        } else if (looksLikeFrequencyToken(word)) {
+            out.error_message = "Invalid or out-of-band frequency: " + word;
+            return false;
         } else {
             remainingWords.push_back(word);
         }
@@ -891,7 +799,7 @@ bool VoiceQsoParser::parseQso(const std::string &input,
     if (!bandFound) {
         if (!parseBandOrFreq(defaultBand, out.band, out.freq_khz, out.cabrillo_band, out.adif_band)) {
             out.band = "10 GHz";
-            out.freq_khz = 10368100;
+            out.freq_khz = 0;
             out.cabrillo_band = "10G";
             out.adif_band = "3cm";
         }

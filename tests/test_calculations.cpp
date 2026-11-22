@@ -22,6 +22,7 @@
 #include "../src/system/rover_log_manager.h"
 #include "../src/system/qso_entry.h"
 #include "../src/system/qso_log_manager.h"
+#include "../src/system/target_preset_manager.h"
 #include "../src/protocol/voice_qso_parser.h"
 #include "../src/protocol/ble_serial_manager.h"
 #include "../src/protocol/line_buffer.h"
@@ -2912,17 +2913,12 @@ void test_rover_history_undo_modal_and_autorearm() {
     app.handleUserEvent(evLongPress, 3000);
     ASSERT_TRUE(app.getUiMode() == UiMode::RoverHistory);
 
-    // Bezel depress while Rover History modal is open: must be ignored
-    UserEvent evBezel;
-    evBezel.type = UserEventType::EncoderButtonPressed;
-    app.handleUserEvent(evBezel, 3050);
-    ASSERT_TRUE(!app.getGridEditor().isEditing());
-
     // Bezel rotation while Rover History modal is open: must be ignored and not roll target grid
     UserEvent evTurn;
     evTurn.type = UserEventType::RotateClockwise;
     app.handleUserEvent(evTurn, 3060);
     ASSERT_TRUE(!app.getGridEditor().isEditing());
+    ASSERT_TRUE(app.getUiMode() == UiMode::RoverHistory);
 
     // Test Cancel button: modal closes, no change to history or mode
     UserEvent evCancel;
@@ -2933,13 +2929,38 @@ void test_rover_history_undo_modal_and_autorearm() {
     ASSERT_TRUE(app.getOperationalMode() == OperationalMode::Bearing);
     ASSERT_TRUE(app.getRoverLogManager().getStopCount() == 2);
 
-    // Reopen modal and trigger DISCARD LAST STOP
-    app.handleUserEvent(evLongPress, 4000);
+    // Reopen modal and test bezel press when NOT holding discard: closes modal without modifying history
+    app.handleUserEvent(evLongPress, 3400);
     ASSERT_TRUE(app.getUiMode() == UiMode::RoverHistory);
+    UserEvent evBezel;
+    evBezel.type = UserEventType::EncoderButtonPressed;
+    app.handleUserEvent(evBezel, 3450);
+    ASSERT_TRUE(app.getUiMode() == UiMode::Normal);
+    ASSERT_TRUE(!app.getGridEditor().isEditing());
+    ASSERT_TRUE(app.getRoverLogManager().getStopCount() == 2);
 
-    UserEvent evDiscard;
-    evDiscard.type = UserEventType::DiscardLastStopTriggered;
-    app.handleUserEvent(evDiscard, 4100);
+    // Reopen modal, hold DISCARD LAST STOP, and press bezel mid-hold:
+    // modal must stay open and hold clock must continue until LONG_PRESS_MS triggers discard
+    app.handleUserEvent(evLongPress, 3600);
+    ASSERT_TRUE(app.getUiMode() == UiMode::RoverHistory);
+    inputManager.injectTouch(true, 240, 280, 3700);
+    app.update(3700);
+    ASSERT_TRUE(inputManager.isHoldingDiscard());
+    inputManager.injectTouch(true, 240, 280, 4200);
+    app.update(4200);
+    inputManager.injectEncoderButton(true);
+    app.update(4250);
+    ASSERT_TRUE(app.getUiMode() == UiMode::RoverHistory);
+    ASSERT_TRUE(inputManager.isHoldingDiscard());
+    ASSERT_TRUE(app.getRoverLogManager().getStopCount() == 2);
+    inputManager.injectTouch(true, 240, 280, 3700 + LONG_PRESS_MS);
+    app.update(3700 + LONG_PRESS_MS);
+    ASSERT_TRUE(app.getRoverLogManager().getStopCount() == 1);
+    ASSERT_TRUE(app.getUiMode() == UiMode::Normal);
+    inputManager.injectTouch(false, 0, 0, 3700 + LONG_PRESS_MS + 50);
+    app.update(3700 + LONG_PRESS_MS + 50);
+
+    // Discard executed via completed hold:
 
     // Discard executed:
     // 1. Topmost stop (Site 2) popped from stack -> now 1 stop (Site 1)
@@ -2982,6 +3003,8 @@ void test_rover_history_undo_modal_and_autorearm() {
     ASSERT_TRUE(app.getUiMode() == UiMode::RoverHistory);
 
     // Trigger Discard at 12500 ms (stale GPS fix)
+    UserEvent evDiscard;
+    evDiscard.type = UserEventType::DiscardLastStopTriggered;
     app.handleUserEvent(evDiscard, 12500);
     ASSERT_TRUE(app.getUiMode() == UiMode::Normal);
     ASSERT_TRUE(app.getOperationalMode() == OperationalMode::Rover);
@@ -3037,10 +3060,18 @@ void test_serial_cli_rover_commands() {
     ASSERT_TRUE(cliOut.find("Not set") != std::string::npos);
     cliOut.clear();
 
-    // 3. Rover History (Empty)
+    // 3. Rover History (Empty) + list/show aliases
     cli.executeCommand("rover history");
     ASSERT_TRUE(cliOut.find("ROVER LOCATION HISTORY (0 stops / max 100)") != std::string::npos);
     ASSERT_TRUE(cliOut.find("(No stops recorded)") != std::string::npos);
+    cliOut.clear();
+
+    cli.executeCommand("rover list");
+    ASSERT_TRUE(cliOut.find("ROVER LOCATION HISTORY (0 stops / max 100)") != std::string::npos);
+    cliOut.clear();
+
+    cli.executeCommand("rover show");
+    ASSERT_TRUE(cliOut.find("ROVER LOCATION HISTORY (0 stops / max 100)") != std::string::npos);
     cliOut.clear();
 
     // 4. Standalone Rover Start & Status (with simulated location)
@@ -3616,6 +3647,14 @@ void test_ble_serial_manager() {
     ble.update(1200);
     ASSERT_TRUE(!ble.isConnected());
 
+    // Stalled unsubscribed connection is torn down automatically so advertising resumes
+    ble.setConnected(true);  // sets connectMs_ = 0 via synchronous update(0)
+    ble.update(9999);
+    ASSERT_TRUE(ble.isConnected());
+    ble.update(10000);
+    ASSERT_TRUE(!ble.isConnected());
+    ASSERT_TRUE(ble.isAdvertising());
+
     // RF diagnostics flag defaults off and toggles
     ASSERT_TRUE(!ble.isDiagEnabled());
     ble.setDiagEnabled(true);
@@ -3983,6 +4022,7 @@ void test_voice_qso_parser() {
 
     // 2. NATO phonetics and spoken numbers normalization
     ASSERT_STR_EQ(VoiceQsoParser::normalizeVoiceInput("kilo six mike golf").c_str(), "K6MG");
+    ASSERT_STR_EQ(VoiceQsoParser::normalizeVoiceInput("kilo six mic golf").c_str(), "K6MG");
     ASSERT_STR_EQ(VoiceQsoParser::normalizeVoiceInput("kilo 6 mike golf").c_str(), "K6MG");
     ASSERT_STR_EQ(VoiceQsoParser::normalizeVoiceInput("kilo six mike golf stroke rover").c_str(), "K6MG/R");
     ASSERT_STR_EQ(VoiceQsoParser::normalizeVoiceInput("whiskey six oscar papa stroke rover").c_str(), "W6OP/R");
@@ -4000,13 +4040,13 @@ void test_voice_qso_parser() {
 
     ASSERT_TRUE(VoiceQsoParser::parseBandOrFreq("10", band, freq_khz, cabrillo, adif));
     ASSERT_STR_EQ(band.c_str(), "10 GHz");
-    ASSERT_TRUE(freq_khz == 10368100);
+    ASSERT_TRUE(freq_khz == 0);
     ASSERT_STR_EQ(cabrillo.c_str(), "10G");
     ASSERT_STR_EQ(adif.c_str(), "3cm");
 
     ASSERT_TRUE(VoiceQsoParser::parseBandOrFreq("24", band, freq_khz, cabrillo, adif));
     ASSERT_STR_EQ(band.c_str(), "24 GHz");
-    ASSERT_TRUE(freq_khz == 24192100);
+    ASSERT_TRUE(freq_khz == 0);
     ASSERT_STR_EQ(cabrillo.c_str(), "24G");
     ASSERT_STR_EQ(adif.c_str(), "1.2cm");
 
@@ -4105,7 +4145,7 @@ void test_voice_qso_parser() {
     ASSERT_TRUE(VoiceQsoParser::parseQso("log k6mg 10", q));
     ASSERT_STR_EQ(q.callsign.c_str(), "K6MG");
     ASSERT_STR_EQ(q.band.c_str(), "10 GHz");
-    ASSERT_TRUE(q.freq_khz == 10368100);
+    ASSERT_TRUE(q.freq_khz == 0);
 
     // Flexible order (band first)
     ASSERT_TRUE(VoiceQsoParser::parseQso("log 24 k6mg", q));
@@ -4122,7 +4162,7 @@ void test_voice_qso_parser() {
     ASSERT_TRUE(VoiceQsoParser::parseQso("log k6mg", q));
     ASSERT_STR_EQ(q.callsign.c_str(), "K6MG");
     ASSERT_STR_EQ(q.band.c_str(), "10 GHz");
-    ASSERT_TRUE(q.freq_khz == 10368100);
+    ASSERT_TRUE(q.freq_khz == 0);
 
     // Direct without "log" prefix
     ASSERT_TRUE(VoiceQsoParser::parseQso("k6mg", q));
@@ -4182,6 +4222,16 @@ void test_voice_qso_parser() {
     ASSERT_STR_EQ(q.callsign.c_str(), "K6ML/R");
     ASSERT_STR_EQ(q.band.c_str(), "24 GHz");
 
+    ASSERT_TRUE(VoiceQsoParser::parseQso("log af9s47.199 GHz", q));
+    ASSERT_STR_EQ(q.callsign.c_str(), "AF9S");
+    ASSERT_STR_EQ(q.band.c_str(), "47 GHz");
+    ASSERT_TRUE(q.freq_khz == 47199000);
+
+    ASSERT_TRUE(VoiceQsoParser::parseQso("log k6mg10.368 GHz", q));
+    ASSERT_STR_EQ(q.callsign.c_str(), "K6MG");
+    ASSERT_STR_EQ(q.band.c_str(), "10 GHz");
+    ASSERT_TRUE(q.freq_khz == 10368000);
+
     // Invalid & incomplete inputs
     ASSERT_TRUE(!VoiceQsoParser::parseQso("log", q));
     ASSERT_STR_EQ(q.error_message.c_str(), "Missing callsign");
@@ -4192,6 +4242,8 @@ void test_voice_qso_parser() {
     ASSERT_TRUE(!VoiceQsoParser::parseQso("", q));
     ASSERT_TRUE(!VoiceQsoParser::parseQso("log 12345 10", q)); // No letters
     ASSERT_TRUE(!VoiceQsoParser::parseQso("log ABCDEF 10", q)); // No digits
+    ASSERT_TRUE(!VoiceQsoParser::parseQso("log af9s 47381.1", q)); // Out-of-band frequency must not glue onto callsign
+    ASSERT_TRUE(q.error_message.find("frequency") != std::string::npos);
     ASSERT_TRUE(!VoiceQsoParser::parseQso("log N9 10", q));     // Too short
 
     PASS();
@@ -4652,6 +4704,10 @@ void test_app_controller_qso_card_interaction() {
     ASSERT_TRUE(app.getUiMode() == UiMode::QsoCard);
     ASSERT_TRUE(display.getQsoCard().isVisible());
     ASSERT_TRUE(app.getQsoCardOpenedMs() == 1000);
+    ASSERT_TRUE(display.getQsoCard().getTimeoutSec() == DEFAULT_QSO_CARD_TIMEOUT_S);
+    char okLbl[24];
+    QsoCard::formatOkButtonLabel(display.getQsoCard().getTimeoutSec(), okLbl, sizeof(okLbl));
+    ASSERT_STR_EQ(okLbl, "OK (Auto 5s)");
 
     // 2. Default 5-second non-blocking auto-dismiss
     app.update(5000);
@@ -4665,6 +4721,9 @@ void test_app_controller_qso_card_interaction() {
     // 2b. Configurable 10-second auto-dismiss via QsoLogManager
     qsoLog.setCardTimeoutSec(10);
     app.showQsoCard(q, 1, 7000);
+    ASSERT_TRUE(display.getQsoCard().getTimeoutSec() == 10);
+    QsoCard::formatOkButtonLabel(display.getQsoCard().getTimeoutSec(), okLbl, sizeof(okLbl));
+    ASSERT_STR_EQ(okLbl, "OK (Auto 10s)");
     app.update(12000); // 5s elapsed: still visible
     ASSERT_TRUE(app.getUiMode() == UiMode::QsoCard);
     app.update(17000); // 10s elapsed: dismissed
@@ -4691,7 +4750,7 @@ void test_app_controller_qso_card_interaction() {
     ASSERT_TRUE(app.getUiMode() == UiMode::Normal);
     ASSERT_TRUE(!display.getQsoCard().isVisible());
 
-    // 5. Manual dismiss via rotary encoder push
+    // 5. Manual dismiss via rotary encoder push (bezel press)
     app.showQsoCard(q, 4, 40000);
     ASSERT_TRUE(app.getUiMode() == UiMode::QsoCard);
 
@@ -4750,13 +4809,13 @@ void test_serial_cli_log_commands() {
     cli.executeCommand("log k6mg 10", 1000);
     ASSERT_TRUE(qsoCardTriggered);
     ASSERT_TRUE(qsoLog.getQsoCount() == 1);
-    ASSERT_TRUE(cliOutput.find("[QSO LOGGED #1] K6MG | 10 GHz (10368.100 MHz) | 21:34z | CM87wa -> CM88qk (163.7 km @ 345 deg)") != std::string::npos);
+    ASSERT_TRUE(cliOutput.find("[QSO LOGGED #1] K6MG | 10 GHz | 21:34z | CM87wa -> CM88qk (163.7 km @ 345 deg)") != std::string::npos);
 
     const QsoEntry *e1 = qsoLog.getQso(0);
     ASSERT_TRUE(e1 != nullptr);
     ASSERT_STR_EQ(e1->callsign, "K6MG");
     ASSERT_STR_EQ(e1->band, "10 GHz");
-    ASSERT_TRUE(e1->freq_khz == 10368100);
+    ASSERT_TRUE(e1->freq_khz == 0);
     ASSERT_STR_EQ(e1->my_grid, "CM87wa");
     ASSERT_STR_EQ(e1->his_grid, "CM88qk");
     ASSERT_NEAR(e1->distance_km, 163.7f, 0.5f);
@@ -4766,7 +4825,7 @@ void test_serial_cli_log_commands() {
     cliOutput.clear();
     cli.executeCommand("log w6op/r 24", 2000);
     ASSERT_TRUE(qsoLog.getQsoCount() == 2);
-    ASSERT_TRUE(cliOutput.find("[QSO LOGGED #2] W6OP/R | 24 GHz (24192.100 MHz)") != std::string::npos);
+    ASSERT_TRUE(cliOutput.find("[QSO LOGGED #2] W6OP/R | 24 GHz |") != std::string::npos);
 
     // 3. Exact frequency in digits: log <call> 10368.1
     cliOutput.clear();
@@ -4778,13 +4837,13 @@ void test_serial_cli_log_commands() {
     cliOutput.clear();
     cli.executeCommand("log kilo six mike golf 47", 4000);
     ASSERT_TRUE(qsoLog.getQsoCount() == 4);
-    ASSERT_TRUE(cliOutput.find("[QSO LOGGED #4] K6MG | 47 GHz (47088.100 MHz)") != std::string::npos);
+    ASSERT_TRUE(cliOutput.find("[QSO LOGGED #4] K6MG | 47 GHz |") != std::string::npos);
 
     // 5. Default band applied when band omitted: log n6jv
     cliOutput.clear();
     cli.executeCommand("log n6jv", 5000);
     ASSERT_TRUE(qsoLog.getQsoCount() == 5);
-    ASSERT_TRUE(cliOutput.find("[QSO LOGGED #5] N6JV | 10 GHz (10368.100 MHz)") != std::string::npos);
+    ASSERT_TRUE(cliOutput.find("[QSO LOGGED #5] N6JV | 10 GHz |") != std::string::npos);
 
     // 6. Incomplete input prompt and hotword "cancel"
     cliOutput.clear();
@@ -4805,7 +4864,7 @@ void test_serial_cli_log_commands() {
     cliOutput.clear();
     cli.executeCommand("w6yx", 7100);
     ASSERT_TRUE(qsoLog.getQsoCount() == 6);
-    ASSERT_TRUE(cliOutput.find("[QSO LOGGED #6] W6YX | 10 GHz (10368.100 MHz)") != std::string::npos);
+    ASSERT_TRUE(cliOutput.find("[QSO LOGGED #6] W6YX | 10 GHz |") != std::string::npos);
 
     // 8. log undo
     cliOutput.clear();
@@ -4825,12 +4884,20 @@ void test_serial_cli_log_commands() {
     ASSERT_TRUE(cliOutput.find("[QSO ERROR] Invalid QSO index '99'") != std::string::npos);
     ASSERT_TRUE(qsoLog.getQsoCount() == 4);
 
-    // 10. log list / show
+    // 10. log list / show / history
     cliOutput.clear();
     cli.executeCommand("log list", 10000);
     ASSERT_TRUE(cliOutput.find("K6MG") != std::string::npos);
     ASSERT_TRUE(cliOutput.find("10368.100 MHz") != std::string::npos);
-    ASSERT_TRUE(cliOutput.find("47088.100 MHz") != std::string::npos);
+    ASSERT_TRUE(cliOutput.find("47 GHz") != std::string::npos);
+
+    cliOutput.clear();
+    cli.executeCommand("log show", 10100);
+    ASSERT_TRUE(cliOutput.find("K6MG") != std::string::npos);
+
+    cliOutput.clear();
+    cli.executeCommand("log history", 10200);
+    ASSERT_TRUE(cliOutput.find("K6MG") != std::string::npos);
 
     // 11. log stats
     cliOutput.clear();
@@ -4868,7 +4935,7 @@ void test_serial_cli_log_commands() {
     // Next log without band uses new default
     cliOutput.clear();
     cli.executeCommand("log k6mg", 13100);
-    ASSERT_TRUE(cliOutput.find("[QSO LOGGED #5] K6MG | 24 GHz (24192.100 MHz)") != std::string::npos);
+    ASSERT_TRUE(cliOutput.find("[QSO LOGGED #5] K6MG | 24 GHz |") != std::string::npos);
 
     // Reset default band to 10 GHz
     cli.executeCommand("log default band 10 GHz", 13200);
@@ -5053,6 +5120,19 @@ void test_serial_cli_log_commands() {
     ASSERT_TRUE(cliOutput.find("Pop-up card timeout reset to 5 s") != std::string::npos);
     ASSERT_TRUE(qsoLog.getCardTimeoutSec() == 5);
 
+    // Gboard voice split: "log time out" and "log time out 10"
+    cliOutput.clear();
+    cli.executeCommand("log time out", 17750);
+    ASSERT_TRUE(cliOutput.find("Current pop-up card timeout: 5 s") != std::string::npos);
+
+    cliOutput.clear();
+    cli.executeCommand("log time out 10", 17800);
+    ASSERT_TRUE(cliOutput.find("Pop-up card timeout set to 10 s") != std::string::npos);
+    ASSERT_TRUE(qsoLog.getCardTimeoutSec() == 10);
+
+    cli.executeCommand("log time out reset", 17850);
+    ASSERT_TRUE(qsoLog.getCardTimeoutSec() == 5);
+
     PASS();
 }
 
@@ -5093,7 +5173,7 @@ void test_voice_logging_contest_session_e2e() {
     cliOutput.clear();
     cli.executeCommand("log k6mg/r 10", 2000);
     app.update(2000);
-    ASSERT_TRUE(cliOutput.find("[QSO LOGGED #1] K6MG/R | 10 GHz (10368.100 MHz)") != std::string::npos);
+    ASSERT_TRUE(cliOutput.find("[QSO LOGGED #1] K6MG/R | 10 GHz |") != std::string::npos);
     ASSERT_TRUE(app.getUiMode() == UiMode::QsoCard);
     ASSERT_TRUE(display.getQsoCard().isVisible());
     ASSERT_STR_EQ(display.getQsoCard().getActiveQso().callsign, "K6MG/R");
@@ -5109,7 +5189,7 @@ void test_voice_logging_contest_session_e2e() {
     cliOutput.clear();
     cli.executeCommand("log 24 k6mg/r", 4000);
     app.update(4000);
-    ASSERT_TRUE(cliOutput.find("[QSO LOGGED #2] K6MG/R | 24 GHz (24192.100 MHz)") != std::string::npos);
+    ASSERT_TRUE(cliOutput.find("[QSO LOGGED #2] K6MG/R | 24 GHz |") != std::string::npos);
     ASSERT_TRUE(app.getUiMode() == UiMode::QsoCard);
 
     // Let 10s auto-dismiss timer expire
@@ -5120,8 +5200,8 @@ void test_voice_logging_contest_session_e2e() {
     cliOutput.clear();
     cli.executeCommand("log k6mg/r 47", 15000);
     app.update(15000);
-    ASSERT_TRUE(cliOutput.find("[QSO LOGGED #3] K6MG/R | 47 GHz (47088.100 MHz)") != std::string::npos);
-    // Dismiss via rotary knob press
+    ASSERT_TRUE(cliOutput.find("[QSO LOGGED #3] K6MG/R | 47 GHz |") != std::string::npos);
+    // Dismiss via rotary knob press (bezel press)
     input.injectEncoderButton(true);
     app.update(15100);
     ASSERT_TRUE(app.getUiMode() == UiMode::Normal);
@@ -5130,7 +5210,7 @@ void test_voice_logging_contest_session_e2e() {
     cliOutput.clear();
     cli.executeCommand("log k6mg/r 122", 16000);
     app.update(16000);
-    ASSERT_TRUE(cliOutput.find("[QSO LOGGED #4] K6MG/R | 122 GHz (122250.100 MHz)") != std::string::npos);
+    ASSERT_TRUE(cliOutput.find("[QSO LOGGED #4] K6MG/R | 122 GHz |") != std::string::npos);
     app.update(26001); // 10s auto-dismiss
 
     // 6. QSO 5: Band escalation to Laser / Light
@@ -5149,7 +5229,7 @@ void test_voice_logging_contest_session_e2e() {
     cliOutput.clear();
     cli.executeCommand("log kilo six echo mike echo 10", 41000);
     app.update(41000);
-    ASSERT_TRUE(cliOutput.find("[QSO LOGGED #6] K6EME | 10 GHz (10368.100 MHz)") != std::string::npos);
+    ASSERT_TRUE(cliOutput.find("[QSO LOGGED #6] K6EME | 10 GHz |") != std::string::npos);
     app.update(51001); // 10s auto-dismiss
 
     // 9. Accidental entry & undo verification
@@ -5304,6 +5384,1463 @@ void test_qso_critical_fixes_regression() {
     PASS();
 }
 
+void test_target_preset_validation_and_summits() {
+    TEST("TargetPresetManager Maidenhead validation, normalization, and regional summits");
+    TargetPresetManager::resetHostStorage();
+
+    ASSERT_TRUE(TargetPresetManager::isValidGrid6("CM87vu"));
+    ASSERT_TRUE(TargetPresetManager::isValidGrid6("cm87VU"));
+    ASSERT_TRUE(TargetPresetManager::isValidGrid6("AA00aa"));
+    ASSERT_TRUE(TargetPresetManager::isValidGrid6("RR99xx"));
+
+    ASSERT_TRUE(!TargetPresetManager::isValidGrid6(nullptr));
+    ASSERT_TRUE(!TargetPresetManager::isValidGrid6(""));
+    ASSERT_TRUE(!TargetPresetManager::isValidGrid6("CM87"));
+    ASSERT_TRUE(!TargetPresetManager::isValidGrid6("CM87vu12"));
+    ASSERT_TRUE(!TargetPresetManager::isValidGrid6("ZA00AA"));
+    ASSERT_TRUE(!TargetPresetManager::isValidGrid6("SS00aa"));
+    ASSERT_TRUE(!TargetPresetManager::isValidGrid6("CM87yz"));
+    ASSERT_TRUE(!TargetPresetManager::isValidGrid6("CMabvu"));
+
+    char norm[7] = {0};
+    ASSERT_TRUE(TargetPresetManager::normalizeGrid("cm87VU", norm));
+    ASSERT_STR_EQ(norm, "CM87vu");
+    ASSERT_TRUE(!TargetPresetManager::normalizeGrid("ZA00AA", norm));
+
+    ASSERT_STR_EQ(TargetPresetManager::lookupRegionalSummit("cm87VU"), "DIABLO");
+    ASSERT_STR_EQ(TargetPresetManager::lookupRegionalSummit("CM97be"), "UMUNHUM");
+    ASSERT_TRUE(TargetPresetManager::lookupRegionalSummit("CM98aa") == nullptr);
+
+    TargetPresetManager mgr;
+    mgr.begin();
+    ASSERT_TRUE(!mgr.addOrUpdatePreset("INVALID", "BAD"));
+    ASSERT_TRUE(!mgr.addOrUpdatePreset("CM87", "SHORT"));
+    ASSERT_TRUE(mgr.isEmpty());
+
+    // Regional summit auto-label when no label provided
+    ASSERT_TRUE(mgr.addOrUpdatePreset("cm87VU"));
+    ASSERT_TRUE(mgr.getCount() == 1);
+    ASSERT_STR_EQ(mgr.getPreset(0)->grid, "CM87vu");
+    ASSERT_STR_EQ(mgr.getPreset(0)->label, "DIABLO");
+
+    // Unknown grid without label leaves label empty
+    ASSERT_TRUE(mgr.addOrUpdatePreset("CM98aa"));
+    ASSERT_TRUE(mgr.getCount() == 2);
+    ASSERT_STR_EQ(mgr.findByGrid("CM98AA")->label, "");
+
+    PASS();
+}
+
+void test_target_preset_dedup_and_labels() {
+    TEST("TargetPresetManager deduplication and labels with spaces");
+    TargetPresetManager::resetHostStorage();
+
+    TargetPresetManager mgr;
+    mgr.begin();
+
+    // Label with spaces up to MAX_TARGET_LABEL_LEN - 1 (16 chars)
+    ASSERT_TRUE(mgr.addOrUpdatePreset("CM97bb", "LOMA PRIETA", 100));
+    ASSERT_TRUE(mgr.getCount() == 1);
+    ASSERT_STR_EQ(mgr.getPreset(0)->grid, "CM97bb");
+    ASSERT_STR_EQ(mgr.getPreset(0)->label, "LOMA PRIETA");
+
+    // Duplicate grid (different case) updates timestamp without duplicating, preserves label & useCount
+    ASSERT_TRUE(mgr.recordUse(0, 150));
+    ASSERT_TRUE(mgr.addOrUpdatePreset("cm97BB", nullptr, 200));
+    ASSERT_TRUE(mgr.getCount() == 1);
+    ASSERT_STR_EQ(mgr.getPreset(0)->label, "LOMA PRIETA");
+    ASSERT_TRUE(mgr.getPreset(0)->useCount == 1);
+    ASSERT_TRUE(mgr.getPreset(0)->lastUsedTime == 200);
+
+    // Explicit new label updates label and truncates safely at 16 chars
+    ASSERT_TRUE(mgr.addOrUpdatePreset("CM97bb", "VERY LONG SUMMIT NAME", 250));
+    ASSERT_TRUE(mgr.getCount() == 1);
+    ASSERT_TRUE(std::strlen(mgr.getPreset(0)->label) == MAX_TARGET_LABEL_LEN - 1);
+    ASSERT_STR_EQ(mgr.getPreset(0)->label, "VERY LONG SUMMIT");
+    ASSERT_TRUE(mgr.getPreset(0)->useCount == 1);
+
+    PASS();
+}
+
+void test_target_preset_sorting_and_usage() {
+    TEST("TargetPresetManager frequency-first sorting and lastUsedTime tie-breaker");
+    TargetPresetManager::resetHostStorage();
+
+    TargetPresetManager mgr;
+    mgr.begin();
+
+    ASSERT_TRUE(mgr.addOrUpdatePreset("CM87vu", "DIABLO", 100));
+    ASSERT_TRUE(mgr.addOrUpdatePreset("CM97be", "UMUNHUM", 200));
+    ASSERT_TRUE(mgr.addOrUpdatePreset("CM88no", "ST HELN", 150));
+
+    // All useCount == 0 -> sorted by lastUsedTime descending: UMUNHUM (200), ST HELN (150), DIABLO (100)
+    ASSERT_STR_EQ(mgr.getPreset(0)->grid, "CM97be");
+    ASSERT_STR_EQ(mgr.getPreset(1)->grid, "CM88no");
+    ASSERT_STR_EQ(mgr.getPreset(2)->grid, "CM87vu");
+
+    // Record use on DIABLO (index 2) -> useCount becomes 1, moves to top
+    ASSERT_TRUE(mgr.recordUse(2, 300));
+    ASSERT_STR_EQ(mgr.getPreset(0)->grid, "CM87vu");
+    ASSERT_TRUE(mgr.getPreset(0)->useCount == 1);
+    ASSERT_TRUE(mgr.getPreset(0)->lastUsedTime == 300);
+
+    // Record use twice on ST HELN (now index 2) -> useCount 2, moves to top
+    int stIdx = mgr.findIndexByGrid("CM88no");
+    ASSERT_TRUE(stIdx == 2);
+    ASSERT_TRUE(mgr.recordUse(static_cast<size_t>(stIdx), 400));
+    stIdx = mgr.findIndexByGrid("CM88no");
+    ASSERT_TRUE(mgr.recordUse(static_cast<size_t>(stIdx), 500));
+    ASSERT_STR_EQ(mgr.getPreset(0)->grid, "CM88no");
+    ASSERT_STR_EQ(mgr.getPreset(1)->grid, "CM87vu");
+    ASSERT_STR_EQ(mgr.getPreset(2)->grid, "CM97be");
+
+    // Out-of-bounds recordUse returns false
+    ASSERT_TRUE(!mgr.recordUse(99, 600));
+
+    PASS();
+}
+
+void test_target_preset_capacity_eviction_and_nvs() {
+    TEST("TargetPresetManager capacity clamping (10-500), eviction, and NVS round-trip");
+    TargetPresetManager::resetHostStorage();
+
+    ASSERT_TRUE(TargetPresetManager::clampMaxTargets(0) == MIN_TARGET_PRESETS);
+    ASSERT_TRUE(TargetPresetManager::clampMaxTargets(5) == MIN_TARGET_PRESETS);
+    ASSERT_TRUE(TargetPresetManager::clampMaxTargets(10) == 10);
+    ASSERT_TRUE(TargetPresetManager::clampMaxTargets(250) == 250);
+    ASSERT_TRUE(TargetPresetManager::clampMaxTargets(999) == ABS_MAX_TARGET_PRESETS);
+
+    TargetPresetManager mgr;
+    mgr.begin();
+    ASSERT_TRUE(mgr.getMaxTargets() == DEFAULT_MAX_TARGET_PRESETS);
+
+    mgr.setMaxTargets(3); // Clamped to MIN_TARGET_PRESETS (10)
+    ASSERT_TRUE(mgr.getMaxTargets() == 10);
+    ASSERT_TRUE(mgr.getHostStorageMaxTargets() == 10);
+
+    // Fill 10 presets with distinct timestamps
+    for (int i = 0; i < 10; ++i) {
+        char grid[7];
+        std::snprintf(grid, sizeof(grid), "CM8%dAA", i);
+        ASSERT_TRUE(mgr.addOrUpdatePreset(grid, nullptr, static_cast<uint32_t>(100 + i)));
+    }
+    ASSERT_TRUE(mgr.getCount() == 10);
+
+    // Bump usage of the oldest one (CM80aa, now at index 9) so CM81aa becomes least-used/oldest
+    int idx0 = mgr.findIndexByGrid("CM80aa");
+    ASSERT_TRUE(idx0 == 9);
+    ASSERT_TRUE(mgr.recordUse(static_cast<size_t>(idx0), 50));
+
+    // Adding an 11th preset evicts CM81aa (useCount=0, oldest timestamp=101)
+    ASSERT_TRUE(mgr.addOrUpdatePreset("DM04ms", "FRAZIER", 200));
+    ASSERT_TRUE(mgr.getCount() == 10);
+    ASSERT_TRUE(mgr.findByGrid("CM81aa") == nullptr);
+    ASSERT_TRUE(mgr.findByGrid("CM80aa") != nullptr);
+    ASSERT_TRUE(mgr.findByGrid("DM04ms") != nullptr);
+
+    // Fresh manager instance loads persisted presets and maxTargets from NVS mock
+    TargetPresetManager reloaded;
+    reloaded.begin();
+    ASSERT_TRUE(reloaded.getMaxTargets() == 10);
+    ASSERT_TRUE(reloaded.getCount() == 10);
+    ASSERT_STR_EQ(reloaded.getPreset(0)->grid, "CM80aa");
+    ASSERT_TRUE(reloaded.getPreset(0)->useCount == 1);
+    ASSERT_TRUE(reloaded.findByGrid("DM04ms") != nullptr);
+
+    PASS();
+}
+
+void test_target_preset_deletion_and_clear() {
+    TEST("TargetPresetManager item deletion, shift, and clearAll");
+    TargetPresetManager::resetHostStorage();
+
+    TargetPresetManager mgr;
+    mgr.begin();
+
+    ASSERT_TRUE(mgr.addOrUpdatePreset("CM87vu", "DIABLO", 300));
+    ASSERT_TRUE(mgr.addOrUpdatePreset("CM97be", "UMUNHUM", 200));
+    ASSERT_TRUE(mgr.addOrUpdatePreset("CM88no", "ST HELN", 100));
+    ASSERT_TRUE(mgr.getCount() == 3);
+
+    // Remove middle item by index
+    ASSERT_TRUE(mgr.removePreset(1));
+    ASSERT_TRUE(mgr.getCount() == 2);
+    ASSERT_STR_EQ(mgr.getPreset(0)->grid, "CM87vu");
+    ASSERT_STR_EQ(mgr.getPreset(1)->grid, "CM88no");
+    ASSERT_TRUE(mgr.getHostStorageCount() == 2);
+
+    // Remove by grid (case-insensitive)
+    ASSERT_TRUE(mgr.removePresetByGrid("cm88NO"));
+    ASSERT_TRUE(mgr.getCount() == 1);
+    ASSERT_STR_EQ(mgr.getPreset(0)->grid, "CM87vu");
+
+    // Non-existent removals return false
+    ASSERT_TRUE(!mgr.removePreset(5));
+    ASSERT_TRUE(!mgr.removePresetByGrid("DM99zz"));
+
+    // resetCounts retains the list, clears useCount and lastUsedTime, and restarts learning
+    ASSERT_TRUE(mgr.addOrUpdatePreset("CM97be", "UMUNHUM", 400));
+    ASSERT_TRUE(mgr.recordUseByAddedOrder(1, 500)); // CM97be -> useCount 1, moves to GUI index 0
+    ASSERT_STR_EQ(mgr.getPreset(0)->grid, "CM97be");
+    ASSERT_TRUE(mgr.getPreset(0)->useCount == 1);
+
+    mgr.resetCounts();
+    ASSERT_TRUE(mgr.getCount() == 2);
+    ASSERT_STR_EQ(mgr.getPreset(0)->grid, "CM87vu");
+    ASSERT_STR_EQ(mgr.getPreset(1)->grid, "CM97be");
+    ASSERT_TRUE(mgr.getPreset(0)->useCount == 0 && mgr.getPreset(0)->lastUsedTime == 0);
+    ASSERT_TRUE(mgr.getPreset(1)->useCount == 0 && mgr.getPreset(1)->lastUsedTime == 0);
+
+    TargetPresetManager reloadedAfterReset;
+    reloadedAfterReset.begin();
+    ASSERT_TRUE(reloadedAfterReset.getCount() == 2);
+    ASSERT_STR_EQ(reloadedAfterReset.getPreset(0)->grid, "CM87vu");
+    ASSERT_TRUE(reloadedAfterReset.getPreset(0)->useCount == 0 && reloadedAfterReset.getPreset(0)->lastUsedTime == 0);
+    ASSERT_TRUE(reloadedAfterReset.getPreset(1)->useCount == 0 && reloadedAfterReset.getPreset(1)->lastUsedTime == 0);
+
+    // clearAll wipes memory and NVS
+    mgr.clearAll();
+    ASSERT_TRUE(mgr.isEmpty());
+    ASSERT_TRUE(mgr.getHostStorageCount() == 0);
+
+    TargetPresetManager reloaded;
+    reloaded.begin();
+    ASSERT_TRUE(reloaded.isEmpty());
+
+    PASS();
+}
+
+void test_serial_cli_target_presets_usb_and_ble() {
+    TEST("SerialCli target preset subcommands over USB and BLE + AppController wiring");
+    TargetPresetManager::resetHostStorage();
+
+    Board board;
+    DisplayUi display;
+    InputManager input;
+    GpsManager gps;
+    Calibration cal;
+    GpsSimulator sim;
+    RoverLogManager roverLog;
+    QsoLogManager qsoLog;
+    TargetPresetManager presetMgr;
+    BleSerialManager ble;
+    SerialCli cli(gps, cal, sim, &roverLog, &ble, &qsoLog, &presetMgr);
+    AppController app(board, display, input, gps, cal, sim, cli, &roverLog, &ble, &qsoLog, &presetMgr);
+
+    app.begin();
+    app.setMyGrid("CM87wa");
+
+    std::string usbOut;
+    cli.setOutputHandler([](const char *str, void *ctx) {
+        auto *out = static_cast<std::string*>(ctx);
+        if (out && str) out->append(str);
+    }, &usbOut);
+
+    // 1. USB: target list when empty
+    usbOut.clear();
+    cli.executeCommand("target list", 1000, CLI_SOURCE_USB);
+    ASSERT_TRUE(usbOut.find("Saved Target Presets (0/100)") != std::string::npos);
+    ASSERT_TRUE(usbOut.find("(No saved target presets)") != std::string::npos);
+
+    // 2. USB: target add with label containing spaces (and Gboard "ad" alias)
+    usbOut.clear();
+    cli.executeCommand("target ad CM97bb LOMA PRIETA", 2000, CLI_SOURCE_USB);
+    ASSERT_TRUE(usbOut.find("[TARGET] Added #1: CM97bb (LOMA PRIETA)") != std::string::npos);
+    ASSERT_TRUE(presetMgr.getCount() == 1);
+    ASSERT_STR_EQ(presetMgr.getPreset(0)->grid, "CM97bb");
+    ASSERT_STR_EQ(presetMgr.getPreset(0)->label, "LOMA PRIETA");
+
+    // 3. USB: target add without label uses regional summit lookup (2nd item added -> #2)
+    usbOut.clear();
+    cli.executeCommand("target add cm87VU", 3000, CLI_SOURCE_USB);
+    ASSERT_TRUE(usbOut.find("[TARGET] Added #2: CM87vu (DIABLO)") != std::string::npos);
+    ASSERT_TRUE(presetMgr.getCount() == 2);
+
+    // 4. USB: target add duplicate grid updates existing without duplicating
+    usbOut.clear();
+    cli.executeCommand("target add cm97BB MT LOMA", 4000, CLI_SOURCE_USB);
+    ASSERT_TRUE(usbOut.find("[TARGET] Updated #") != std::string::npos);
+    ASSERT_TRUE(usbOut.find("CM97bb (MT LOMA)") != std::string::npos);
+    ASSERT_TRUE(presetMgr.getCount() == 2);
+
+    // 5. USB: target add error cases (missing args, invalid grid)
+    usbOut.clear();
+    cli.executeCommand("target add", 4100, CLI_SOURCE_USB);
+    ASSERT_TRUE(usbOut.find("[TARGET ERROR]") != std::string::npos);
+    usbOut.clear();
+    cli.executeCommand("target add BADGRID TEST", 4200, CLI_SOURCE_USB);
+    ASSERT_TRUE(usbOut.find("[TARGET ERROR] Invalid 6-char Maidenhead grid") != std::string::npos);
+
+    // 6. USB: target <grid> (plain & NATO phonetics) still sets active target directly
+    usbOut.clear();
+    cli.executeCommand("target CM88no", 5000, CLI_SOURCE_USB);
+    ASSERT_TRUE(usbOut.find("[TARGET] Target set to CM88no") != std::string::npos);
+    ASSERT_STR_EQ(app.getTargetGrid(), "CM88no");
+
+    // 7. USB: target save [LABEL...] saves current active target grid (CM88no -> ST HELN or custom)
+    usbOut.clear();
+    cli.executeCommand("target save MT ST HELEN", 6000, CLI_SOURCE_USB);
+    ASSERT_TRUE(usbOut.find("[TARGET] Saved #") != std::string::npos);
+    ASSERT_TRUE(usbOut.find("CM88no (MT ST HELEN)") != std::string::npos);
+    ASSERT_TRUE(presetMgr.getCount() == 3);
+
+    // 8. USB: target list prints index, grid, label, use count, and NVS slot
+    usbOut.clear();
+    cli.executeCommand("target list", 7000, CLI_SOURCE_USB);
+    ASSERT_TRUE(usbOut.find("Saved Target Presets (3/100)") != std::string::npos);
+    ASSERT_TRUE(usbOut.find("CM88no") != std::string::npos);
+    ASSERT_TRUE(usbOut.find("MT ST HELEN") != std::string::npos);
+    ASSERT_TRUE(usbOut.find("uses: 0, slot: t0") != std::string::npos);
+
+    // 9. USB: target max [N] query, set, clamp, and invalid input rejection
+    usbOut.clear();
+    cli.executeCommand("target max", 7100, CLI_SOURCE_USB);
+    ASSERT_TRUE(usbOut.find("Max presets capacity: 100") != std::string::npos);
+
+    usbOut.clear();
+    cli.executeCommand("target max 25", 7200, CLI_SOURCE_USB);
+    ASSERT_TRUE(usbOut.find("Max presets capacity set to 25") != std::string::npos);
+    ASSERT_TRUE(presetMgr.getMaxTargets() == 25);
+
+    usbOut.clear();
+    cli.executeCommand("target max -5", 7300, CLI_SOURCE_USB);
+    ASSERT_TRUE(usbOut.find("[TARGET ERROR]") != std::string::npos);
+    ASSERT_TRUE(presetMgr.getMaxTargets() == 25);
+
+    usbOut.clear();
+    cli.executeCommand("target max abc", 7400, CLI_SOURCE_USB);
+    ASSERT_TRUE(usbOut.find("[TARGET ERROR]") != std::string::npos);
+    ASSERT_TRUE(presetMgr.getMaxTargets() == 25);
+
+    // 9b. USB: target <INDEX> and target select <INDEX> use static order-added indices (while GUI sorts by most used)
+    // Order added: #1 CM97bb (MT LOMA), #2 CM87vu (DIABLO), #3 CM88no (MT ST HELEN)
+    usbOut.clear();
+    cli.executeCommand("target 2", 7450, CLI_SOURCE_USB);
+    ASSERT_TRUE(usbOut.find("[TARGET] Selected #2: CM87vu") != std::string::npos);
+    ASSERT_TRUE(usbOut.find("Bearing:") != std::string::npos);
+    // In GUI (most-used), CM87vu moved to #1 (index 0) with useCount == 1
+    const TargetPreset *selPreset = presetMgr.getPreset(0);
+    ASSERT_TRUE(selPreset != nullptr);
+    ASSERT_STR_EQ(selPreset->grid, "CM87vu");
+    ASSERT_TRUE(selPreset->useCount == 1);
+
+    // Selecting #2 again via 'target select two' still selects CM87vu (CLI index is static!)
+    usbOut.clear();
+    cli.executeCommand("target select two", 7460, CLI_SOURCE_USB);
+    ASSERT_TRUE(usbOut.find("[TARGET] Selected #2: CM87vu") != std::string::npos);
+    ASSERT_TRUE(presetMgr.getPreset(0) != nullptr && presetMgr.getPreset(0)->useCount == 2);
+    ASSERT_TRUE(presetMgr.getPresetByAddedOrder(1) != nullptr &&
+                std::strcmp(presetMgr.getPresetByAddedOrder(1)->grid, "CM87vu") == 0);
+
+    // target list still prints #1 CM97bb, #2 CM87vu (uses: 2), #3 CM88no in order added
+    usbOut.clear();
+    cli.executeCommand("target list", 7465, CLI_SOURCE_USB);
+    size_t pos1 = usbOut.find("#1: CM97bb");
+    size_t pos2 = usbOut.find("#2: CM87vu");
+    size_t pos3 = usbOut.find("#3: CM88no");
+    ASSERT_TRUE(pos1 != std::string::npos && pos2 != std::string::npos && pos3 != std::string::npos);
+    ASSERT_TRUE(pos1 < pos2 && pos2 < pos3);
+    ASSERT_TRUE(usbOut.find("uses: 2, slot: t1") != std::string::npos);
+
+    usbOut.clear();
+    cli.executeCommand("target show", 7466, CLI_SOURCE_USB);
+    ASSERT_TRUE(usbOut.find("#1: CM97bb") != std::string::npos);
+    usbOut.clear();
+    cli.executeCommand("target history", 7467, CLI_SOURCE_USB);
+    ASSERT_TRUE(usbOut.find("#1: CM97bb") != std::string::npos);
+
+    usbOut.clear();
+    cli.executeCommand("target select", 7470, CLI_SOURCE_USB);
+    ASSERT_TRUE(usbOut.find("[TARGET ERROR] Usage: target select <INDEX>") != std::string::npos);
+
+    usbOut.clear();
+    cli.executeCommand("target 99", 7480, CLI_SOURCE_USB);
+    ASSERT_TRUE(usbOut.find("[TARGET ERROR] Preset #99 out of range") != std::string::npos);
+
+    // 9c. USB: target zero clears all use counts while retaining the list (and bare target reset is rejected)
+    usbOut.clear();
+    cli.executeCommand("target reset", 7484, CLI_SOURCE_USB);
+    ASSERT_TRUE(usbOut.find("[TARGET ERROR]") != std::string::npos);
+
+    usbOut.clear();
+    cli.executeCommand("target zero foo", 7485, CLI_SOURCE_USB);
+    ASSERT_TRUE(usbOut.find("[TARGET ERROR] Usage: target zero") != std::string::npos);
+
+    usbOut.clear();
+    cli.executeCommand("target zero", 7490, CLI_SOURCE_USB);
+    ASSERT_TRUE(usbOut.find("[TARGET] Zeroed use counts for 3 presets.") != std::string::npos);
+    ASSERT_TRUE(presetMgr.getCount() == 3);
+    ASSERT_STR_EQ(presetMgr.getPreset(0)->grid, "CM97bb");
+    ASSERT_TRUE(presetMgr.getPreset(0)->useCount == 0 && presetMgr.getPreset(0)->lastUsedTime == 0);
+    ASSERT_TRUE(presetMgr.getPreset(1)->useCount == 0 && presetMgr.getPreset(1)->lastUsedTime == 0);
+    ASSERT_TRUE(presetMgr.getPreset(2)->useCount == 0 && presetMgr.getPreset(2)->lastUsedTime == 0);
+
+    usbOut.clear();
+    cli.executeCommand("target list", 7492, CLI_SOURCE_USB);
+    ASSERT_TRUE(usbOut.find("#2: CM87vu") != std::string::npos);
+    ASSERT_TRUE(usbOut.find("uses: 2") == std::string::npos);
+
+    // Selecting #3 after zeroing restarts "most used" learning with CM88no at GUI index 0
+    usbOut.clear();
+    cli.executeCommand("target 3", 7494, CLI_SOURCE_USB);
+    ASSERT_TRUE(usbOut.find("[TARGET] Selected #3: CM88no") != std::string::npos);
+    ASSERT_STR_EQ(presetMgr.getPreset(0)->grid, "CM88no");
+    ASSERT_TRUE(presetMgr.getPreset(0)->useCount == 1);
+
+    usbOut.clear();
+    cli.executeCommand("target zero counts", 7496, CLI_SOURCE_USB);
+    ASSERT_TRUE(usbOut.find("[TARGET] Zeroed use counts for 3 presets.") != std::string::npos);
+    ASSERT_TRUE(presetMgr.getPreset(0)->useCount == 0);
+
+    // 10. USB: target del by 1-based order-added index (#1 = CM97bb) and by grid
+    usbOut.clear();
+    cli.executeCommand("target del 1", 7500, CLI_SOURCE_USB);
+    ASSERT_TRUE(usbOut.find("[TARGET] Deleted #1: CM97bb") != std::string::npos);
+    ASSERT_TRUE(presetMgr.getCount() == 2);
+    // Remaining CLI order: #1 CM87vu, #2 CM88no (preserved across NVS reload)
+    TargetPresetManager reloadedCli;
+    reloadedCli.begin();
+    ASSERT_STR_EQ(reloadedCli.getPresetByAddedOrder(0)->grid, "CM87vu");
+    ASSERT_STR_EQ(reloadedCli.getPresetByAddedOrder(1)->grid, "CM88no");
+
+    usbOut.clear();
+    cli.executeCommand("target del cm87vu", 7600, CLI_SOURCE_USB);
+    ASSERT_TRUE(usbOut.find("[TARGET] Deleted #1: CM87vu") != std::string::npos);
+    ASSERT_TRUE(presetMgr.getCount() == 1);
+
+    usbOut.clear();
+    cli.executeCommand("target del 99", 7700, CLI_SOURCE_USB);
+    ASSERT_TRUE(usbOut.find("[TARGET ERROR]") != std::string::npos);
+
+    usbOut.clear();
+    cli.executeCommand("target del DM99zz", 7800, CLI_SOURCE_USB);
+    ASSERT_TRUE(usbOut.find("[TARGET ERROR]") != std::string::npos);
+
+    // 11. USB: target clear wipes immediately (batch provisioning friendly)
+    usbOut.clear();
+    cli.executeCommand("target clear", 7900, CLI_SOURCE_USB);
+    ASSERT_TRUE(usbOut.find("[TARGET] Cleared all presets.") != std::string::npos);
+    ASSERT_TRUE(presetMgr.isEmpty());
+
+    // 12. BLE path: batch provisioning & subcommands over BLE UART
+    ble.setConnected(true);
+    ble.setSubscribed(true);
+    ble.clearTxBuffer();
+
+    const char *bleScript =
+        "target clear\n"
+        "target add CM87vu DIABLO\n"
+        "target add CM97be UMUNHUM\n"
+        "target add CM97bb LOMA PRIETA\n"
+        "target charlie mike eight eight quebec kilo\n"
+        "target save\n"
+        "target max 30\n"
+        "target list\n"
+        "target del 2\n";
+    ble.simulateRx(bleScript, std::strlen(bleScript));
+    for (unsigned long t = 8000; t < 9000; t += 20) {
+        cli.update(t);
+    }
+
+    const std::string &bleOut = ble.getTxBuffer();
+    ASSERT_TRUE(bleOut.find("[TARGET] Cleared all presets.") != std::string::npos);
+    ASSERT_TRUE(bleOut.find("[TARGET] Added #1: CM87vu (DIABLO)") != std::string::npos);
+    ASSERT_TRUE(bleOut.find("[TARGET] Added #2: CM97be (UMUNHUM)") != std::string::npos);
+    ASSERT_TRUE(bleOut.find("[TARGET] Added #3: CM97bb (LOMA PRIETA)") != std::string::npos);
+    ASSERT_TRUE(bleOut.find("[TARGET] Target set to CM88qk") != std::string::npos);
+    ASSERT_STR_EQ(app.getTargetGrid(), "CM88qk");
+    ASSERT_TRUE(bleOut.find("[TARGET] Saved #") != std::string::npos);
+    ASSERT_TRUE(bleOut.find("CM88qk") != std::string::npos);
+    ASSERT_TRUE(bleOut.find("Max presets capacity set to 30") != std::string::npos);
+    ASSERT_TRUE(bleOut.find("Saved Target Presets (4/30)") != std::string::npos);
+    ASSERT_TRUE(bleOut.find("[TARGET] Deleted #2:") != std::string::npos);
+    ASSERT_TRUE(presetMgr.getCount() == 3);
+    ASSERT_TRUE(presetMgr.getMaxTargets() == 30);
+
+    PASS();
+}
+
+void test_target_list_modal_formatters() {
+    TEST("TargetListModal header and live geodetic row formatters");
+
+    char buf[64];
+    TargetListModal::formatHeader(3, 100, buf, sizeof(buf));
+    ASSERT_STR_EQ(buf, "SAVED TARGET GRIDS (3/100)");
+
+    TargetListModal::formatHeader(0, 50, buf, sizeof(buf));
+    ASSERT_STR_EQ(buf, "SAVED TARGET GRIDS (0/50)");
+
+    // Buffer safety
+    TargetListModal::formatHeader(1, 10, nullptr, 10);
+    TargetListModal::formatHeader(1, 10, buf, 0);
+
+    GeoPoint here;
+    ASSERT_TRUE(gridToGeoPoint("CM87wa", here));
+
+    TargetPreset diablo("CM87vu", "DIABLO", 2, 100);
+    TargetListModal::formatPresetRow(0, diablo, here, true, buf, sizeof(buf));
+    ASSERT_TRUE(std::strncmp(buf, "1. CM87vu DIABLO ", 17) == 0);
+    ASSERT_TRUE(std::strchr(buf, '\xf8') != nullptr);
+    ASSERT_TRUE(std::strstr(buf, "---") == nullptr);
+    ASSERT_TRUE(buf[std::strlen(buf) - 1] == 'k');
+
+    // No GPS -> placeholder bearing and distance
+    TargetListModal::formatPresetRow(0, diablo, here, false, buf, sizeof(buf));
+    ASSERT_STR_EQ(buf, "1. CM87vu DIABLO  ---\xf8 ---k");
+
+    // Empty label -> spaces keep columns aligned
+    TargetPreset noLabel("CM97be", "", 0, 0);
+    TargetListModal::formatPresetRow(3, noLabel, here, false, buf, sizeof(buf));
+    ASSERT_STR_EQ(buf, "4. CM97be         ---\xf8 ---k");
+
+    PASS();
+}
+
+void test_display_ui_row2_label_behavior() {
+    TEST("DisplayUi Row 2 target label formatting, edit-mode clear, and Rover Mode clear");
+
+    char buf[32];
+
+    // Normal Bearing Mode, not editing -> shows label
+    DisplayUi::formatTargetLabel("MT DIABLO", false, false, buf, sizeof(buf));
+    ASSERT_STR_EQ(buf, "MT DIABLO");
+
+    // Truncates to MAX_TARGET_LABEL_LEN - 1 (16 chars)
+    DisplayUi::formatTargetLabel("LOMA PRIETA SUMMIT", false, false, buf, sizeof(buf));
+    ASSERT_STR_EQ(buf, "LOMA PRIETA SUMM");
+
+    // Editing mode -> cleared so '^' caret has full space
+    DisplayUi::formatTargetLabel("MT DIABLO", true, false, buf, sizeof(buf));
+    ASSERT_STR_EQ(buf, "");
+
+    // Rover mode -> cleared
+    DisplayUi::formatTargetLabel("MT DIABLO", false, true, buf, sizeof(buf));
+    ASSERT_STR_EQ(buf, "");
+
+    // Null / empty -> empty
+    DisplayUi::formatTargetLabel(nullptr, false, false, buf, sizeof(buf));
+    ASSERT_STR_EQ(buf, "");
+    DisplayUi::formatTargetLabel("", false, false, buf, sizeof(buf));
+    ASSERT_STR_EQ(buf, "");
+
+    // Host renderTargetGrid / MainScreenState smoke check
+    DisplayUi ui;
+    ui.renderTargetGrid("CM87vu", 0, false, "DIABLO");
+    ui.renderTargetGrid("CM87vu", 2, true, "DIABLO");
+    MainScreenState st;
+    st.myGrid = "CM87wa";
+    st.targetGrid = "CM87vu";
+    st.targetLabel = "DIABLO";
+    ui.redrawMainScreen(st);
+
+    PASS();
+}
+
+void test_input_manager_target_list_hit_testing_and_gestures() {
+    TEST("InputManager Row 2 long-press, TargetList hit-testing, and 1.5s hold-to-clear");
+
+    InputManager input;
+    UserEvent ev;
+
+    // 1. Preserve Row 2 character touch hitboxes on short tap (< 500 ms) in Normal mode
+    input.setUiMode(UiMode::Normal);
+    input.injectTouch(true, REMSTARTX + 2 * CHAR_W(REMSIZE) + 10, REMSTARTY + 20, 1000);
+    input.injectTouch(false, 0, 0, 1100);
+    ASSERT_TRUE(input.pollEvent(ev));
+    ASSERT_TRUE(ev.type == UserEventType::TouchGridCharacter);
+    ASSERT_TRUE(ev.gridIndex == 2);
+    ASSERT_TRUE(!input.pollEvent(ev));
+
+    // Preserve EncoderButtonPressed in Normal mode
+    input.injectEncoderButton(true);
+    ASSERT_TRUE(input.pollEvent(ev));
+    ASSERT_TRUE(ev.type == UserEventType::EncoderButtonPressed);
+
+    // 2. Row 2 long-press (> 500 ms) triggers LongPressTargetGridTriggered without TouchGridCharacter
+    input.injectTouch(true, REMSTARTX + 10, REMSTARTY + 20, 2000);
+    input.injectTouch(true, REMSTARTX + 10, REMSTARTY + 20, 2499);
+    ASSERT_TRUE(!input.pollEvent(ev)); // Not yet at 500 ms
+    input.injectTouch(true, REMSTARTX + 10, REMSTARTY + 20, 2500);
+    ASSERT_TRUE(input.pollEvent(ev));
+    ASSERT_TRUE(ev.type == UserEventType::LongPressTargetGridTriggered);
+    input.injectTouch(false, 0, 0, 2600);
+    ASSERT_TRUE(!input.pollEvent(ev)); // No TouchGridCharacter on release
+
+    // 3. TargetList modal hit-testing helpers
+    ASSERT_TRUE(InputManager::getTargetModalRowFromTouch(TARGET_LIST_X + 20, TARGET_LIST_Y + 20) == 0);
+    ASSERT_TRUE(InputManager::getTargetModalRowFromTouch(TARGET_LIST_X + 20, TARGET_LIST_Y + TARGET_LIST_ROW_PITCH + 20) == 1);
+    ASSERT_TRUE(InputManager::getTargetModalRowFromTouch(TARGET_LIST_X + 20, TARGET_LIST_Y + 2 * TARGET_LIST_ROW_PITCH + 20) == 2);
+    ASSERT_TRUE(InputManager::getTargetModalRowFromTouch(TARGET_LIST_X - 5, TARGET_LIST_Y + 20) == -1);
+
+    ASSERT_TRUE(InputManager::getTargetModalButtonFromTouch(TARGET_BTN_LOAD_X + 10, TARGET_BTN_LOAD_Y + 10) == ModalButtonId::TargetLoad);
+    ASSERT_TRUE(InputManager::getTargetModalButtonFromTouch(TARGET_BTN_DEL_X + 10, TARGET_BTN_DEL_Y + 10) == ModalButtonId::TargetDelete);
+    ASSERT_TRUE(InputManager::getTargetModalButtonFromTouch(TARGET_BTN_SAVE_X + 10, TARGET_BTN_SAVE_Y + 10) == ModalButtonId::TargetSave);
+    ASSERT_TRUE(InputManager::getTargetModalButtonFromTouch(TARGET_BTN_CLEAR_X + 10, TARGET_BTN_CLEAR_Y + 10) == ModalButtonId::TargetClear);
+    ASSERT_TRUE(InputManager::getTargetModalButtonFromTouch(TARGET_BTN_CANCEL_X + 10, TARGET_BTN_CANCEL_Y + 10) == ModalButtonId::Cancel);
+    ASSERT_TRUE(InputManager::getTargetModalButtonFromTouch(10, 10) == ModalButtonId::None);
+
+    // 4. TargetList row tap and action buttons
+    input.setUiMode(UiMode::TargetList);
+    input.injectTouch(true, TARGET_LIST_X + 30, TARGET_LIST_Y + TARGET_LIST_ROW_PITCH + 10, 3000);
+    input.injectTouch(false, 0, 0, 3080);
+    ASSERT_TRUE(input.pollEvent(ev));
+    ASSERT_TRUE(ev.type == UserEventType::TargetRowTouched);
+    ASSERT_TRUE(ev.gridIndex == 1);
+
+    // [ LOAD ]
+    input.injectTouch(true, TARGET_BTN_LOAD_X + 10, TARGET_BTN_LOAD_Y + 10, 3300);
+    ASSERT_TRUE(input.pollEvent(ev));
+    ASSERT_TRUE(ev.type == UserEventType::ModalButtonDown);
+    ASSERT_TRUE(ev.buttonId == ModalButtonId::TargetLoad);
+    input.injectTouch(false, 0, 0, 3380);
+    ASSERT_TRUE(input.pollEvent(ev));
+    ASSERT_TRUE(ev.type == UserEventType::LoadTargetTriggered);
+
+    // [ DEL ]
+    input.injectTouch(true, TARGET_BTN_DEL_X + 10, TARGET_BTN_DEL_Y + 10, 3600);
+    ASSERT_TRUE(input.pollEvent(ev));
+    ASSERT_TRUE(ev.type == UserEventType::ModalButtonDown);
+    input.injectTouch(false, 0, 0, 3680);
+    ASSERT_TRUE(input.pollEvent(ev));
+    ASSERT_TRUE(ev.type == UserEventType::DeleteTargetTriggered);
+
+    // [ + SAVE ]
+    input.injectTouch(true, TARGET_BTN_SAVE_X + 10, TARGET_BTN_SAVE_Y + 10, 3900);
+    ASSERT_TRUE(input.pollEvent(ev));
+    ASSERT_TRUE(ev.type == UserEventType::ModalButtonDown);
+    input.injectTouch(false, 0, 0, 3980);
+    ASSERT_TRUE(input.pollEvent(ev));
+    ASSERT_TRUE(ev.type == UserEventType::SaveTargetTriggered);
+
+    // [ CANCEL ]
+    input.injectTouch(true, TARGET_BTN_CANCEL_X + 10, TARGET_BTN_CANCEL_Y + 10, 4200);
+    ASSERT_TRUE(input.pollEvent(ev));
+    ASSERT_TRUE(ev.type == UserEventType::ModalButtonDown);
+    input.injectTouch(false, 0, 0, 4280);
+    ASSERT_TRUE(input.pollEvent(ev));
+    ASSERT_TRUE(ev.type == UserEventType::CancelModalTriggered);
+
+    // 5. Hold-to-Clear All: < 1500 ms aborts with no ClearButtonCommitted
+    input.injectTouch(true, TARGET_BTN_CLEAR_X + 50, TARGET_BTN_CLEAR_Y + 20, 5000);
+    input.injectTouch(true, TARGET_BTN_CLEAR_X + 50, TARGET_BTN_CLEAR_Y + 20, 6400); // 1400 ms
+    ASSERT_TRUE(input.pollEvent(ev));
+    ASSERT_TRUE(ev.type == UserEventType::HoldClearButtonProgress);
+    ASSERT_TRUE(ev.progress > 0.9f && ev.progress < 1.0f);
+    input.injectTouch(false, 0, 0, 6450);
+    ASSERT_TRUE(input.pollEvent(ev));
+    ASSERT_TRUE(ev.type == UserEventType::HoldClearButtonProgress);
+    ASSERT_NEAR(ev.progress, 0.0f, 0.001f);
+    ASSERT_TRUE(input.pollEvent(ev));
+    ASSERT_TRUE(ev.type == UserEventType::ModalButtonUp);
+    ASSERT_TRUE(!input.pollEvent(ev));
+
+    // 6. Hold-to-Clear All: >= 1500 ms commits ClearButtonCommitted
+    input.injectTouch(true, TARGET_BTN_CLEAR_X + 50, TARGET_BTN_CLEAR_Y + 20, 7000);
+    input.injectTouch(true, TARGET_BTN_CLEAR_X + 50, TARGET_BTN_CLEAR_Y + 20, 8500); // 1500 ms
+    ASSERT_TRUE(input.pollEvent(ev));
+    ASSERT_TRUE(ev.type == UserEventType::HoldClearButtonProgress);
+    ASSERT_NEAR(ev.progress, 1.0f, 0.001f);
+    ASSERT_TRUE(input.pollEvent(ev));
+    ASSERT_TRUE(ev.type == UserEventType::ClearButtonCommitted);
+    input.injectTouch(false, 0, 0, 8600);
+    ASSERT_TRUE(input.pollEvent(ev));
+    ASSERT_TRUE(ev.type == UserEventType::ModalButtonUp);
+    ASSERT_TRUE(!input.pollEvent(ev));
+
+    PASS();
+}
+
+void test_app_controller_target_list_workflow_e2e() {
+    TEST("AppController TargetList E2E: pre-load, Row 2 label, save, Rover cancel/timeout/load");
+
+    TargetPresetManager::resetHostStorage();
+    RoverLogManager::resetHostStorage();
+
+    Board board;
+    DisplayUi ui;
+    InputManager input;
+    GpsManager gps;
+    Calibration cal;
+    GpsSimulator sim;
+    SerialCli cli(gps, cal, sim);
+    RoverLogManager roverLog;
+    QsoLogManager qsoLog;
+    TargetPresetManager targetMgr;
+
+    AppController app(board, ui, input, gps, cal, sim, cli, &roverLog, nullptr, &qsoLog, &targetMgr);
+    app.begin();
+
+    GeoPoint siteA(38.000, -122.100, true);
+    app.setCurrentPosition(siteA);
+    app.update(500);
+
+    // 1. Pre-load presets via SerialCli
+    cli.executeCommand("target add CM87vu DIABLO");
+    cli.executeCommand("target add CM97be UMUNHUM");
+    cli.executeCommand("target add CM97bb LOMA P");
+    cli.executeCommand("target add CM88no ST HELN");
+    ASSERT_TRUE(targetMgr.getCount() == 4);
+
+    // 2. Active target label lookup (saved preset + regional summit fallback)
+    cli.executeCommand("target CM87vu");
+    ASSERT_STR_EQ(app.getTargetGrid(), "CM87vu");
+    ASSERT_TRUE(app.resolveTargetLabel(app.getTargetGrid()) != nullptr);
+    ASSERT_STR_EQ(app.resolveTargetLabel(app.getTargetGrid()), "DIABLO");
+
+    // Regional summit fallback when not in saved list
+    app.setTargetGrid("DM04ms", 600);
+    ASSERT_TRUE(app.resolveTargetLabel(app.getTargetGrid()) != nullptr);
+    ASSERT_STR_EQ(app.resolveTargetLabel(app.getTargetGrid()), "FRAZIER");
+
+    // Unlisted ad-hoc grid has no label
+    app.setTargetGrid("CM98aa", 700);
+    ASSERT_TRUE(app.resolveTargetLabel(app.getTargetGrid()) == nullptr);
+
+    // 3. Open TargetList modal via Row 2 long-press
+    UserEvent evOpen;
+    evOpen.type = UserEventType::LongPressTargetGridTriggered;
+    app.handleUserEvent(evOpen, 1000);
+    ASSERT_TRUE(app.getUiMode() == UiMode::TargetList);
+    ASSERT_TRUE(app.getSelectedPresetIndex() == 0);
+    ASSERT_TRUE(app.getPresetScrollOffset() == 0);
+
+    // 4. [ + SAVE CURRENT ] saves CM98aa into presets (count becomes 5)
+    UserEvent evSave;
+    evSave.type = UserEventType::SaveTargetTriggered;
+    app.handleUserEvent(evSave, 1200);
+    ASSERT_TRUE(targetMgr.getCount() == 5);
+    int savedIdx = targetMgr.findIndexByGrid("CM98aa");
+    ASSERT_TRUE(savedIdx >= 0);
+    ASSERT_TRUE(app.getSelectedPresetIndex() == static_cast<size_t>(savedIdx));
+
+    // 5. Encoder rotation scrolls selection & scrollOffset across 5 items (3 visible rows)
+    // Start from top
+    UserEvent evCcw;
+    evCcw.type = UserEventType::RotateCounterClockwise;
+    for (int i = 0; i < 6; ++i) {
+        app.handleUserEvent(evCcw, 1300 + i * 10);
+    }
+    ASSERT_TRUE(app.getSelectedPresetIndex() == 0);
+    ASSERT_TRUE(app.getPresetScrollOffset() == 0);
+
+    UserEvent evCw;
+    evCw.type = UserEventType::RotateClockwise;
+    for (int i = 0; i < 4; ++i) {
+        app.handleUserEvent(evCw, 1400 + i * 10);
+    }
+    ASSERT_TRUE(app.getSelectedPresetIndex() == 4);
+    ASSERT_TRUE(app.getPresetScrollOffset() == 2); // visible rows: 2, 3, 4
+
+    // 6. Tap visible row 1 -> selects index (scrollOffset + 1) = 3
+    UserEvent evRow;
+    evRow.type = UserEventType::TargetRowTouched;
+    evRow.gridIndex = 1;
+    app.handleUserEvent(evRow, 1500);
+    ASSERT_TRUE(app.getSelectedPresetIndex() == 3);
+
+    // 7. Delete CM98aa via [ DELETE ITEM ]
+    // Find CM98aa's index and select it via encoder
+    int idxCm98 = targetMgr.findIndexByGrid("CM98aa");
+    ASSERT_TRUE(idxCm98 >= 0);
+    while (app.getSelectedPresetIndex() < static_cast<size_t>(idxCm98)) {
+        app.handleUserEvent(evCw, 1550);
+    }
+    while (app.getSelectedPresetIndex() > static_cast<size_t>(idxCm98)) {
+        app.handleUserEvent(evCcw, 1560);
+    }
+    UserEvent evDel;
+    evDel.type = UserEventType::DeleteTargetTriggered;
+    app.handleUserEvent(evDel, 1600);
+    ASSERT_TRUE(targetMgr.getCount() == 4);
+    ASSERT_TRUE(targetMgr.findIndexByGrid("CM98aa") < 0);
+
+    // 8. Cancel modal returns to Normal
+    UserEvent evCancel;
+    evCancel.type = UserEventType::CancelModalTriggered;
+    app.handleUserEvent(evCancel, 1700);
+    app.update(1850);
+    ASSERT_TRUE(app.getUiMode() == UiMode::Normal);
+
+    // 9. Enter Rover Mode -> Row 2 label is suppressed
+    app.startRoverMode(2000);
+    ASSERT_TRUE(app.isRoverMode());
+    ASSERT_TRUE(app.resolveTargetLabel(app.getTargetGrid()) == nullptr);
+
+    // 10. Open TargetList in Rover Mode -> [ CANCEL ] must preserve Rover Mode
+    app.handleUserEvent(evOpen, 3000);
+    ASSERT_TRUE(app.getUiMode() == UiMode::TargetList);
+    app.handleUserEvent(evCancel, 3100);
+    app.update(3250);
+    ASSERT_TRUE(app.getUiMode() == UiMode::Normal);
+    ASSERT_TRUE(app.isRoverMode());
+
+    // 11. Open TargetList in Rover Mode -> 30s inactivity timeout must preserve Rover Mode
+    app.handleUserEvent(evOpen, 4000);
+    ASSERT_TRUE(app.getUiMode() == UiMode::TargetList);
+    app.update(4000 + TARGET_MODAL_TIMEOUT_MS - 1);
+    ASSERT_TRUE(app.getUiMode() == UiMode::TargetList);
+    app.update(4000 + TARGET_MODAL_TIMEOUT_MS);
+    ASSERT_TRUE(app.getUiMode() == UiMode::Normal);
+    ASSERT_TRUE(app.isRoverMode());
+
+    // 12. Open TargetList in Rover Mode -> [ LOAD / SELECT ] UMUNHUM (CM97be) stops Rover Mode & updates useCount
+    app.handleUserEvent(evOpen, 40000);
+    ASSERT_TRUE(app.getUiMode() == UiMode::TargetList);
+    int umIdx = targetMgr.findIndexByGrid("CM97be");
+    ASSERT_TRUE(umIdx >= 0);
+    while (app.getSelectedPresetIndex() < static_cast<size_t>(umIdx)) {
+        app.handleUserEvent(evCw, 40050);
+    }
+    UserEvent evLoad;
+    evLoad.type = UserEventType::LoadTargetTriggered;
+    app.handleUserEvent(evLoad, 40100);
+
+    ASSERT_TRUE(app.getUiMode() == UiMode::Normal);
+    ASSERT_TRUE(!app.isRoverMode());
+    ASSERT_STR_EQ(app.getTargetGrid(), "CM97be");
+    ASSERT_TRUE(app.resolveTargetLabel("CM97be") != nullptr);
+    ASSERT_STR_EQ(app.resolveTargetLabel("CM97be"), "UMUNHUM");
+    ASSERT_TRUE(targetMgr.getPreset(0) != nullptr);
+    ASSERT_STR_EQ(targetMgr.getPreset(0)->grid, "CM97be");
+    ASSERT_TRUE(targetMgr.getPreset(0)->useCount == 1);
+
+    // 13. EncoderButtonPressed in Normal mode does nothing; in TargetList with touch does nothing;
+    //     in TargetList with no touch loads selected preset ([ USE ])
+    UserEvent evEncBtn;
+    evEncBtn.type = UserEventType::EncoderButtonPressed;
+    app.handleUserEvent(evEncBtn, 40900);
+    ASSERT_TRUE(app.getUiMode() == UiMode::Normal);
+    ASSERT_TRUE(!app.getGridEditor().isEditing());
+
+    app.handleUserEvent(evOpen, 41000);
+    int diaIdx = targetMgr.findIndexByGrid("CM87vu");
+    ASSERT_TRUE(diaIdx >= 0);
+    while (app.getSelectedPresetIndex() < static_cast<size_t>(diaIdx)) {
+        app.handleUserEvent(evCw, 41050);
+    }
+    // Touching the screen while pressing the bezel must NOT execute [ USE ]
+    input.injectTouch(true, 240, 240, 41080);
+    ASSERT_TRUE(input.isTouching());
+    app.handleUserEvent(evEncBtn, 41090);
+    ASSERT_TRUE(app.getUiMode() == UiMode::TargetList);
+    ASSERT_STR_EQ(app.getTargetGrid(), "CM97be");
+    input.injectTouch(false, 0, 0, 41095);
+    ASSERT_TRUE(!input.isTouching());
+
+    // Pressing the bezel with no touch on the screen executes [ USE ]
+    app.handleUserEvent(evEncBtn, 41100);
+    ASSERT_TRUE(app.getUiMode() == UiMode::Normal);
+    ASSERT_STR_EQ(app.getTargetGrid(), "CM87vu");
+    ASSERT_TRUE(targetMgr.findByGrid("CM87vu")->useCount == 1);
+
+    // 14. [ HOLD TO CLEAR ALL ] wipes list
+    app.handleUserEvent(evOpen, 42000);
+    UserEvent evClear;
+    evClear.type = UserEventType::ClearButtonCommitted;
+    app.handleUserEvent(evClear, 43500);
+    ASSERT_TRUE(targetMgr.isEmpty());
+    ASSERT_TRUE(app.getUiMode() == UiMode::TargetList);
+
+    // 15. Touch-driven [ + SAVE ] -> [ CANCEL ] (including padded Cancel hitbox) returns to Normal
+    input.injectTouch(true, TARGET_BTN_SAVE_X + 10, TARGET_BTN_SAVE_Y + 10, 44000);
+    app.update(44000);
+    input.injectTouch(false, 0, 0, 44080);
+    app.update(44080);
+    ASSERT_TRUE(targetMgr.getCount() == 1);
+    ASSERT_TRUE(app.getUiMode() == UiMode::TargetList);
+
+    input.injectTouch(true, TARGET_BTN_CANCEL_X - 10, TARGET_BTN_CANCEL_Y + TARGET_BTN_CANCEL_H + 6, 44250);
+    app.update(44250);
+    input.injectTouch(false, 0, 0, 44330);
+    app.update(44330);
+    app.update(44460); // >= 120 ms pendingModalButtonRelease_
+    ASSERT_TRUE(app.getUiMode() == UiMode::Normal);
+
+    // 16. CLI 'target save <name>' updates preset label and refreshes active target label
+    app.setTargetGrid("CM98bb", 45000);
+    ASSERT_TRUE(app.resolveTargetLabel(app.getTargetGrid()) == nullptr);
+    cli.executeCommand("target save MY SUMMIT");
+    ASSERT_TRUE(app.resolveTargetLabel(app.getTargetGrid()) != nullptr);
+    ASSERT_STR_EQ(app.resolveTargetLabel(app.getTargetGrid()), "MY SUMMIT");
+
+    // 17. Voice-dictated target preset commands ('target add <phonetics> <label>', 'target del one', 'target del <phonetics>')
+    cli.executeCommand("target clear");
+    cli.executeCommand("target add charlie mike 87 victor uniform MT DIABLO");
+    cli.executeCommand("target add charlie mike nine seven bravo echo UMUNHUM");
+    ASSERT_TRUE(targetMgr.getCount() == 2);
+    ASSERT_TRUE(targetMgr.findByGrid("CM87vu") != nullptr);
+    ASSERT_STR_EQ(targetMgr.findByGrid("CM87vu")->label, "MT DIABLO");
+    ASSERT_TRUE(targetMgr.findByGrid("CM97be") != nullptr);
+
+    cli.executeCommand("target del one");
+    ASSERT_TRUE(targetMgr.getCount() == 1);
+
+    // 18. Delete remaining preset by phonetic grid
+    if (targetMgr.findByGrid("CM87vu") != nullptr) {
+        cli.executeCommand("target del charlie mike 87 victor uniform");
+    } else {
+        cli.executeCommand("target del charlie mike nine seven bravo echo");
+    }
+    ASSERT_TRUE(targetMgr.isEmpty());
+
+    PASS();
+}
+
+void test_target_preset_review_fixes() {
+    TEST("Target preset review fixes: BLE list streaming, modal guards, row width, punctuation, corrupt NVS");
+
+    TargetPresetManager::resetHostStorage();
+    Board board;
+    DisplayUi ui;
+    InputManager input;
+    GpsManager gps;
+    Calibration cal;
+    GpsSimulator sim;
+    RoverLogManager roverLog;
+    QsoLogManager qsoLog;
+    TargetPresetManager targetMgr;
+    BleSerialManager ble;
+    SerialCli cli(gps, cal, sim, &roverLog, &ble, &qsoLog, &targetMgr);
+    AppController app(board, ui, input, gps, cal, sim, cli, &roverLog, &ble, &qsoLog, &targetMgr);
+
+    app.begin();
+    GeoPoint here;
+    ASSERT_TRUE(gridToGeoPoint("CM87wa", here));
+    app.setCurrentPosition(here);
+
+    // 1. FormatPresetRow width <= 27 chars at index 499 and distKm >= 1000
+    char rowBuf[48];
+    GeoPoint farPt;
+    ASSERT_TRUE(gridToGeoPoint("FN31pr", farPt)); // ~4000+ km from CM87wa
+    TargetPreset farPreset("FN31pr", "LONG SUMMIT NAME", 10, 100);
+    TargetListModal::formatPresetRow(499, farPreset, here, true, rowBuf, sizeof(rowBuf));
+    ASSERT_TRUE(std::strlen(rowBuf) <= 27);
+    ASSERT_TRUE(std::strncmp(rowBuf, "500. FN31pr ", 12) == 0);
+
+    // 2. Voice punctuation variants: trailing periods & leading comma before label
+    cli.executeCommand("target add charlie mike 87 victor uniform, mt diablo");
+    ASSERT_TRUE(targetMgr.getCount() == 1);
+    ASSERT_STR_EQ(targetMgr.findByGrid("CM87vu")->label, "mt diablo");
+    cli.executeCommand("target list.");
+    cli.executeCommand("target del 1.");
+    ASSERT_TRUE(targetMgr.isEmpty());
+    cli.executeCommand("target add CM97be UMUNHUM");
+    cli.executeCommand("target clear.");
+    ASSERT_TRUE(targetMgr.isEmpty());
+
+    // 3. [ CLOSE ] followed by [ USE ] within 120 ms does not leave stale Cancel pending
+    targetMgr.addOrUpdatePreset("CM87vu", "DIABLO", 100);
+    UserEvent evOpen, evCancel, evLoad;
+    evOpen.type = UserEventType::LongPressTargetGridTriggered;
+    evCancel.type = UserEventType::CancelModalTriggered;
+    evLoad.type = UserEventType::LoadTargetTriggered;
+
+    app.handleUserEvent(evOpen, 1000);
+    app.handleUserEvent(evCancel, 1020);
+    app.handleUserEvent(evLoad, 1050); // Exits to Normal before 120 ms timer
+    ASSERT_TRUE(app.getUiMode() == UiMode::Normal);
+    // Re-open Calibration modal before 1140 ms and verify stale Cancel does NOT close it
+    UserEvent evCal;
+    evCal.type = UserEventType::TouchCalibrationPill;
+    app.handleUserEvent(evCal, 1080);
+    ASSERT_TRUE(app.getUiMode() == UiMode::Calibrating);
+    app.update(1200);
+    ASSERT_TRUE(app.getUiMode() == UiMode::Calibrating);
+    app.handleUserEvent(evCancel, 1210);
+    app.update(1350);
+    ASSERT_TRUE(app.getUiMode() == UiMode::Normal);
+
+    // 4. CLI 'target <grid>' in Rover Mode while TargetList is open does not clobber UiMode
+    app.startRoverMode(2000);
+    ASSERT_TRUE(app.isRoverMode());
+    app.handleUserEvent(evOpen, 2100);
+    ASSERT_TRUE(app.getUiMode() == UiMode::TargetList);
+    cli.executeCommand("target CM97be");
+    ASSERT_TRUE(!app.isRoverMode());
+    ASSERT_TRUE(app.getUiMode() == UiMode::TargetList); // Modal remains active
+
+    // 5. CLI 'target max 10' / 'target del' while TargetList is open clamps selection
+    for (int i = 0; i < 15; ++i) {
+        char g[7];
+        std::snprintf(g, sizeof(g), "CM8%duu", i % 10);
+        if (i >= 10) std::snprintf(g, sizeof(g), "CM9%duu", i - 10);
+        targetMgr.addOrUpdatePreset(g, "TEST", static_cast<uint32_t>(i + 1));
+    }
+    UserEvent evCw;
+    evCw.type = UserEventType::RotateClockwise;
+    for (int i = 0; i < 14; ++i) {
+        app.handleUserEvent(evCw, 2200 + i);
+    }
+    ASSERT_TRUE(app.getSelectedPresetIndex() == 14);
+    cli.executeCommand("target max 10");
+    ASSERT_TRUE(targetMgr.getCount() == 10);
+    ASSERT_TRUE(app.getSelectedPresetIndex() < 10);
+    cli.executeCommand("target clear");
+    ASSERT_TRUE(app.getSelectedPresetIndex() == 0);
+    ASSERT_TRUE(app.getPresetScrollOffset() == 0);
+    app.handleUserEvent(evCancel, 2300);
+    app.update(2450);
+
+    // 6. BLE 'target list' with 350 presets streams without dropping bytes
+    targetMgr.setMaxTargets(350, true);
+    for (int i = 0; i < 350; ++i) {
+        char g[7];
+        g[0] = 'C';
+        g[1] = static_cast<char>('A' + (i / 200));
+        g[2] = static_cast<char>('0' + ((i / 20) % 10));
+        g[3] = static_cast<char>('0' + (i % 10));
+        g[4] = 'a';
+        g[5] = static_cast<char>('a' + ((i / 10) % 2));
+        g[6] = '\0';
+        targetMgr.addOrUpdatePreset(g, "BLE TEST", static_cast<uint32_t>(i + 1));
+    }
+    ASSERT_TRUE(targetMgr.getCount() == 350);
+
+    ble.setConnected(true);
+    ble.setSubscribed(true);
+    ble.setMtu(128);
+    ble.clearTxBuffer();
+
+    ble.simulateRx("target list\n", 12);
+    for (int tick = 0; tick < 400; ++tick) {
+        cli.update(3000 + tick * 10);
+    }
+    const std::string &bleOut = ble.getTxBuffer();
+    ASSERT_TRUE(ble.getTxDroppedBytes() == 0);
+    ASSERT_TRUE(bleOut.find("=== Saved Target Presets (350/350) ===") != std::string::npos);
+    ASSERT_TRUE(bleOut.find("#350:") != std::string::npos);
+    ASSERT_TRUE(bleOut.find("===================================") != std::string::npos);
+
+    // 7. Corrupt NVS entry recovery on loadFromNvs()
+    NvsListStore<TargetPreset> rawStore(TARGET_LOG_NAMESPACE, TARGET_LOG_KEY_COUNT, 't');
+    TargetPreset corrupt("ZZ99zz", "BAD", 5, 50); // Z > R, invalid Maidenhead
+    rawStore.putSlot(0, corrupt);
+    targetMgr.loadFromNvs();
+    ASSERT_TRUE(targetMgr.getCount() == 349);
+    ASSERT_TRUE(targetMgr.findByGrid("ZZ99zz") == nullptr);
+
+    PASS();
+}
+
+void test_migrated_nvs_stores() {
+    TEST("Migrated NvsConfig/NvsListStore paths for RoverLogManager and QsoLogManager");
+
+    // 1. RoverLogManager explicit max_stops flag, truncation, popLastStop, and reload
+    RoverLogManager::resetHostStorage();
+    ASSERT_TRUE(!RoverLogManager::isHostStorageMaxStopsExplicit());
+    ASSERT_TRUE(RoverLogManager::getHostStorageCount() == 0);
+
+    RoverLogManager r1;
+    r1.begin();
+    r1.setMaxStops(12, true);
+    ASSERT_TRUE(RoverLogManager::isHostStorageMaxStopsExplicit());
+    ASSERT_TRUE(RoverLogManager::getHostStorageMaxStops() == 12);
+
+    for (int i = 0; i < 14; ++i) {
+        char grid[9];
+        snprintf(grid, sizeof(grid), "CM87wa%02d", i);
+        r1.appendStop(RoverStop(1000 + i, 37.0 + i * 0.01, -122.0, grid, 20.0f, true));
+    }
+    ASSERT_TRUE(r1.getStopCount() == 12);
+    ASSERT_TRUE(RoverLogManager::getHostStorageCount() == 12);
+    ASSERT_STR_EQ(r1.getStop(0)->grid, "CM87wa02");
+    ASSERT_STR_EQ(r1.getLastStop()->grid, "CM87wa13");
+
+    ASSERT_TRUE(r1.popLastStop());
+    ASSERT_TRUE(RoverLogManager::getHostStorageCount() == 11);
+
+    RoverLogManager r2;
+    r2.begin();
+    ASSERT_TRUE(r2.getMaxStops() == 12);
+    ASSERT_TRUE(r2.getStopCount() == 11);
+    ASSERT_STR_EQ(r2.getStop(0)->grid, "CM87wa02");
+    ASSERT_STR_EQ(r2.getLastStop()->grid, "CM87wa12");
+
+    r2.setMaxStops(10, true);
+    ASSERT_TRUE(r2.getStopCount() == 10);
+    ASSERT_TRUE(RoverLogManager::getHostStorageCount() == 10);
+    ASSERT_STR_EQ(r2.getStop(0)->grid, "CM87wa03");
+
+    r2.clearHistory();
+    ASSERT_TRUE(RoverLogManager::getHostStorageCount() == 0);
+
+    // 2. QsoLogManager ring-buffer rollover persistence, O(1) head-delete, middle-delete, popLastQso
+    QsoLogManager::resetHostStorage();
+    QsoLogManager q1;
+    q1.begin();
+    q1.setMaxQsos(10, true);
+    q1.setDefaultBand("24 GHz", true);
+    q1.setMyCall("K6MG/R", true);
+    q1.setCardTimeoutSec(15, true);
+
+    for (int i = 0; i < 15; ++i) {
+        char call[12];
+        snprintf(call, sizeof(call), "W%dAW", i);
+        q1.appendQso(QsoEntry(2000 + i, call, "10 GHz", 10368100, "CM87wa", "CM88qk", 10.0f + i, 90.0f));
+    }
+    ASSERT_TRUE(q1.getQsoCount() == 10);
+    ASSERT_TRUE(QsoLogManager::getHostStorageCount() == 10);
+
+    // Reload from ring-buffered NVS (nvsHead_ == 5)
+    QsoLogManager q2;
+    q2.begin();
+    ASSERT_TRUE(q2.getMaxQsos() == 10);
+    ASSERT_STR_EQ(q2.getDefaultBand().c_str(), "24 GHz");
+    ASSERT_STR_EQ(q2.getMyCall().c_str(), "K6MG/R");
+    ASSERT_TRUE(q2.getCardTimeoutSec() == 15);
+    ASSERT_TRUE(q2.getQsoCount() == 10);
+    ASSERT_STR_EQ(q2.getQso(0)->callsign, "W5AW");
+    ASSERT_STR_EQ(q2.getQso(9)->callsign, "W14AW");
+
+    // O(1) delete of oldest entry (index 1) after rollover, then reload
+    ASSERT_TRUE(q2.deleteQsoByIndex(1));
+    ASSERT_TRUE(q2.getQsoCount() == 9);
+    QsoLogManager q3;
+    q3.begin();
+    ASSERT_TRUE(q3.getQsoCount() == 9);
+    ASSERT_STR_EQ(q3.getQso(0)->callsign, "W6AW");
+    ASSERT_STR_EQ(q3.getQso(8)->callsign, "W14AW");
+
+    // Middle delete (index 4 -> W9AW) with trailing shift, then reload
+    ASSERT_TRUE(q3.deleteQsoByIndex(4));
+    QsoLogManager q4;
+    q4.begin();
+    ASSERT_TRUE(q4.getQsoCount() == 8);
+    ASSERT_STR_EQ(q4.getQso(2)->callsign, "W8AW");
+    ASSERT_STR_EQ(q4.getQso(3)->callsign, "W10AW");
+
+    // popLastQso after rollover, then reload
+    ASSERT_TRUE(q4.popLastQso());
+    QsoLogManager q5;
+    q5.begin();
+    ASSERT_TRUE(q5.getQsoCount() == 7);
+    ASSERT_STR_EQ(q5.getLastQso()->callsign, "W13AW");
+
+    // 3. Legacy unversioned QsoEntry fallback & CRC corruption rejection
+    QsoLogManager::resetHostStorage();
+    QsoEntry legacyQso(3000, "N6LEGACY", "10 GHz", 10368100, "CM87wa", "CM88qk", 50.0f, 180.0f);
+    QsoLogManager::seedHostRawSlot(0, &legacyQso, sizeof(QsoEntry), 2, 0);
+    uint8_t corruptBuf[62]; // sizeof(NvsQsoRecord) with bad magic/CRC
+    std::memset(corruptBuf, 0xAA, sizeof(corruptBuf));
+    QsoLogManager::seedHostRawSlot(1, corruptBuf, sizeof(corruptBuf), 2, 0);
+
+    QsoLogManager qLegacy;
+    qLegacy.begin();
+    ASSERT_TRUE(qLegacy.getQsoCount() == 1);
+    ASSERT_STR_EQ(qLegacy.getQso(0)->callsign, "N6LEGACY");
+
+    PASS();
+}
+
+void test_audit_hardening_regressions() {
+    TEST("Audit hardening: rollover timers, BLE probe cleanup, strict CLI, NVS sanitization, hold throttle");
+
+    // 1. Rollover-safe rover warning timer in AppController
+    {
+        RoverLogManager::resetHostStorage();
+        Board board;
+        DisplayUi ui;
+        InputManager input;
+        GpsManager gps;
+        Calibration cal;
+        GpsSimulator sim;
+        SerialCli cli(gps, cal, sim);
+        AppController app(board, ui, input, gps, cal, sim, cli);
+        app.begin();
+        app.setCurrentPosition(GeoPoint(37.75, -122.45, true));
+        unsigned long nearRollover = 0xFFFFFF00UL;
+        app.startRoverMode(nearRollover);
+        ASSERT_TRUE(app.isRoverMode());
+        app.startRoverMode(nearRollover + 100UL); // duplicate start triggers warning
+        ASSERT_TRUE(app.isRoverWarningActive(nearRollover + 100UL));
+        ASSERT_TRUE(app.isRoverWarningActive(nearRollover + 1000UL)); // wraps past 0
+        ASSERT_TRUE(!app.isRoverWarningActive(nearRollover + 100UL + ROVER_WARNING_DURATION_MS + 10UL));
+    }
+
+    // 2. SerialCli ble suffix error prompt, BLE disconnect cleanup, and strict numeric parsing
+    {
+        GpsManager gps;
+        Calibration cal;
+        GpsSimulator sim;
+        BleSerialManager ble;
+        SerialCli cli(gps, cal, sim, nullptr, &ble);
+        std::string out;
+        cli.setOutputHandler([](const char *s, void *ctx) {
+            static_cast<std::string*>(ctx)->append(s);
+        }, &out);
+
+        cli.executeCommand("ble suffix 12345678901234567", 100, CLI_SOURCE_USB);
+        ASSERT_TRUE(out.find("[BLE ERROR]") != std::string::npos);
+        ASSERT_TRUE(out.size() >= 2 && out.substr(out.size() - 2) == "> ");
+
+        out.clear();
+        cal.setOffset(12.5f, false);
+        cli.executeCommand("cal foo", 110, CLI_SOURCE_USB);
+        ASSERT_TRUE(out.find("[CAL ERROR]") != std::string::npos);
+        ASSERT_NEAR(cal.getOffset(), 12.5f, 0.01f);
+
+        out.clear();
+        cli.executeCommand("gps config baseline abc", 120, CLI_SOURCE_USB);
+        ASSERT_TRUE(out.find("[GPS ERROR]") != std::string::npos);
+        ASSERT_TRUE(gps.getTxState() == GpsTxState::Unknown);
+
+        out.clear();
+        RoverLogManager rlog;
+        cli.setRoverLogManager(&rlog);
+        cli.executeCommand("rover max abc", 130, CLI_SOURCE_USB);
+        ASSERT_TRUE(out.find("[ROVER ERROR]") != std::string::npos);
+
+        out.clear();
+        cli.executeCommand("sim hdg nope", 140, CLI_SOURCE_USB);
+        ASSERT_TRUE(out.find("[SIM ERROR]") != std::string::npos);
+
+        out.clear();
+        cli.executeCommand("sim rover nope", 150, CLI_SOURCE_USB);
+        ASSERT_TRUE(out.find("[SIM ERROR]") != std::string::npos);
+
+        // Reverse help syntax: "help <topic>" and "? <topic>"
+        out.clear();
+        cli.executeCommand("help rover", 160, CLI_SOURCE_USB);
+        ASSERT_TRUE(out.find("Rover Mode Serial Commands") != std::string::npos);
+
+        out.clear();
+        cli.executeCommand("help gps", 165, CLI_SOURCE_USB);
+        ASSERT_TRUE(out.find("GPS Receiver Commands") != std::string::npos);
+
+        out.clear();
+        cli.executeCommand("help target", 170, CLI_SOURCE_USB);
+        ASSERT_TRUE(out.find("Target Preset Commands") != std::string::npos);
+
+        out.clear();
+        cli.executeCommand("help log", 175, CLI_SOURCE_USB);
+        ASSERT_TRUE(out.find("Contest QSO Logging Commands") != std::string::npos);
+
+        out.clear();
+        cli.executeCommand("help cal", 180, CLI_SOURCE_USB);
+        ASSERT_TRUE(out.find("Antenna Calibration Commands") != std::string::npos);
+
+        out.clear();
+        cli.executeCommand("help sim", 185, CLI_SOURCE_USB);
+        ASSERT_TRUE(out.find("GPS Simulation Commands") != std::string::npos);
+
+        out.clear();
+        cli.executeCommand("? ble", 190, CLI_SOURCE_USB);
+        ASSERT_TRUE(out.find("Usage: ble") != std::string::npos);
+
+        // BLE disconnect while gps audit probe is pending should cancel pending BLE audit
+        ble.setConnected(true);
+        ble.setSubscribed(true);
+        cli.executeCommand("gps check", 200, CLI_SOURCE_BLE);
+        ASSERT_TRUE(gps.getTxState() == GpsTxState::Probing);
+        ble.flushTx();
+        ble.clearTxBuffer();
+        cli.handleBleConnectionChanged(false);
+        gps.feedSentence("<OK", 250);
+        ble.flushTx();
+        ASSERT_TRUE(ble.getTxBuffer().find("[GPS AUDIT]") == std::string::npos);
+    }
+
+    // 3. Calibration & RoverLogManager NVS sanitization
+    {
+        NvsConfig::resetHostStorage("compass");
+        NvsConfig("compass").putFloat("cal_offset", std::numeric_limits<float>::quiet_NaN());
+        Calibration cal;
+        cal.begin();
+        ASSERT_NEAR(cal.getOffset(), 0.0f, 0.001f);
+
+        RoverLogManager::resetHostStorage();
+        NvsListStore<RoverStop> store(ROVER_LOG_NAMESPACE, ROVER_LOG_KEY_COUNT, 's');
+        RoverStop badStop(100, std::numeric_limits<double>::quiet_NaN(), -122.0, "CM87wa00", 0.0f, false);
+        RoverStop goodStop(200, 37.75, -122.45, "CM87wa00", 18.0f, true);
+        goodStop.grid[8] = 'X'; // unterminated
+        store.putHostRawSlot(0, &badStop, sizeof(badStop));
+        store.putHostRawSlot(1, &goodStop, sizeof(goodStop));
+        store.putCount(2);
+
+        RoverLogManager rlog;
+        rlog.begin();
+        ASSERT_TRUE(rlog.getStopCount() == 1);
+        ASSERT_TRUE(rlog.getStop(0)->grid[8] == '\0');
+    }
+
+    // 4. evaluateGpsStream(0) underflow guard when now < lastByteTime
+    {
+        GpsLinkVerdict v = evaluateGpsStream(0, 100, 1000, 1, 1, 0, true, true, BEARING_FIXED);
+        ASSERT_TRUE(v == GPS_LINK_OK_FIXED);
+    }
+
+    // 5. InputManager hold-progress throttling
+    {
+        InputManager im;
+        im.setUiMode(UiMode::Calibrating);
+        im.injectTouch(true, 200, 300, 1000);
+        int progressEvents = 0;
+        bool committed = false;
+        for (unsigned long t = 1005; t <= 2505; t += 5) {
+            im.injectTouch(true, 200, 300, t);
+            UserEvent ev;
+            while (im.pollEvent(ev)) {
+                if (ev.type == UserEventType::HoldSaveButtonProgress) progressEvents++;
+                if (ev.type == UserEventType::SaveButtonCommitted) committed = true;
+            }
+        }
+        ASSERT_TRUE(committed);
+        ASSERT_TRUE(progressEvents > 0 && progressEvents <= 40);
+    }
+
+    PASS();
+}
+
+void test_serial_cli_factory_reset() {
+    TEST("SerialCli factory reset requires 'yes', aborts on 'y', and wipes all NVS managers");
+    NvsConfig::resetHostStorage();
+    RoverLogManager::resetHostStorage();
+    QsoLogManager::resetHostStorage();
+    TargetPresetManager::resetHostStorage();
+    BleSerialManager::resetHostStorage();
+    Calibration::resetHostStorage();
+
+    GpsManager gm;
+    Calibration cal;
+    cal.begin();
+    cal.setOffset(12.5f, true);
+
+    GpsSimulator sim;
+    RoverLogManager roverMgr;
+    roverMgr.begin();
+    roverMgr.setMaxStops(25, true);
+    roverMgr.appendStop(RoverStop(1000, 38.0, -122.0, "CM87wa", 0.0f, true));
+
+    BleSerialManager ble;
+    ble.begin();
+    ble.setDeviceSuffix("Summit1", true);
+
+    QsoLogManager qsoMgr;
+    qsoMgr.begin();
+    qsoMgr.setMaxQsos(50, true);
+    qsoMgr.setMyCall("K6MG", true);
+    qsoMgr.setDefaultBand("24 GHz", true);
+    qsoMgr.setCardTimeoutSec(12, true);
+    QsoEntry q;
+    std::snprintf(q.callsign, sizeof(q.callsign), "W6OP");
+    std::snprintf(q.band, sizeof(q.band), "10 GHz");
+    std::snprintf(q.my_grid, sizeof(q.my_grid), "CM87wa");
+    std::snprintf(q.his_grid, sizeof(q.his_grid), "CM88qk");
+    qsoMgr.appendQso(q);
+
+    TargetPresetManager targetMgr;
+    targetMgr.begin();
+    targetMgr.setMaxTargets(40, true);
+    targetMgr.addOrUpdatePreset("CM87vu", "Mt Diablo", 1000);
+
+    SerialCli cli(gm, cal, sim, &roverMgr, &ble, &qsoMgr, &targetMgr);
+    cli.begin();
+
+    std::string cliOutput;
+    cli.setOutputHandler([](const char *str, void *ctx) {
+        *static_cast<std::string*>(ctx) += str;
+    }, &cliOutput);
+
+    bool restartCalled = false;
+    cli.setRestartCallback([](void *ctx) {
+        *static_cast<bool*>(ctx) = true;
+    }, &restartCalled);
+
+    // 1. 'y' must NOT confirm — only full 'yes'
+    cliOutput.clear();
+    cli.executeCommand("factory reset");
+    ASSERT_TRUE(cliOutput.find("Type 'yes'") != std::string::npos);
+
+    cliOutput.clear();
+    cli.executeCommand("y");
+    ASSERT_TRUE(cliOutput.find("aborted") != std::string::npos);
+    ASSERT_TRUE(!restartCalled);
+    ASSERT_NEAR(cal.getOffset(), 12.5f, 1e-4f);
+    ASSERT_TRUE(roverMgr.getStopCount() == 1);
+    ASSERT_TRUE(qsoMgr.getQsoCount() == 1);
+    ASSERT_TRUE(targetMgr.getCount() == 1);
+    ASSERT_TRUE(std::strcmp(ble.getDeviceSuffix(), "Summit1") == 0);
+
+    // 2. Full 'yes' wipes everything and triggers restart
+    cliOutput.clear();
+    cli.executeCommand("factory reset");
+    cliOutput.clear();
+    cli.executeCommand("YES");
+    ASSERT_TRUE(restartCalled);
+    ASSERT_TRUE(cliOutput.find("Factory reset complete") != std::string::npos);
+
+    ASSERT_NEAR(cal.getOffset(), 0.0f, 1e-4f);
+    ASSERT_TRUE(std::strcmp(ble.getDeviceSuffix(), "test") == 0);
+    ASSERT_TRUE(roverMgr.getStopCount() == 0);
+    ASSERT_TRUE(roverMgr.getMaxStops() == DEFAULT_MAX_ROVER_STOPS);
+    ASSERT_TRUE(qsoMgr.getQsoCount() == 0);
+    ASSERT_TRUE(qsoMgr.getMaxQsos() == DEFAULT_MAX_QSOS);
+    ASSERT_TRUE(qsoMgr.getMyCall() == DEFAULT_QSO_MY_CALL);
+    ASSERT_TRUE(qsoMgr.getDefaultBand() == DEFAULT_QSO_BAND);
+    ASSERT_TRUE(qsoMgr.getCardTimeoutSec() == DEFAULT_QSO_CARD_TIMEOUT_S);
+    ASSERT_TRUE(targetMgr.getCount() == 0);
+    ASSERT_TRUE(targetMgr.getMaxTargets() == DEFAULT_MAX_TARGET_PRESETS);
+
+    // Re-begin from host NVS to verify defaults persist
+    QsoLogManager qsoReload;
+    qsoReload.begin();
+    ASSERT_TRUE(qsoReload.getQsoCount() == 0);
+    ASSERT_TRUE(qsoReload.getMaxQsos() == DEFAULT_MAX_QSOS);
+    ASSERT_TRUE(qsoReload.getMyCall() == DEFAULT_QSO_MY_CALL);
+
+    // 3. BLE-sourced factory reset with duplicate "Yes\r\nYes\r\n" in one RX burst:
+    //    must flush completion notice, invoke prepareRestartCb before restartCb,
+    //    disconnect BLE, and NOT emit "Unknown command: 'Yes'".
+    cli.begin();
+    cliOutput.clear();
+    ble.clearTxBuffer();
+    ble.setConnected(true);
+    ble.setSubscribed(true);
+
+    int prepareOrder = 0;
+    int restartOrder = 0;
+    int orderCounter = 0;
+    int restartCount = 0;
+    struct ResetOrderCtx {
+        int *order;
+        int *counter;
+        int *count;
+    };
+    ResetOrderCtx prepCtx{&prepareOrder, &orderCounter, nullptr};
+    ResetOrderCtx restCtx{&restartOrder, &orderCounter, &restartCount};
+    cli.setPrepareRestartCallback([](void *ctx) {
+        auto *c = static_cast<ResetOrderCtx*>(ctx);
+        *(c->order) = ++(*(c->counter));
+    }, &prepCtx);
+    cli.setRestartCallback([](void *ctx) {
+        auto *c = static_cast<ResetOrderCtx*>(ctx);
+        *(c->order) = ++(*(c->counter));
+        ++(*(c->count));
+    }, &restCtx);
+
+    const char *bleCmd = "factory reset\r\n";
+    ble.handleRxData(bleCmd, std::strlen(bleCmd));
+    cli.update(100);
+    ble.flushTx();
+    ASSERT_TRUE(ble.getTxBuffer().find("Type 'yes'") != std::string::npos);
+
+    cliOutput.clear();
+    ble.clearTxBuffer();
+    const char *dupYes = "Yes\r\nYes\r\n";
+    ble.handleRxData(dupYes, std::strlen(dupYes));
+    cli.update(200);
+
+    ASSERT_TRUE(restartCount == 1);
+    ASSERT_TRUE(prepareOrder == 1);
+    ASSERT_TRUE(restartOrder == 2);
+    ASSERT_TRUE(!ble.isConnected());
+    ASSERT_TRUE(ble.getTxBuffer().find("Factory reset complete") != std::string::npos);
+    ASSERT_TRUE(ble.getTxBuffer().find("Unknown command") == std::string::npos);
+    ASSERT_TRUE(cliOutput.find("Unknown command") == std::string::npos);
+
+    PASS();
+}
+
 int main() {
     std::cout << "========================================" << std::endl;
     std::cout << "  GNSS Compass Unit Test Suite" << std::endl;
@@ -5369,6 +6906,20 @@ int main() {
     test_serial_cli_log_commands();
     test_voice_logging_contest_session_e2e();
     test_qso_critical_fixes_regression();
+    test_target_preset_validation_and_summits();
+    test_target_preset_dedup_and_labels();
+    test_target_preset_sorting_and_usage();
+    test_target_preset_capacity_eviction_and_nvs();
+    test_target_preset_deletion_and_clear();
+    test_serial_cli_target_presets_usb_and_ble();
+    test_target_list_modal_formatters();
+    test_display_ui_row2_label_behavior();
+    test_input_manager_target_list_hit_testing_and_gestures();
+    test_app_controller_target_list_workflow_e2e();
+    test_target_preset_review_fixes();
+    test_migrated_nvs_stores();
+    test_audit_hardening_regressions();
+    test_serial_cli_factory_reset();
 
     std::cout << "========================================" << std::endl;
     std::cout << "  All " << tests_passed << " / " << tests_run << " tests PASSED successfully!" << std::endl;

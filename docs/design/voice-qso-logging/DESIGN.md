@@ -4,7 +4,7 @@
 * **Status:** Implemented
 * **Target Hardware:** ESP32-S3 (16 MB Flash, 8 MB OPI PSRAM), Elecrow 2.1" Round Touch Display (480×480)
 * **Architecture Base:** Modular C++ Architecture (`src/protocol/serial_cli.h`, `src/system/app_controller.h`)
-* **Associated Docs:** [Serial CLI Guide](../../SERIAL.md), [Bluetooth Serial Design](../bluetooth-serial/DESIGN.md), [Rover Mode Design](../rover-transit/DESIGN.md)
+* **Associated Docs:** [Serial CLI Guide](../../../SERIAL.md), [Bluetooth Serial Design](../bluetooth-serial/DESIGN.md), [Rover Mode Design](../rover-transit/DESIGN.md)
 
 ---
 

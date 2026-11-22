@@ -50,6 +50,7 @@ bool Board::isEncoderSwPressed() {
 
 void Board::restart() {
 #if defined(ARDUINO)
+    setBacklight(0);
     delay(100);
     esp_restart();
 #endif

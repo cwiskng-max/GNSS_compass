@@ -6,7 +6,7 @@ This guide covers flashing the firmware onto the Elecrow 2.1" ESP32 Rotary Displ
 * **File B: `gps_compass-update.bin` (Firmware Upgrade)**: Flashed to offset **`0x100000`**. Updates the application while preserving your non-volatile storage (NVS) data partition (retaining all contest QSO logs, antenna calibration, and rover history).
 
 > [!IMPORTANT]
-> **Upgrading from an older single-`.bin` release?** You **must** perform a one-time flash of **`gps_compass-factory.bin` at `0x0`** instead of `gps_compass-update.bin`. Earlier releases used the default 4MB partition layout (`app0` at `0x10000`), whereas this release uses a custom 16MB layout (`app0` at `0x100000`, 512KB NVS). Because `factory.bin` repartitions flash and resets NVS, note your antenna calibration offset (`status` in the serial CLI) beforehand if needed. All subsequent upgrades can use `gps_compass-update.bin` at `0x100000`.
+> **Upgrading from an older single-`.bin` release?** You **must** perform a one-time flash of **`gps_compass-factory.bin` at `0x0`** instead of `gps_compass-update.bin`. Earlier releases used the default 4MB partition layout (`app0` at `0x10000`), whereas this release uses a custom 16MB layout (`app0` at `0x100000`, 512KB NVS). Because `factory.bin` repartitions flash and resets NVS, note your antenna calibration offset (`cal` in the serial CLI) beforehand if needed. All subsequent upgrades can use `gps_compass-update.bin` at `0x100000`.
 
 > [!TIP]
 > If you do not yet have the firmware binaries, see **[Getting the Firmware](FIRMWARE.md)** first.
@@ -156,7 +156,7 @@ Once flashing completes, the display will restart automatically:
    * **Row 3:** Antenna heading (`---.-` until GPS true heading is received) and calculated target bearing.
    * **Calibration Pill:** Centered between Row 3 and Row 4 (`OFF` when uncalibrated, or active offset in degrees).
    * **Row 4:** UTC time (`--:--Z` until GPS time is received).
-   * **Row 5:** Calculated reverse bearing and distance (`<bear> deg  <dist> k`) computed between the local and target grids.
-   * **Footer:** Firmware version string (e.g., `v0.5-dev`).
+   * **Row 5:** Calculated reverse bearing and distance (`<bear> <dist> k`) computed between the local and target grids.
+   * **Footer:** Firmware version string from the build (e.g., `v1.0`).
 2. **On-Device Self-Test:** Tap directly on the firmware version string at the bottom center of the screen. The display will run through the 9-step visual self-test and display `SELF-TEST PASSED` in green. See [tests/README.md](tests/README.md) for details.
 3. **Connect & Configure Receiver:** Connect and configure the Unicore UM982 GNSS receiver following [RECEIVER.md](RECEIVER.md). If using the standard 4-pin GX12 harness with the TX line wired (ESP32 GPIO 43 $\to$ UM982 COM1 RX), receiver setup is performed in-system using the `gps config` command.

@@ -4,7 +4,7 @@
 * **Status:** Implemented
 * **Target Hardware:** ESP32-S3 (Elecrow 2.1" Display), Unicore UM982 Dual-Antenna RTK Receiver
 * **Serial Interface:** Hardware UART (Serial2: RX=GPIO 44, TX=GPIO 43, 115200 8N1)
-* **Associated Docs:** [RECEIVER.md](../../RECEIVER.md), [SERIAL.md](../../SERIAL.md), [BOM.md](../../BOM.md)
+* **Associated Docs:** [RECEIVER.md](../../../RECEIVER.md), [SERIAL.md](../../../SERIAL.md), [BOM.md](../../../BOM.md)
 
 ---
 
@@ -13,7 +13,7 @@
 ### 1.1 The Hardware Transition: Receive-Only vs. Bidirectional Serial
 Historically, early GNSS Compass builds utilized a 3-pin GX12 connector providing DC power (+5V or +12V), Ground (GND), and a single unidirectional data line: **UM982 TX $\to$ ESP32 RX (GPIO 44)**. In this configuration:
 * The ESP32 passively received NMEA and `$KSXT` sentences.
-* The UM982 receiver had to be pre-configured manually via its USB-C port using Unicore UPrecise or a desktop terminal prior to field installation (as outlined in [RECEIVER.md](../../RECEIVER.md)).
+* The UM982 receiver had to be pre-configured manually via its USB-C port using Unicore UPrecise or a desktop terminal prior to field installation (as outlined in [RECEIVER.md](../../../RECEIVER.md)).
 * Any configuration drift, reset, or antenna baseline adjustment required taking down the mast, disassembling the receiver enclosure, and plugging in a computer.
 
 By running a wire from **ESP32 TX (GPIO 43) $\to$ UM982 RX (COM1 RX)** (via a 4-pin GX12 connector or internal jumper), the ESP32 gains the ability to send commands directly to the UM982 in the field:
@@ -44,7 +44,7 @@ flowchart LR
 1. **Feature 1 — TX Presence & Discovery Flag (`isSendAvailable()`):**
    Automatically or on-demand discover whether the TX wire is physically connected and the receiver is responding. If TX is absent (legacy 3-wire setups), the system safely flags send as unavailable and filters out transmission-dependent operations without breaking normal compass operation.
 2. **Feature 2 — In-System Receiver Configuration Pipeline:**
-   Provide an automated, verified configuration pipeline implementing the full setup specified in [RECEIVER.md](../../RECEIVER.md) (`MODE ROVER UAV`, `CONFIG SIGNALGROUP 3 6`, `KSXT com1 0.2`, `SAVECONFIG`, optional fixed baseline distance constraint, and unlogging legacy messages).
+   Provide an automated, verified configuration pipeline implementing the full setup specified in [RECEIVER.md](../../../RECEIVER.md) (`MODE ROVER UAV`, `CONFIG SIGNALGROUP 3 6`, `KSXT com1 0.2`, `SAVECONFIG`, optional fixed baseline distance constraint, and unlogging legacy messages).
 
 ---
 
@@ -75,7 +75,7 @@ If the firmware were designed to execute `SAVECONFIG` unconditionally on every b
    - The Elecrow screen shows a non-blocking transient status: `"CONFIGURING GPS..."` (cyan) followed by `"GPS CONFIGURED"` (green for 2 seconds), then transitions into the normal compass display.
    - Detailed progress is mirrored over USB CDC and BLE UART.
    - On all future boots, `$KSXT` is already saved in receiver flash, so auto-config never runs again.
-5. **Active Non-Destructive Query & Configuration Audit:** When TX is available, the ESP32 can audit the receiver's running parameters against [RECEIVER.md](../../RECEIVER.md) without writing flash:
+5. **Active Non-Destructive Query & Configuration Audit:** When TX is available, the ESP32 can audit the receiver's running parameters against [RECEIVER.md](../../../RECEIVER.md) without writing flash:
    - `VERSION`: Inspects product model, firmware build, serial number, and build date.
    - `MODE`: Verifies operating mode is `MODE ROVER UAV`.
    - `UNILOGLIST COM1`: Checks active output logs. Verifies `$KSXT` is logged at 0.2s and confirms no extraneous sentences (`GPGGA`, `GPHDT`, `GPGLL`, `GPRMC`) are active.
@@ -213,7 +213,7 @@ Before altering configuration or writing flash, the operator or system can query
 | `CONFIG HEADING` | `CONFIG HEADING FIXLENGTH` + length | Operating in unconstrained baseline mode (slower fix time). |
 
 By checking these parameters non-destructively:
-* The system avoids re-running `SAVECONFIG` if the receiver already matches [RECEIVER.md](../../RECEIVER.md).
+* The system avoids re-running `SAVECONFIG` if the receiver already matches [RECEIVER.md](../../../RECEIVER.md).
 * The CLI `status` or `gps check` command displays an itemized report of any discrepancies before the user decides to run `gps config`.
 
 ### 4.4 Error Handling & Abort Safeguard
@@ -236,7 +236,7 @@ The following subcommands will be added to the unified `SerialCli` parser (acces
   ```
 * `gps probe`: Manually triggers a TX discovery probe cycle.
 * `gps check` (or `gps audit`): Queries `VERSION`, `MODE`, `UNILOGLIST COM1`, and `HEADINGSTATUSA` (baseline length & tolerance) to report hardware/firmware details and runtime configuration without modifying flash.
-* `gps config`: Runs the standard [RECEIVER.md](../../RECEIVER.md) configuration pipeline (`MODE ROVER UAV` -> `CONFIG SIGNALGROUP 3 6` -> `UNLOG COM1` -> `KSXT com1 0.2` -> `SAVECONFIG`).
+* `gps config`: Runs the standard [RECEIVER.md](../../../RECEIVER.md) configuration pipeline (`MODE ROVER UAV` -> `CONFIG SIGNALGROUP 3 6` -> `UNLOG COM1` -> `KSXT com1 0.2` -> `SAVECONFIG`).
 * `gps config baseline <length_cm> [tol_cm]`: Runs configuration including physical antenna separation constraint (default tolerance 2.5 cm).
 * `gps send <raw_command>`: Power-user command allowing transmission of arbitrary Unicore commands (e.g. `gps send uniloglist`, `gps send version`, `gps send config`).
 
@@ -274,6 +274,6 @@ The following subcommands will be added to the unified `SerialCli` parser (acces
    - Test CLI command routing over USB and BLE.
    - Test error feedback when TX is unavailable.
 3. **Documentation**:
-   - Update [SERIAL.md](../../SERIAL.md) with new commands and diagnostic outputs.
-   - Update [RECEIVER.md](../../RECEIVER.md) noting the automated in-system configuration option.
+   - Update [SERIAL.md](../../../SERIAL.md) with new commands and diagnostic outputs.
+   - Update [RECEIVER.md](../../../RECEIVER.md) noting the automated in-system configuration option.
 

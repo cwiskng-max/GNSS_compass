@@ -10,6 +10,7 @@
 #include "../system/rover_log_manager.h"
 #include "../system/qso_entry.h"
 #include "../system/qso_log_manager.h"
+#include "../system/target_preset_manager.h"
 #include "ble_serial_manager.h"
 #include "line_buffer.h"
 
@@ -60,7 +61,8 @@ public:
     SerialCli(GpsManager &gpsManager, Calibration &calibration, GpsSimulator &simulator,
               RoverLogManager *roverLogManager = nullptr,
               BleSerialManager *bleManager = nullptr,
-              QsoLogManager *qsoLogManager = nullptr);
+              QsoLogManager *qsoLogManager = nullptr,
+              TargetPresetManager *targetPresetManager = nullptr);
 
     // Initializes CLI state
     void begin();
@@ -98,6 +100,7 @@ public:
 
     // Callbacks & listeners
     void setRunTestCallback(CliRunTestCallback cb, void *context = nullptr) { runTestCb_ = cb; runTestContext_ = context; }
+    void setPrepareRestartCallback(CliRestartCallback cb, void *context = nullptr) { prepareRestartCb_ = cb; prepareRestartContext_ = context; }
     void setRestartCallback(CliRestartCallback cb, void *context = nullptr) { restartCb_ = cb; restartContext_ = context; }
     void setStateChangedCallback(CliStateChangedCallback cb, void *context = nullptr) { stateChangedCb_ = cb; stateChangedContext_ = context; }
     void setRoverSimCallback(CliRoverSimCallback cb, void *context = nullptr) { roverSimCb_ = cb; roverSimContext_ = context; }
@@ -135,6 +138,10 @@ public:
     // QSO Log & Actions
     void setQsoLogManager(QsoLogManager *mgr) { qsoLogManager_ = mgr; }
     QsoLogManager* getQsoLogManager() const { return qsoLogManager_; }
+
+    // Target Presets
+    void setTargetPresetManager(TargetPresetManager *mgr) { targetPresetManager_ = mgr; }
+    TargetPresetManager* getTargetPresetManager() const { return targetPresetManager_; }
 
     void setQsoLoggedCallback(CliQsoLoggedCallback cb, void *context = nullptr) {
         qsoLoggedCb_ = cb;
@@ -177,9 +184,11 @@ public:
     void handleLogDefault(const char *arg);
     void handleLogCall(const char *arg);
     void printLogHelp();
+    void printTargetHelp();
     void printGpsHelp();
     void printSimHelp();
     void printCalHelp();
+    void doFactoryReset(unsigned long nowMs = 0);
 
     // Receiver audit query & parsing
     struct GpsAuditState {
@@ -249,6 +258,8 @@ private:
 
     void handleSimCommand(const char *arg, unsigned long nowMs);
     void handleCalCommand(const char *arg);
+    void handleBleCommand(const char *arg);
+    void handleHelpCommand(const char *arg);
     void handleGpsCommand(const char *arg, unsigned long nowMs);
     void handleRoverCommand(const char *arg, unsigned long nowMs);
     void handleRoverStart(unsigned long nowMs);
@@ -263,6 +274,7 @@ private:
     GpsSimulator &simulator_;
     RoverLogManager *roverLogManager_;
     QsoLogManager *qsoLogManager_;
+    TargetPresetManager *targetPresetManager_;
     BleSerialManager *bleManager_;
     CliSource activeSource_;
 
@@ -286,6 +298,8 @@ private:
     void *qsoLoggedContext_;
     CliCommandOutputFn outputFn_;
     void *outputContext_;
+    CliRestartCallback prepareRestartCb_;
+    void *prepareRestartContext_;
     CliRestartCallback restartCb_;
     void *restartContext_;
 
@@ -295,13 +309,18 @@ private:
     CliSource pendingQsoClearSource_;
     bool pendingQsoInput_;
     CliSource pendingQsoSource_;
+    bool pendingFactoryReset_;
+    CliSource pendingFactoryResetSource_;
+    bool pendingFactoryResetExec_;
+    bool factoryResetInProgress_;
 
     enum class ExportFormat : uint8_t {
         None = 0,
         List,
         Cabrillo,
         Adif,
-        Csv
+        Csv,
+        TargetList
     };
     ExportFormat pendingExportFormat_;
     size_t pendingExportIndex_;

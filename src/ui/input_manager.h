@@ -10,13 +10,15 @@
 #include <Wire.h>
 #include <PCF8574.h>
 #include <Adafruit_CST8XX.h>
+#include <driver/gpio.h>
 #endif
 
 enum class UiMode : uint8_t {
     Normal = 0,
     Calibrating = 1,
     RoverHistory = 2,
-    QsoCard = 3
+    QsoCard = 3,
+    TargetList = 4
 };
 
 enum class ModalButtonId : uint8_t {
@@ -26,7 +28,11 @@ enum class ModalButtonId : uint8_t {
     Save = 3,
     Cancel = 4,
     Discard = 5,
-    Ok = 6
+    Ok = 6,
+    TargetLoad = 7,
+    TargetDelete = 8,
+    TargetSave = 9,
+    TargetClear = 10
 };
 
 enum class UserEventType : uint8_t {
@@ -37,6 +43,7 @@ enum class UserEventType : uint8_t {
     TouchLocalGrid,
     LongPressLocalGridTriggered,
     TouchGridCharacter,
+    LongPressTargetGridTriggered,
     TouchCalibrationPill,
     TouchVersionFooter,
     ModalButtonDown,
@@ -48,7 +55,13 @@ enum class UserEventType : uint8_t {
     ResetOffsetTriggered,
     CancelModalTriggered,
     DiscardLastStopTriggered,
-    DismissQsoCardTriggered
+    DismissQsoCardTriggered,
+    TargetRowTouched,
+    LoadTargetTriggered,
+    DeleteTargetTriggered,
+    SaveTargetTriggered,
+    HoldClearButtonProgress,
+    ClearButtonCommitted
 };
 
 struct UserEvent {
@@ -65,6 +78,8 @@ public:
     void begin();
     void setUiMode(UiMode mode) { uiMode_ = mode; }
     UiMode getUiMode() const { return uiMode_; }
+    bool isTouching() const { return isTouching_; }
+    bool isHoldingDiscard() const { return holdingDiscardBtn_; }
 
     void update(unsigned long nowMs = 0);
     bool pollEvent(UserEvent &outEvent);
@@ -85,6 +100,8 @@ public:
     static ModalButtonId getModalButtonFromTouch(int16_t x, int16_t y);
     static ModalButtonId getRoverModalButtonFromTouch(int16_t x, int16_t y);
     static ModalButtonId getQsoModalButtonFromTouch(int16_t x, int16_t y);
+    static int getTargetModalRowFromTouch(int16_t x, int16_t y);
+    static ModalButtonId getTargetModalButtonFromTouch(int16_t x, int16_t y);
 
     void handleTouchPoint(bool touched, int16_t x, int16_t y, unsigned long nowMs);
 
@@ -97,6 +114,7 @@ public:
 private:
 #if defined(ARDUINO)
     static void IRAM_ATTR encoderIrq();
+    static portMUX_TYPE s_encMux;
     static volatile int s_counter;
     static volatile int s_encState;
     static volatile int s_oldState;
@@ -106,6 +124,9 @@ private:
     PCF8574 *pcf8574_ = nullptr;
     bool encoderSwPressed_ = false;
 #endif
+
+    void updateHoldButton(UserEventType progressType, UserEventType commitType,
+                          bool &holdingFlag, unsigned long holdDuration, unsigned long requiredMs);
 
     UiMode uiMode_ = UiMode::Normal;
 
@@ -117,6 +138,8 @@ private:
     bool longPressTriggered_ = false;
     bool holdingSaveBtn_ = false;
     bool holdingDiscardBtn_ = false;
+    bool holdingClearBtn_ = false;
+    float lastHoldProgressReported_ = -1.0f;
     unsigned long lastTouchReleaseTime_ = 0;
 
     // Event FIFO queue

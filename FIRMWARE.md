@@ -6,7 +6,7 @@ To program the GNSS Compass display, you need the compiled firmware binary. The 
 * **[File B: `gps_compass-update.bin` (Upgrade)](#option-a-download-pre-compiled-binary-recommended)**: Application-only binary flashed at address **`0x100000`**. Upgrades the firmware while **preserving your NVS storage** (all contest QSO logs, antenna calibration offset, and rover transit history remain intact).
 
 > [!IMPORTANT]
-> **Upgrading from an older single-`.bin` release?** You **must** download and flash **`gps_compass-factory.bin` at `0x0`** once to install the new 16MB partition table (`app0` moved from `0x10000` to `0x100000` with 512KB NVS). Note your antenna calibration offset (`status` in the serial CLI) beforehand, as this one-time repartition resets NVS. Future upgrades can then use `gps_compass-update.bin`.
+> **Upgrading from an older single-`.bin` release?** You **must** download and flash **`gps_compass-factory.bin` at `0x0`** once to install the new 16MB partition table (`app0` moved from `0x10000` to `0x100000` with 512KB NVS). Note your antenna calibration offset (`cal` in the serial CLI) beforehand, as this one-time repartition resets NVS. Future upgrades can then use `gps_compass-update.bin`.
 
 You can obtain these files in one of two ways:
 * **[Option A: Download Pre-Compiled Binary (Recommended)](#option-a-download-pre-compiled-binary-recommended)**: Fast and straightforward. Recommended for most users.
@@ -139,19 +139,19 @@ cp -r gps_compass.ino partitions.csv src build/tmp/gps_compass/
 
 Compile and export the binary artifacts:
 ```bash
-arduino-cli compile --fqbn esp32:esp32:esp32s3:FlashSize=16M,PSRAM=opi,CDCOnBoot=cdc --build-property upload.maximum_size=3670016 --export-binaries build/tmp/gps_compass
+arduino-cli compile --fqbn esp32:esp32:esp32s3:FlashSize=16M,PSRAM=opi,CDCOnBoot=cdc --build-property upload.maximum_size=3670016 --output-dir build/tmp/out build/tmp/gps_compass
 ```
 
 Your compiled application and partition binaries will be located at:
 ```text
-build/tmp/gps_compass/build/esp32.esp32.esp32s3/gps_compass.ino.bin
-build/tmp/gps_compass/build/esp32.esp32.esp32s3/gps_compass.ino.partitions.bin
-build/tmp/gps_compass/build/esp32.esp32.esp32s3/gps_compass.ino.bootloader.bin
+build/tmp/out/gps_compass.ino.bin
+build/tmp/out/gps_compass.ino.partitions.bin
+build/tmp/out/gps_compass.ino.bootloader.bin
 ```
 
 Copy the application update binary to the repository root:
 ```bash
-cp build/tmp/gps_compass/build/esp32.esp32.esp32s3/gps_compass.ino.bin ./gps_compass-update.bin
+cp build/tmp/out/gps_compass.ino.bin ./gps_compass-update.bin
 ```
 
 Merge into a single factory image at `0x0`:
@@ -159,10 +159,10 @@ Merge into a single factory image at `0x0`:
 esptool --chip esp32s3 merge_bin \
     --flash_mode dio --flash_freq 80m --flash_size 16MB \
     -o ./gps_compass-factory.bin \
-    0x0 build/tmp/gps_compass/build/esp32.esp32.esp32s3/gps_compass.ino.bootloader.bin \
-    0x8000 build/tmp/gps_compass/build/esp32.esp32.esp32s3/gps_compass.ino.partitions.bin \
+    0x0 build/tmp/out/gps_compass.ino.bootloader.bin \
+    0x8000 build/tmp/out/gps_compass.ino.partitions.bin \
     0x89000 tools/boot_app0.bin \
-    0x100000 build/tmp/gps_compass/build/esp32.esp32.esp32s3/gps_compass.ino.bin
+    0x100000 build/tmp/out/gps_compass.ino.bin
 ```
 
 Clean up temporary build files when done:

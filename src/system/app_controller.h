@@ -18,6 +18,7 @@
 #include "../protocol/ble_serial_manager.h"
 #include "rover_log_manager.h"
 #include "qso_log_manager.h"
+#include "target_preset_manager.h"
 #include "../ui/rover_card.h"
 #include "../ui/rover_history_modal.h"
 #include "../ui/qso_card.h"
@@ -49,7 +50,8 @@ public:
                   SerialCli &serialCli,
                   RoverLogManager *roverLogManager = nullptr,
                   BleSerialManager *bleManager = nullptr,
-                  QsoLogManager *qsoLogManager = nullptr);
+                  QsoLogManager *qsoLogManager = nullptr,
+                  TargetPresetManager *targetPresetManager = nullptr);
 
     void begin();
     void update(unsigned long nowMs = 0);
@@ -74,13 +76,20 @@ public:
     void dismissQsoCard();
     unsigned long getQsoCardOpenedMs() const { return qsoCardOpenedMillis_; }
 
+    // Target List modal state accessors
+    size_t getSelectedPresetIndex() const { return displayUi_.getTargetListModal().getSelectedIndex(); }
+    size_t getPresetScrollOffset() const { return displayUi_.getTargetListModal().getScrollOffset(); }
+    unsigned long getTargetModalOpenedMs() const { return targetModalOpenedMillis_; }
+    const char* resolveTargetLabel(const char *grid) const;
+
     // State accessors
     OperationalMode getOperationalMode() const { return operationalMode_; }
     void setOperationalMode(OperationalMode mode);
     bool isRoverMode() const { return operationalMode_ == OperationalMode::Rover; }
     bool isRoverWarningActive(unsigned long nowMs = 0) const {
-        if (roverWarningUntilMs_ == 0) return false;
-        return (nowMs == 0 ? currentNowMs_ : nowMs) < roverWarningUntilMs_;
+        if (!roverWarningActive_) return false;
+        unsigned long now = (nowMs == 0 ? currentNowMs_ : nowMs);
+        return (now - roverWarningStartMs_) < ROVER_WARNING_DURATION_MS;
     }
 
     const GeoPoint& getOriginPoint() const { return originPoint_; }
@@ -92,6 +101,8 @@ public:
     const RoverLogManager& getRoverLogManager() const { return *roverLogManagerRef_; }
     QsoLogManager& getQsoLogManager() { return *qsoLogManagerRef_; }
     const QsoLogManager& getQsoLogManager() const { return *qsoLogManagerRef_; }
+    TargetPresetManager& getTargetPresetManager() { return *targetPresetManagerRef_; }
+    const TargetPresetManager& getTargetPresetManager() const { return *targetPresetManagerRef_; }
     GridEditor& getGridEditor() { return gridEditor_; }
     const GridEditor& getGridEditor() const { return gridEditor_; }
     const char* getTargetGrid() const { return gridEditor_.getGrid(); }
@@ -100,8 +111,10 @@ public:
     const char* getMyGrid() const { return myGrid_; }
     void setMyGrid(const char *grid);
 
+    bool hasLocation() const { return hasLocation_; }
     const GeoPoint& getCurrentPosition() const { return currentPosition_; }
     void setCurrentPosition(const GeoPoint &pos);
+    void clearLocation() { hasLocation_ = false; currentPosition_ = GeoPoint(); lastLocationUpdate_ = 0; }
 
     const GeoPoint& getTargetPosition() const { return targetPosition_; }
     void setTargetPosition(const GeoPoint &pos) { targetPosition_ = pos; }
@@ -151,6 +164,8 @@ private:
     RoverLogManager *roverLogManagerRef_;
     QsoLogManager qsoLogManagerOwned_;
     QsoLogManager *qsoLogManagerRef_;
+    TargetPresetManager targetPresetManagerOwned_;
+    TargetPresetManager *targetPresetManagerRef_;
     BleSerialManager *bleManager_;
     bool bleConnected_;
 
@@ -174,7 +189,8 @@ private:
     unsigned long lastLocationUpdate_;
     RoverState lastRoverState_;
     unsigned long currentNowMs_;
-    unsigned long roverWarningUntilMs_;
+    bool roverWarningActive_;
+    unsigned long roverWarningStartMs_;
 
     GeoPoint currentPosition_;
     GeoPoint targetPosition_;
@@ -184,9 +200,16 @@ private:
 
     UiMode currentUiMode_;
     bool isSelfTesting_;
-    unsigned long calModalOpenedMillis_;
+    unsigned long modalOpenedMillis_;
     unsigned long qsoCardOpenedMillis_;
+    unsigned long targetModalOpenedMillis_;
     ModalButtonId pendingModalButtonRelease_;
     unsigned long pendingModalButtonReleaseStartMillis_;
+
+    void clampTargetModalSelection();
+    void drawTargetListModal();
+    void drawTargetListRows();
+    void loadSelectedTargetPreset(unsigned long nowMs);
+    uint32_t currentTimestampSec(unsigned long nowMs) const;
 };
 

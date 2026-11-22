@@ -11,7 +11,7 @@ struct ParsedQso {
     bool success = false;
     std::string callsign;
     std::string band;          // e.g. "10 GHz", "24 GHz", "LIGHT"
-    uint32_t freq_khz = 0;     // Frequency in kHz (e.g. 10368100), or nominal calling freq
+    uint32_t freq_khz = 0;     // Exact frequency in kHz (e.g. 10368100), or 0 if band-only
     std::string cabrillo_band; // Cabrillo 3.0 code (e.g. "10G", "24G", "LIGHT")
     std::string adif_band;     // ADIF band code (e.g. "3cm", "1.2cm", "submm")
     std::string error_message;

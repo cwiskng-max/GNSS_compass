@@ -7,6 +7,8 @@
 #include <cmath>
 #include <cctype>
 #include "../config.h"
+#include "../types.h"
+#include "nvs_store.h"
 
 /**
  * @brief Represents a persistent contest operating site / transit stop.
@@ -35,14 +37,7 @@ struct RoverStop {
     }
 
     void setGrid(const char *g) {
-        if (g) {
-            size_t len = std::strlen(g);
-            if (len > sizeof(grid) - 1) len = sizeof(grid) - 1;
-            std::memcpy(grid, g, len);
-            grid[len] = '\0';
-        } else {
-            std::memset(grid, 0, sizeof(grid));
-        }
+        copyBoundedString(grid, sizeof(grid), g);
     }
 
     bool operator==(const RoverStop &other) const {
@@ -118,11 +113,7 @@ public:
 private:
     std::vector<RoverStop> stops_;
     size_t maxStops_;
-
-#if !defined(ARDUINO)
-    static std::vector<RoverStop> s_hostNvsStops;
-    static size_t s_hostNvsMaxStops;
-    static bool s_hostNvsMaxStopsStored;
-#endif
+    NvsConfig cfgStore_;
+    NvsListStore<RoverStop> listStore_;
 };
 
