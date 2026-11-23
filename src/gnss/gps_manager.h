@@ -89,6 +89,13 @@ public:
     void setLocation(const GeoPoint &point, unsigned long nowMs = 0);
     void setLocation(double lat, double lon, unsigned long nowMs = 0);
 
+    bool hasAltitude() const { return hasAltitude_; }
+    double getAltitudeMeters() const { return altitudeMeters_; }
+    void setAltitudeMeters(double altMeters) {
+        altitudeMeters_ = altMeters;
+        hasAltitude_ = true;
+    }
+
     bool hasTime() const { return hasTime_; }
     int getHours() const { return hours_; }
     int getMinutes() const { return minutes_; }
@@ -156,6 +163,8 @@ private:
     unsigned long lastHeadingUpdate_;
 
     GeoPoint location_;
+    bool hasAltitude_;
+    double altitudeMeters_;
     bool hasTime_;
     int hours_;
     int minutes_;

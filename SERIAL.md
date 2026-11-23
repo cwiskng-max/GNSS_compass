@@ -176,6 +176,7 @@ Message Streams:
 
 Data Fix Status:
   - Coordinates:         37.77490, -122.41940 (Grid: CM87wa92)
+  - Altitude:            2100.0 m (6890 ft)
   - Dual-Antenna Heading: RTK FIXED (Pure White - High Precision)
 
 Overall Verdict:        [PASS] FULLY OPERATIONAL (RTK Fixed)
@@ -927,6 +928,7 @@ Origin Coords:     37.020833, -122.125000
 Origin Grid:      CM87wa00
 Displacement:       6.4 km (Threshold: 16.0 km)
 Current Grid:     CM87wb00 (TRAVERSED GRID)
+Altitude:         2100.0 m (6890 ft)
 Qualification:    STATE A: In-Transit (< 16.0 km alert)
 GPS Fix Health:   FIXED (High-Precision RTK) (Fresh)
 History Log:      1 stops logged (max 100)

@@ -7,6 +7,8 @@ GpsManager::GpsManager()
     : hasHeading_(false),
       bearingQuality_(BEARING_NONE),
       lastHeadingUpdate_(0),
+      hasAltitude_(false),
+      altitudeMeters_(0.0),
       hasTime_(false),
       hours_(0),
       minutes_(0),
@@ -377,6 +379,11 @@ void GpsManager::processSentence(char *sentence, unsigned long nowMs) {
         GeoPoint ksxtPt;
         if (parseKsxtLocation(sentence, ksxtPt)) {
             setLocation(ksxtPt, nowMs);
+        }
+
+        double ksxtAlt = 0.0;
+        if (parseKsxtAltitude(sentence, ksxtAlt)) {
+            setAltitudeMeters(ksxtAlt);
         }
     } else if (strncmp(sentence, "$GNGLL", 6) == 0 || strncmp(sentence, "$GPGLL", 6) == 0) {
         gllPacketCount_++;

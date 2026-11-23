@@ -39,6 +39,7 @@ inline bool parseKSXTLocation(const char *sentence, float *lat_out, float *lon_o
 }
 
 bool parseKsxtLocation(const char *sentence, GeoPoint &pointOut);
+bool parseKsxtAltitude(const char *sentence, double &altitudeOut);
 
 // Standard NMEA HDT / THS heading decoders
 bool parseHDT(const char *sentence, float *heading_out, BearingQuality *quality_out);

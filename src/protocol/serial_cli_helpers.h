@@ -3,6 +3,7 @@
 #include "voice_qso_parser.h"
 #include <cctype>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <string>
@@ -111,6 +112,12 @@ inline const char* skipSubcommandPrefix(const char *arg, size_t cmdLen) {
     const char *p = arg + cmdLen;
     while (*p == ' ' || *p == '\t' || isSubcmdPunct(*p)) p++;
     return p;
+}
+
+inline void formatAltitudeMeters(double meters, char *buf, size_t bufSize) {
+    if (!buf || bufSize == 0) return;
+    double feet = meters * 3.280839895;
+    std::snprintf(buf, bufSize, "%.1f m (%.0f ft)", meters, feet);
 }
 
 } // namespace cli_helpers

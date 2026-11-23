@@ -6841,6 +6841,62 @@ void test_serial_cli_factory_reset() {
     PASS();
 }
 
+void test_ksxt_altitude_status_display() {
+    TEST("KSXT altitude parsing, GpsManager storage, and status/rover status CLI display");
+
+    double alt = 0.0;
+    const char *ksxt_full = "$KSXT,20261024185730.00,-122.41940000,37.77490000,2100.00,299.22,-67.03,190.28,0.022,,1,3,46,28*27";
+    ASSERT_TRUE(parseKsxtAltitude(ksxt_full, alt));
+    ASSERT_NEAR(alt, 2100.0, 1e-4);
+
+    // Negative altitude (below sea level) should parse cleanly
+    const char *ksxt_neg = "$KSXT,20261024185730.00,-116.76670000,36.23000000,-85.50,180.00,0.00,0.00,0.000,,1,3,12,12*00";
+    ASSERT_TRUE(parseKsxtAltitude(ksxt_neg, alt));
+    ASSERT_NEAR(alt, -85.5, 1e-4);
+
+    // Invalid posQuality == 0 or empty altitude field should be rejected
+    const char *ksxt_no_pos = "$KSXT,20261024185730.00,116.23662400,40.07897925,68.3830,299.22,-67.03,190.28,0.022,,0,0,0,0*27";
+    ASSERT_TRUE(!parseKsxtAltitude(ksxt_no_pos, alt));
+    const char *ksxt_empty_alt = "$KSXT,20261024185730.00,116.23662400,40.07897925,,299.22,-67.03,190.28,0.022,,1,3,46,28*27";
+    ASSERT_TRUE(!parseKsxtAltitude(ksxt_empty_alt, alt));
+
+    // GpsManager + SerialCli status and rover status output
+    GpsManager gm;
+    Calibration cal;
+    GpsSimulator sim;
+    gm.setSimulator(&sim);
+    SerialCli cli(gm, cal, sim);
+
+    std::string cliOut;
+    cli.setOutputHandler([](const char *s, void *ctx) {
+        static_cast<std::string*>(ctx)->append(s);
+    }, &cliOut);
+
+    // Before KSXT altitude arrives, Altitude line is omitted
+    gm.feedSentence("$GNGLL,3746.4940,N,12225.1640,W,120000.00,A,A*70", 1000);
+    cliOut.clear();
+    cli.executeCommand("status", 1100);
+    ASSERT_TRUE(cliOut.find("Altitude:") == std::string::npos);
+
+    // Feed KSXT with 2100.00 m altitude
+    char ksxtBuf[256];
+    GpsSimulator::generateKsxt(ksxtBuf, sizeof(ksxtBuf), "20261122180000.00",
+                               37.7749, -122.4194, 90.0, BEARING_FIXED, 2100.0);
+    gm.feedSentence(ksxtBuf, 1200);
+    ASSERT_TRUE(gm.hasAltitude());
+    ASSERT_NEAR(gm.getAltitudeMeters(), 2100.0, 1e-2);
+
+    cliOut.clear();
+    cli.executeCommand("status", 1250);
+    ASSERT_TRUE(cliOut.find("- Altitude:            2100.0 m (6890 ft)") != std::string::npos);
+
+    cliOut.clear();
+    cli.executeCommand("rover status", 1300);
+    ASSERT_TRUE(cliOut.find("Altitude:         2100.0 m (6890 ft)") != std::string::npos);
+
+    PASS();
+}
+
 int main() {
     std::cout << "========================================" << std::endl;
     std::cout << "  GNSS Compass Unit Test Suite" << std::endl;
@@ -6920,6 +6976,7 @@ int main() {
     test_migrated_nvs_stores();
     test_audit_hardening_regressions();
     test_serial_cli_factory_reset();
+    test_ksxt_altitude_status_display();
 
     std::cout << "========================================" << std::endl;
     std::cout << "  All " << tests_passed << " / " << tests_run << " tests PASSED successfully!" << std::endl;
