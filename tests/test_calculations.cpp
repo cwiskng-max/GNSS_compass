@@ -6872,11 +6872,11 @@ void test_ksxt_altitude_status_display() {
         static_cast<std::string*>(ctx)->append(s);
     }, &cliOut);
 
-    // Before KSXT altitude arrives, Altitude line is omitted
+    // Before KSXT altitude arrives, Elevation line is omitted
     gm.feedSentence("$GNGLL,3746.4940,N,12225.1640,W,120000.00,A,A*70", 1000);
     cliOut.clear();
     cli.executeCommand("status", 1100);
-    ASSERT_TRUE(cliOut.find("Altitude:") == std::string::npos);
+    ASSERT_TRUE(cliOut.find("Elevation:") == std::string::npos);
 
     // Feed KSXT with 2100.00 m altitude
     char ksxtBuf[256];
@@ -6888,11 +6888,11 @@ void test_ksxt_altitude_status_display() {
 
     cliOut.clear();
     cli.executeCommand("status", 1250);
-    ASSERT_TRUE(cliOut.find("- Altitude:            2100.0 m (6890 ft)") != std::string::npos);
+    ASSERT_TRUE(cliOut.find("- Elevation:           2100.0 m (6890 ft)") != std::string::npos);
 
     cliOut.clear();
     cli.executeCommand("rover status", 1300);
-    ASSERT_TRUE(cliOut.find("Altitude:         2100.0 m (6890 ft)") != std::string::npos);
+    ASSERT_TRUE(cliOut.find("Elevation:        2100.0 m (6890 ft)") != std::string::npos);
 
     PASS();
 }

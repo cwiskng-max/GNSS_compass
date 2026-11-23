@@ -239,7 +239,7 @@ void SerialCli::printRoverStatus(unsigned long nowMs) {
     if (gpsManager_.hasAltitude()) {
         char altBuf[32];
         formatAltitudeMeters(gpsManager_.getAltitudeMeters(), altBuf, sizeof(altBuf));
-        printFormat("Altitude:         %s\r\n", altBuf);
+        printFormat("Elevation:        %s\r\n", altBuf);
     }
 
     // Qualification state A-D

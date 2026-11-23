@@ -11,7 +11,7 @@ In addition to antenna heading several other functions are included:
 - distance between target and current grids in km
 - Rover Mode 16 km transit displacement tracking, qualification alerts, and stop history
 - voice-friendly contest QSO logging with Cabrillo 3.0, ADIF, and CSV export
-- altitude reporting in CLI diagnostics (`status` and `rover status`)
+- elevation reporting in CLI diagnostics (`status` and `rover status`)
 - wireless Bluetooth Low Energy (BLE) serial CLI for smartphones and Web Bluetooth browsers (including the [HTML-BLEserial](https://ednieuw.github.io/HTML-BLEserial/) offline PWA)
 - automated in-system GNSS receiver configuration via bidirectional TX link
 
