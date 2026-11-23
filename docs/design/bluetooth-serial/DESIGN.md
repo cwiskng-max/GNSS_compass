@@ -278,12 +278,11 @@ To provide the operator with immediate feedback without cluttering the 480×480 
   2. Select **UART** mode.
   3. Full bidirectional terminal appears immediately.
 
-### 6.3 Laptops (Chrome / Edge Web Bluetooth — Zero Install)
+### 6.3 Android & Laptops (Chrome / Edge Web Bluetooth — Zero Install)
 
-Because modern Chromium browsers support the **Web Bluetooth API**, operators on macOS, Windows, Linux, and ChromeOS can access the serial CLI without installing any drivers or terminal programs:
+Because modern Chromium browsers support the **Web Bluetooth API**, operators on Android, macOS, Windows, Linux, and ChromeOS can access the serial CLI without installing any drivers or native terminal programs:
 
-* Connect using the open-source Web Bluetooth terminal [HTML-BLEserial](https://github.com/ednieuw/HTML-BLEserial) by ednieuw.
-* Simply open `BLE_UART_Terminal.html` (or `BLE_UART_Terminal-darktheme.html`) directly in Google Chrome or Microsoft Edge.
+* Connect using the open-source Web Bluetooth terminal **[HTML-BLEserial](https://ednieuw.github.io/HTML-BLEserial/)** ([GitHub](https://github.com/ednieuw/HTML-BLEserial)) by ednieuw, which includes 4 selectable themes and can be installed as an offline PWA in Chrome or Edge (or opened locally via `BLE_UART_Terminal.html`).
 * Click **"Connect"** -> Browser presents device picker -> Click `GNSS-Compass-xxxxxx` -> Interactive terminal connects in the tab.
 
 ---
