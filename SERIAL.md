@@ -40,6 +40,16 @@ Because the Elecrow 2.1" display is often mounted on a mast, tripod, or vehicle 
 * **RX Characteristic (Write to ESP32):** `6E400002-B5A3-F393-E0A9-E50E24DCCA9E`
 * **TX Characteristic (Notify from ESP32):** `6E400003-B5A3-F393-E0A9-E50E24DCCA9E`
 
+#### Web Bluetooth (Android, Laptop & Desktop — Zero Software Installation)
+You can connect directly from **Google Chrome**, **Microsoft Edge**, or **Chromium** on Android, macOS, Linux, Windows, or ChromeOS without installing any drivers or native terminal apps using the Web Bluetooth API *(note: iOS Safari and Chrome on iOS do not support Web Bluetooth)*:
+
+1. Open **[HTML-BLEserial](https://ednieuw.github.io/HTML-BLEserial/)** ([source on GitHub](https://github.com/ednieuw/HTML-BLEserial)) in Chrome or Edge (includes 4 selectable themes):
+   * It is a **Progressive Web App (PWA)** — on Android Chrome or desktop Chrome/Edge, you can install it from the browser menu/address bar to run **offline** in the field.
+   * Alternatively, clone or download the repository and open `BLE_UART_Terminal.html` locally from disk.
+2. Click the **CONNECT** button in the webpage.
+3. Select `GNSS-Compass-xxxxxx` from the browser device prompt and click **Pair**.
+4. You now have full bidirectional CLI access (`status`, `rover`, `target`, `log`, `cal`, `test`, `help`) directly within the app or browser tab.
+
 #### Android Mobile Connection
 1. Install **[Serial Bluetooth Terminal](https://play.google.com/store/apps/details?id=de.kai_morich.serial_bluetooth_terminal)** by Kai Morich from Google Play.
 2. Open sidebar -> **Devices** -> **Bluetooth LE** tab -> Scan -> Select `GNSS-Compass-xxxxxx`.
@@ -62,16 +72,6 @@ Because the Elecrow 2.1" display is often mounted on a mast, tripod, or vehicle 
 1. Install **[BLE Terminal HM-10](https://apps.apple.com/us/app/ble-terminal-hm-10/id1398703795)** or **[Adafruit Bluefruit Connect](https://apps.apple.com/us/app/adafruit-bluefruit-connect/id830125974)** from the App Store.
 2. Scan and tap `GNSS-Compass-xxxxxx`.
 3. Select **UART** mode. Bidirectional terminal access is active.
-
-#### Laptop / Desktop (Web Bluetooth — Zero Software Installation)
-You can connect directly from **Google Chrome**, **Microsoft Edge**, or **Chromium** on macOS, Linux, Windows, or ChromeOS without installing any desktop software or drivers using the Web Bluetooth API:
-
-1. Open the open-source **[HTML-BLEserial](https://github.com/ednieuw/HTML-BLEserial)** Web Bluetooth terminal by ednieuw:
-   * Clone or download the repository from [GitHub](https://github.com/ednieuw/HTML-BLEserial).
-   * Double-click `BLE_UART_Terminal.html` (or `BLE_UART_Terminal-darktheme.html`) to open it directly in Chrome or Edge (can be run locally from disk or hosted on GitHub Pages).
-2. Click the **CONNECT** button in the webpage.
-3. Select `GNSS-Compass-xxxxxx` from the browser device prompt and click **Pair**.
-4. You now have full bidirectional CLI access (`status`, `rover`, `target`, `log`, `cal`, `test`, `help`) directly within your browser tab.
 
 ---
 
@@ -176,6 +176,7 @@ Message Streams:
 
 Data Fix Status:
   - Coordinates:         37.77490, -122.41940 (Grid: CM87wa92)
+  - Elevation:           2100.0 m (6890 ft)
   - Dual-Antenna Heading: RTK FIXED (Pure White - High Precision)
 
 Overall Verdict:        [PASS] FULLY OPERATIONAL (RTK Fixed)
@@ -927,6 +928,7 @@ Origin Coords:     37.020833, -122.125000
 Origin Grid:      CM87wa00
 Displacement:       6.4 km (Threshold: 16.0 km)
 Current Grid:     CM87wb00 (TRAVERSED GRID)
+Elevation:        2100.0 m (6890 ft)
 Qualification:    STATE A: In-Transit (< 16.0 km alert)
 GPS Fix Health:   FIXED (High-Precision RTK) (Fresh)
 History Log:      1 stops logged (max 100)

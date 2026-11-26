@@ -4,12 +4,15 @@ This repository contains the schematic, source code, bill of materials and instr
 The compass provides antenna azimuth heading accurate to < 0.5 degrees with 0.1 degree resolution without needing any calibration.
 In addition to antenna heading several other functions are included:
 - current maidenhead grid square to 8 digits
-- target grid square to 6 digits
-- azimuth  heading to target grid
+- target grid square to 6 digits (with saved NVS target presets)
+- azimuth heading to target grid
 - UTC time HH:MM
 - reverse bearing from target grid
 - distance between target and current grids in km
-- wireless Bluetooth Low Energy (BLE) serial CLI for smartphones and web browsers
+- Rover Mode 16 km transit displacement tracking, qualification alerts, and stop history
+- voice-friendly contest QSO logging with Cabrillo 3.0, ADIF, and CSV export
+- elevation reporting in CLI diagnostics (`status` and `rover status`)
+- wireless Bluetooth Low Energy (BLE) serial CLI for smartphones and Web Bluetooth browsers (including the [HTML-BLEserial](https://ednieuw.github.io/HTML-BLEserial/) offline PWA)
 - automated in-system GNSS receiver configuration via bidirectional TX link
 
 ---

@@ -231,6 +231,31 @@ bool parseKsxtLocation(const char *sentence, GeoPoint &pointOut) {
     return false;
 }
 
+bool parseKsxtAltitude(const char *sentence, double &altitudeOut) {
+    if (!sentence) return false;
+
+    const char *q_field = getNthField(sentence, 10);
+    // If field 10 exists, require valid fix status (> '0')
+    if (q_field != nullptr && *q_field != '*' && (*q_field <= '0' || *q_field > '9')) {
+        return false;
+    }
+
+    const char *alt_field = getNthField(sentence, 4);
+    if (alt_field == nullptr || *alt_field == ',' || *alt_field == '*' ||
+        *alt_field == '\0' || *alt_field == '\r' || *alt_field == '\n') {
+        return false;
+    }
+
+    char *endPtr = nullptr;
+    double alt = strtod(alt_field, &endPtr);
+    if (endPtr == alt_field) {
+        return false;
+    }
+
+    altitudeOut = alt;
+    return true;
+}
+
 bool parseHDT(const char *sentence, float *heading_out, BearingQuality *quality_out) {
     if (!sentence || !heading_out || !quality_out) return false;
 

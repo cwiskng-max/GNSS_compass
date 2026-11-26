@@ -236,6 +236,11 @@ void SerialCli::printRoverStatus(unsigned long nowMs) {
         boundaryStr = "TRAVERSED GRID (Previously Visited)";
     }
     printFormat("Current Grid:     %s (%s)\r\n", curGrid, boundaryStr);
+    if (gpsManager_.hasAltitude()) {
+        char altBuf[32];
+        formatAltitudeMeters(gpsManager_.getAltitudeMeters(), altBuf, sizeof(altBuf));
+        printFormat("Elevation:        %s\r\n", altBuf);
+    }
 
     // Qualification state A-D
     const char *stateStr = "Unknown";

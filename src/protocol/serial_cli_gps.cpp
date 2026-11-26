@@ -511,6 +511,11 @@ void SerialCli::printGpsStatus(unsigned long nowMs) {
         } else {
             println("  - Coordinates:         SEARCHING (No fix yet)");
         }
+        if (gpsManager_.hasAltitude()) {
+            char altBuf[32];
+            cli_helpers::formatAltitudeMeters(gpsManager_.getAltitudeMeters(), altBuf, sizeof(altBuf));
+            printFormat("  - Elevation:           %s\r\n", altBuf);
+        }
 
         print("  - Dual-Antenna Heading:");
         if (gpsManager_.hasHeading()) {
