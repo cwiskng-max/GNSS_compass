@@ -111,6 +111,7 @@ Displays a summary of available serial commands.
                         - QSO log management and contest export
   test (or demo)        - Run visual display self-test demo
   cal [snap|zero|<val>] - View or configure antenna calibration
+  brightness [0-100]    - View or set display backlight brightness (%)
   sim [on|off|hdg|pos|grid|rover|status]
                         - GPS simulation commands
   exit (or disconnect)  - Terminate wireless BLE connection cleanly
@@ -141,6 +142,7 @@ Displays a summary of available serial commands.
 | **`log`** | `export <cabrillo\|adif\|csv>` | USB, BLE | Stream contest log export in ARRL Cabrillo 3.0, ADIF, or CSV |
 | **`log`** | `mycall [<call>\|reset]` \| `default band <band>` \| `max <#>` \| `timeout [<sec>\|reset]` | USB, BLE | Set Cabrillo station callsign, default band, NVS QSO storage capacity (`10–1000`), and QSO pop-up card auto-dismiss timeout (`1–60 s`, default `5 s`) |
 | **`cal`** | `snap` \| `zero` \| `[set] <deg>` \| `help` | USB, BLE | Antenna heading offset calibration |
+| **`brightness`** | `[0-100]` | USB, BLE | View or set display backlight brightness percentage (persisted in NVS) |
 | **`test`** *(or `demo`)* | None | USB, BLE | 9-stage visual display self-test demo |
 | **`sim`** | `on` \| `off` \| `hdg` \| `pos` \| `grid` \| `rover` \| `status` \| `help` | USB, BLE | GPS simulation mode and synthetic sentence injection |
 | **`ble`** | `status` \| `suffix [<val>\|reset]` \| `diag on\|off` | USB, BLE | Bluetooth Low Energy diagnostics and device name customization |

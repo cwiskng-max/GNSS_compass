@@ -21,6 +21,8 @@ typedef void (*CliStateChangedCallback)(void *context);
 typedef void (*CliRoverSimCallback)(const char *originGrid, double distKm, void *context);
 typedef void (*CliRoverActionCallback)(void *context, unsigned long nowMs);
 typedef void (*CliRestartCallback)(void *context);
+typedef void (*CliSetBrightnessCallback)(uint8_t percent, void *context);
+typedef uint8_t (*CliGetBrightnessCallback)(void *context);
 typedef void (*CliTargetGridCallback)(const char *grid, unsigned long nowMs, void *context);
 typedef void (*CliQsoLoggedCallback)(const QsoEntry &entry, size_t qsoIndex, unsigned long nowMs, void *context);
 
@@ -102,6 +104,11 @@ public:
     void setRunTestCallback(CliRunTestCallback cb, void *context = nullptr) { runTestCb_ = cb; runTestContext_ = context; }
     void setPrepareRestartCallback(CliRestartCallback cb, void *context = nullptr) { prepareRestartCb_ = cb; prepareRestartContext_ = context; }
     void setRestartCallback(CliRestartCallback cb, void *context = nullptr) { restartCb_ = cb; restartContext_ = context; }
+    void setBrightnessCallbacks(CliGetBrightnessCallback getCb, CliSetBrightnessCallback setCb, void *context = nullptr) {
+        getBrightnessCb_ = getCb;
+        setBrightnessCb_ = setCb;
+        brightnessContext_ = context;
+    }
     void setStateChangedCallback(CliStateChangedCallback cb, void *context = nullptr) { stateChangedCb_ = cb; stateChangedContext_ = context; }
     void setRoverSimCallback(CliRoverSimCallback cb, void *context = nullptr) { roverSimCb_ = cb; roverSimContext_ = context; }
     void setOutputHandler(CliCommandOutputFn fn, void *context = nullptr) { outputFn_ = fn; outputContext_ = context; }
@@ -259,6 +266,7 @@ private:
     void handleSimCommand(const char *arg, unsigned long nowMs);
     void handleCalCommand(const char *arg);
     void handleBleCommand(const char *arg);
+    void handleBrightnessCommand(const char *arg);
     void handleHelpCommand(const char *arg);
     void handleGpsCommand(const char *arg, unsigned long nowMs);
     void handleRoverCommand(const char *arg, unsigned long nowMs);
@@ -302,6 +310,9 @@ private:
     void *prepareRestartContext_;
     CliRestartCallback restartCb_;
     void *restartContext_;
+    CliGetBrightnessCallback getBrightnessCb_;
+    CliSetBrightnessCallback setBrightnessCb_;
+    void *brightnessContext_;
 
     bool pendingRoverClear_;
     CliSource pendingRoverClearSource_;

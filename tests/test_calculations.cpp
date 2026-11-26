@@ -6897,6 +6897,76 @@ void test_ksxt_altitude_status_display() {
     PASS();
 }
 
+void test_display_brightness_cli_and_nvs() {
+    TEST("Display brightness CLI command, PWM mapping, and NVS persistence");
+    NvsConfig::resetHostStorage();
+
+    ASSERT_TRUE(Board::percentToPwm(0) == 0);
+    ASSERT_TRUE(Board::percentToPwm(50) == 128);
+    ASSERT_TRUE(Board::percentToPwm(100) == 255);
+    ASSERT_TRUE(Board::percentToPwm(150) == 255);
+
+    Board board;
+    DisplayUi ui;
+    InputManager input;
+    GpsManager gps;
+    Calibration cal;
+    GpsSimulator sim;
+    SerialCli cli(gps, cal, sim);
+    AppController app(board, ui, input, gps, cal, sim, cli);
+
+    std::string cliOut;
+    cli.setOutputHandler([](const char *str, void *ctx) {
+        if (str && ctx) *static_cast<std::string*>(ctx) += str;
+    }, &cliOut);
+
+    app.begin();
+    ASSERT_TRUE(board.getBacklightPercent() == 95);
+    ASSERT_TRUE(board.getLastPwmBrightness() == Board::percentToPwm(95));
+
+    cliOut.clear();
+    cli.executeCommand("brightness", 1000);
+    ASSERT_TRUE(cliOut.find("[DISPLAY] Brightness: 95%") != std::string::npos);
+
+    cliOut.clear();
+    cli.executeCommand("brightness 40", 1100);
+    ASSERT_TRUE(cliOut.find("[DISPLAY] Brightness set to 40%") != std::string::npos);
+    ASSERT_TRUE(board.getBacklightPercent() == 40);
+    ASSERT_TRUE(board.getLastPwmBrightness() == Board::percentToPwm(40));
+
+    // Verify NVS persistence across Board::init()
+    Board reloadedBoard;
+    reloadedBoard.init();
+    ASSERT_TRUE(reloadedBoard.getBacklightPercent() == 40);
+    ASSERT_TRUE(reloadedBoard.getLastPwmBrightness() == Board::percentToPwm(40));
+
+    // Optional '%' suffix and 0% boundary
+    cliOut.clear();
+    cli.executeCommand("brightness 0%", 1200);
+    ASSERT_TRUE(cliOut.find("[DISPLAY] Brightness set to 0%") != std::string::npos);
+    ASSERT_TRUE(board.getBacklightPercent() == 0);
+    ASSERT_TRUE(board.getLastPwmBrightness() == 0);
+
+    // Invalid inputs leave brightness unchanged
+    cliOut.clear();
+    cli.executeCommand("brightness 101", 1300);
+    ASSERT_TRUE(cliOut.find("[DISPLAY ERROR]") != std::string::npos);
+    ASSERT_TRUE(board.getBacklightPercent() == 0);
+
+    cliOut.clear();
+    cli.executeCommand("brightness -5", 1400);
+    ASSERT_TRUE(cliOut.find("[DISPLAY ERROR]") != std::string::npos);
+    ASSERT_TRUE(board.getBacklightPercent() == 0);
+
+    cliOut.clear();
+    cli.executeCommand("brightness abc", 1500);
+    ASSERT_TRUE(cliOut.find("[DISPLAY ERROR]") != std::string::npos);
+    ASSERT_TRUE(board.getBacklightPercent() == 0);
+
+    NvsConfig::resetHostStorage();
+    PASS();
+}
+
 int main() {
     std::cout << "========================================" << std::endl;
     std::cout << "  GNSS Compass Unit Test Suite" << std::endl;
@@ -6977,6 +7047,7 @@ int main() {
     test_audit_hardening_regressions();
     test_serial_cli_factory_reset();
     test_ksxt_altitude_status_display();
+    test_display_brightness_cli_and_nvs();
 
     std::cout << "========================================" << std::endl;
     std::cout << "  All " << tests_passed << " / " << tests_run << " tests PASSED successfully!" << std::endl;

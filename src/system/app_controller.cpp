@@ -575,6 +575,17 @@ void AppController::begin() {
         auto *self = static_cast<AppController*>(ctx);
         if (self) self->getBoard().restart();
     }, this);
+    serialCli_.setBrightnessCallbacks(
+        [](void *ctx) -> uint8_t {
+            auto *self = static_cast<AppController*>(ctx);
+            return self ? self->getBoard().getBacklightPercent() : Board::DEFAULT_BRIGHTNESS_PERCENT;
+        },
+        [](uint8_t percent, void *ctx) {
+            auto *self = static_cast<AppController*>(ctx);
+            if (self) self->getBoard().setBacklightPercent(percent, true);
+        },
+        this
+    );
 
     serialCli_.setStateChangedCallback([](void *ctx) {
         auto *self = static_cast<AppController*>(ctx);

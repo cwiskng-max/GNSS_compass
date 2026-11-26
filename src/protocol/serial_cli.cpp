@@ -36,6 +36,7 @@ bool isKnownCommand(const char *cleanCmd) {
            equalsIgnoreCase(cleanCmd, "test") || equalsIgnoreCase(cleanCmd, "demo") ||
            equalsIgnoreCase(cleanCmd, "t") ||
            equalsIgnoreCase(cleanCmd, "ble") || startsWithIgnoreCase(cleanCmd, "ble ") ||
+           equalsIgnoreCase(cleanCmd, "brightness") || startsWithIgnoreCase(cleanCmd, "brightness ") ||
            startsWithIgnoreCase(cleanCmd, "cal") ||
            equalsIgnoreCase(cleanCmd, "disconnect") || equalsIgnoreCase(cleanCmd, "exit") ||
            equalsIgnoreCase(cleanCmd, "quit") ||
@@ -85,6 +86,9 @@ SerialCli::SerialCli(GpsManager &gpsManager, Calibration &calibration, GpsSimula
       prepareRestartContext_(nullptr),
       restartCb_(nullptr),
       restartContext_(nullptr),
+      getBrightnessCb_(nullptr),
+      setBrightnessCb_(nullptr),
+      brightnessContext_(nullptr),
       pendingRoverClear_(false),
       pendingRoverClearSource_(CLI_SOURCE_USB),
       pendingQsoClear_(false),
@@ -618,6 +622,8 @@ void SerialCli::executeCommand(const char *cmdLine, unsigned long nowMs, CliSour
         }
     } else if (equalsIgnoreCase(cleanCmd, "ble") || startsWithIgnoreCase(cleanCmd, "ble ")) {
         handleBleCommand(skipCmdArg(cleanCmd, 3));
+    } else if (equalsIgnoreCase(cleanCmd, "brightness") || startsWithIgnoreCase(cleanCmd, "brightness ")) {
+        handleBrightnessCommand(skipCmdArg(cleanCmd, 10));
     } else if (startsWithIgnoreCase(cleanCmd, "cal")) {
         handleCalCommand(skipCmdArg(cleanCmd, 3));
     } else if (equalsIgnoreCase(cleanCmd, "disconnect") || equalsIgnoreCase(cleanCmd, "exit") ||
@@ -635,6 +641,7 @@ void SerialCli::executeCommand(const char *cmdLine, unsigned long nowMs, CliSour
         pendingFactoryResetSource_ = activeSource_;
         println("[SYSTEM] WARNING: This will erase ALL saved NVS data:");
         println("  - Antenna calibration offset");
+        println("  - Display brightness setting");
         println("  - Custom BLE device name suffix");
         println("  - Rover stop history & capacity");
         println("  - Contest QSO log & settings");
@@ -685,6 +692,8 @@ void SerialCli::handleHelpCommand(const char *arg) {
         printSimHelp();
     } else if (equalsIgnoreCase(arg, "ble")) {
         println("Usage: ble [status] | ble suffix [<val>|reset] | ble diag on|off");
+    } else if (equalsIgnoreCase(arg, "brightness")) {
+        println("Usage: brightness [0-100]");
     } else {
         printFormat("Unknown help topic: '%s'.\r\n", arg);
         printHelp();
@@ -707,6 +716,7 @@ void SerialCli::printHelp() {
     println("                        - QSO log management and contest export");
     println("  test (or demo)        - Run visual display self-test demo");
     println("  cal [snap|zero|<val>] - View or configure antenna calibration");
+    println("  brightness [0-100]    - View or set display backlight brightness (%)");
     println("  sim [on|off|hdg|pos|grid|rover|status]");
     println("                        - GPS simulation commands");
     println("  exit (or disconnect)  - Terminate wireless BLE connection cleanly");
@@ -863,6 +873,51 @@ void SerialCli::handleBleCommand(const char *arg) {
         println("Usage: ble [status] | ble suffix [<val>|reset] | ble diag on|off");
     } else {
         println("Usage: ble [status] | ble suffix [<val>|reset] | ble diag on|off");
+    }
+}
+
+void SerialCli::handleBrightnessCommand(const char *arg) {
+    if (!arg || *arg == '\0' || equalsIgnoreCase(arg, "status") || equalsIgnoreCase(arg, "show")) {
+        if (getBrightnessCb_) {
+            printFormat("[DISPLAY] Brightness: %u%%\r\n", static_cast<unsigned>(getBrightnessCb_(brightnessContext_)));
+        } else {
+            println("[DISPLAY] Brightness control not registered.");
+        }
+        return;
+    }
+    if (equalsIgnoreCase(arg, "help") || std::strcmp(arg, "?") == 0) {
+        println("Usage: brightness [0-100]");
+        return;
+    }
+
+    size_t len = std::strlen(arg);
+    while (len > 0 && (arg[len - 1] == ' ' || arg[len - 1] == '\t')) {
+        len--;
+    }
+    if (len > 0 && arg[len - 1] == '%') {
+        len--;
+    }
+    if (len == 0 || len > 3) {
+        println("[DISPLAY ERROR] Usage: brightness [0-100]");
+        return;
+    }
+    unsigned int pct = 0;
+    for (size_t i = 0; i < len; ++i) {
+        if (!std::isdigit(static_cast<unsigned char>(arg[i]))) {
+            println("[DISPLAY ERROR] Usage: brightness [0-100]");
+            return;
+        }
+        pct = pct * 10U + static_cast<unsigned int>(arg[i] - '0');
+    }
+    if (pct > 100U) {
+        println("[DISPLAY ERROR] Brightness must be between 0 and 100.");
+        return;
+    }
+    if (setBrightnessCb_) {
+        setBrightnessCb_(static_cast<uint8_t>(pct), brightnessContext_);
+        printFormat("[DISPLAY] Brightness set to %u%%\r\n", pct);
+    } else {
+        println("[DISPLAY] Brightness control not registered.");
     }
 }
 

@@ -31,7 +31,7 @@ However, any firmware power optimization must be evaluated against the **full sy
 The modular firmware refactoring established clean architectural seams for power management, though no active power-saving policies are currently enabled:
 
 * **Main Loop ([gps_compass.ino](../../../gps_compass.ino)):** Non-blocking `AppController::update()` followed by `delay(1)` cooperative FreeRTOS yield.
-* **Backlight ([board.cpp](../../../src/system/board.cpp)):** `Board::setBacklight(uint8_t brightness)` drives `BKL_PIN` (GPIO 6) via `analogWrite()`. Called once at boot (`250`) and set to `0` only during `Board::restart()` / `prepareRestart`.
+* **Backlight ([board.cpp](../../../src/system/board.cpp)):** `Board::setBacklight(uint8_t brightness)` drives `BKL_PIN` (GPIO 6) via `analogWrite()`. `Board::setBacklightPercent(uint8_t percent, bool persist)` maps `0–100%` to `0–255` PWM, persists the user's setting in `NvsConfig("compass")` (`"bkl_pct"`, default `95%`), and is exposed via the `brightness [0-100]` CLI command. Active inactivity dimming/sleep timeouts are not yet implemented.
 * **BLE Radio ([ble_serial_manager_esp32.cpp](../../../src/protocol/ble_serial_manager_esp32.cpp)):** Explicitly configured under the assumption that power is unconstrained:
   * TX power set to `ESP_PWR_LVL_P9` (+9 dBm) for both `ESP_BLE_PWR_TYPE_ADV` and `ESP_BLE_PWR_TYPE_DEFAULT`.
   * Advertising intervals set to `0x20`–`0x30` (20–30 ms) and preferred connection interval `0x000C`–`0x0018` (15–30 ms).
@@ -52,8 +52,8 @@ The LED backlight is the largest controllable load on the display board.
   * `InputManager` emits any `UserEvent` (touch, bezel rotation, button press).
   * A high-priority alert occurs (e.g., QSO Pop-Up Card, Rover 16 km qualification transition).
 * **Two-Stage Policy (Configurable):**
-  1. **Active Brightness:** User-configurable (default `250`, or lower field/night preset).
-  2. **Idle Dim:** After `dimTimeoutSec` of inactivity (e.g., 60 s), ramp/set `board_.setBacklight(dimLevel)` (e.g., `50` / ~20%).
+  1. **Active Brightness:** Already user-configurable via `brightness <0-100>` (`"bkl_pct"` in NVS, default `95%`). Inactivity dimming should restore this user-configured percentage on wake rather than a hardcoded value.
+  2. **Idle Dim:** After `dimTimeoutSec` of inactivity (e.g., 60 s), ramp/set `board_.setBacklight(dimLevel)` (e.g., `20%` or capped below `"bkl_pct"`).
   3. **Optional Screen Off:** After `offTimeoutSec` (if enabled, `0` = never off so compass remains readable at a glance), call `board_.setBacklight(0)`.
 * **Wake:** Any touch, encoder step, button press, or alert immediately restores active brightness. (If waking from screen-off, the first touch should wake the display without triggering an unintended UI action.)
 
@@ -93,12 +93,12 @@ The LED backlight is the largest controllable load on the display board.
 
 ## 4. Proposed Configuration & CLI Surface (If Implemented)
 
-Settings would persist in NVS via `NvsConfig("power")`:
+Settings would persist in NVS (`"power"` for sleep/radio policy, alongside the existing `"bkl_pct"` key in `"compass"`):
 
 | NVS Key | Default | Description |
 | :--- | :--- | :--- |
-| `bkl_bright` | `250` | Active backlight level (`10–255`) |
-| `bkl_dim` | `50` | Idle dimmed backlight level (`0–255`) |
+| `bkl_pct` *(existing, `"compass"`)* | `95` | User active backlight percentage (`0–100%`, set via `brightness [0-100]`) |
+| `bkl_dim` | `20` | Idle dimmed backlight percentage (`0–100%`) |
 | `dim_sec` | `0` (disabled) or `60` | Seconds of inactivity before dimming |
 | `off_sec` | `0` (disabled) | Seconds of inactivity before screen off |
 | `ble_pwr` | `0` (0 dBm) | BLE TX power level |
@@ -106,7 +106,7 @@ Settings would persist in NVS via `NvsConfig("power")`:
 
 Candidate Serial CLI commands:
 * `power status` — Show current backlight level, BLE TX power/state, CPU MHz, and idle timers.
-* `power brightness <10-255>` / `power dim <sec> [level]` / `power off <sec>`
+* `power dim <sec> [percent]` / `power off <sec>` *(active brightness is already handled by `brightness [0-100]`)*
 * `ble power <low|med|high>` / `ble on` / `ble off`
 
 ---
