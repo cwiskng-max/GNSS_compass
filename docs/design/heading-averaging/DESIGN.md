@@ -68,7 +68,7 @@ $$\Delta t = \frac{\text{nowMs} - \text{lastUpdateMs}}{1000.0}, \qquad \alpha = 
 
 $$S_k = (1 - \alpha) S_{k-1} + \alpha \sin(\theta_k), \qquad C_k = (1 - \alpha) C_{k-1} + \alpha \cos(\theta_k)$$
 
-$$\bar{\theta}_k = \operatorname{atan2}(S_k, C_k) \pmod{360^\circ}$$
+$$\bar{\theta}_k = \mathrm{atan2}(S_k, C_k) \pmod{360^\circ}$$
 
 * **Zero Wrap-Around Singularity:** Filtering in $(\sin\theta, \cos\theta)$ space handles $359^\circ \leftrightarrow 1^\circ$ seamlessly.
 * **Lower Phase Lag:** Exponential weighting responds faster to genuine antenna turns than an equal-weight boxcar window of equivalent noise reduction.
