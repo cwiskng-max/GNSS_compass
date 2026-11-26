@@ -6,8 +6,8 @@ This document serves as an unordered pool of ideas and potential enhancements fo
 
 ## Candidate Feature Ideas
 
-- [ ] **Implement power-saving calls in ESP32 code**
-  - Leverage ESP32-S3 power management APIs (e.g. automatic light sleep / modem sleep, dynamic frequency scaling between 240 MHz / 80 MHz, display backlight dimming or sleep timeout during inactivity) to reduce field battery draw.
+- [ ] **Implement power-saving calls in ESP32 code** — *Parked; see [Power Management Design](docs/design/power-management/DESIGN.md)*
+  - Leverage ESP32-S3 power management APIs (e.g. display backlight dimming/timeout, BLE TX power & advertising backoff, I2C polling throttling, CPU frequency scaling) to reduce field battery draw.
 
 - [ ] **Configurable heading averaging depth**
   - Allow runtime configuration (via UI menu / settings or serial CLI) of the number of heading values to average in the circular mean filter.
