@@ -52,6 +52,7 @@ AppController::AppController(Board &board,
       modalOpenedMillis_(0),
       qsoCardOpenedMillis_(0),
       targetModalOpenedMillis_(0),
+      quickSettingsOpenedMillis_(0),
       pendingModalButtonRelease_(ModalButtonId::None),
       pendingModalButtonReleaseStartMillis_(0)
 {
@@ -699,6 +700,14 @@ void AppController::handleUserEvent(const UserEvent &event, unsigned long nowMs)
                 if (displayUi_.getTargetListModal().moveSelection(+1, count)) {
                     drawTargetListRows();
                 }
+            } else if (currentUiMode_ == UiMode::QuickSettings) {
+                quickSettingsOpenedMillis_ = nowMs;
+                uint8_t pct = board_.getBacklightPercent();
+                uint8_t nextPct = (pct + BRIGHTNESS_STEP_PERCENT > 100) ? 100 : static_cast<uint8_t>(pct + BRIGHTNESS_STEP_PERCENT);
+                if (nextPct != pct) {
+                    board_.setBacklightPercent(nextPct, false);
+                    displayUi_.getQuickSettingsModal().drawBrightnessValue(nextPct);
+                }
             } else if (currentUiMode_ == UiMode::Normal && gridEditor_.isEditing()) {
                 if (operationalMode_ == OperationalMode::Rover) {
                     onTargetEdited(nowMs);
@@ -721,6 +730,14 @@ void AppController::handleUserEvent(const UserEvent &event, unsigned long nowMs)
                 if (displayUi_.getTargetListModal().moveSelection(-1, count)) {
                     drawTargetListRows();
                 }
+            } else if (currentUiMode_ == UiMode::QuickSettings) {
+                quickSettingsOpenedMillis_ = nowMs;
+                uint8_t pct = board_.getBacklightPercent();
+                uint8_t nextPct = (pct <= BRIGHTNESS_STEP_PERCENT) ? 0 : static_cast<uint8_t>(pct - BRIGHTNESS_STEP_PERCENT);
+                if (nextPct != pct) {
+                    board_.setBacklightPercent(nextPct, false);
+                    displayUi_.getQuickSettingsModal().drawBrightnessValue(nextPct);
+                }
             } else if (currentUiMode_ == UiMode::Normal && gridEditor_.isEditing()) {
                 if (operationalMode_ == OperationalMode::Rover) {
                     onTargetEdited(nowMs);
@@ -740,7 +757,20 @@ void AppController::handleUserEvent(const UserEvent &event, unsigned long nowMs)
                 pendingModalButtonRelease_ = ModalButtonId::None;
                 setUiMode(UiMode::Normal);
                 redrawMainScreen();
+            } else if (currentUiMode_ == UiMode::QuickSettings) {
+                board_.setBacklightPercent(board_.getBacklightPercent(), true);
+                setUiMode(UiMode::Normal);
+                redrawMainScreen();
             }
+            break;
+
+        case UserEventType::LongPressEncoderButtonTriggered:
+            if (currentUiMode_ != UiMode::Normal) {
+                break;
+            }
+            setUiMode(UiMode::QuickSettings);
+            quickSettingsOpenedMillis_ = nowMs;
+            displayUi_.getQuickSettingsModal().drawModal(board_.getBacklightPercent());
             break;
 
         case UserEventType::TouchCalibrationPill:
@@ -824,6 +854,10 @@ void AppController::handleUserEvent(const UserEvent &event, unsigned long nowMs)
                 if (event.buttonId == ModalButtonId::Ok) {
                     displayUi_.getQsoCard().drawOkButton(true);
                 }
+            } else if (currentUiMode_ == UiMode::QuickSettings) {
+                if (event.buttonId == ModalButtonId::Ok) {
+                    displayUi_.getQuickSettingsModal().drawOkButton(true);
+                }
             } else if (currentUiMode_ == UiMode::TargetList) {
                 bool hasItems = targetPresetManagerRef_ && !targetPresetManagerRef_->isEmpty();
                 if (event.buttonId == ModalButtonId::TargetLoad) {
@@ -848,6 +882,8 @@ void AppController::handleUserEvent(const UserEvent &event, unsigned long nowMs)
                 displayUi_.getRoverHistoryModal().drawCancelButton(false);
             } else if (currentUiMode_ == UiMode::QsoCard) {
                 displayUi_.getQsoCard().drawOkButton(false);
+            } else if (currentUiMode_ == UiMode::QuickSettings) {
+                displayUi_.getQuickSettingsModal().drawOkButton(false);
             } else if (currentUiMode_ == UiMode::TargetList) {
                 bool hasItems = targetPresetManagerRef_ && !targetPresetManagerRef_->isEmpty();
                 displayUi_.getTargetListModal().drawLoadButton(false, hasItems);
@@ -977,6 +1013,25 @@ void AppController::handleUserEvent(const UserEvent &event, unsigned long nowMs)
             }
             break;
 
+        case UserEventType::QuickSettingsSliderTouched:
+            if (currentUiMode_ == UiMode::QuickSettings && event.gridIndex >= 0 && event.gridIndex <= 100) {
+                quickSettingsOpenedMillis_ = nowMs;
+                uint8_t pct = static_cast<uint8_t>(event.gridIndex);
+                if (pct != board_.getBacklightPercent()) {
+                    board_.setBacklightPercent(pct, false);
+                    displayUi_.getQuickSettingsModal().drawBrightnessValue(pct);
+                }
+            }
+            break;
+
+        case UserEventType::QuickSettingsOkTriggered:
+            if (currentUiMode_ == UiMode::QuickSettings) {
+                board_.setBacklightPercent(board_.getBacklightPercent(), true);
+                setUiMode(UiMode::Normal);
+                redrawMainScreen();
+            }
+            break;
+
         default:
             break;
     }
@@ -1031,6 +1086,12 @@ void AppController::update(unsigned long nowMs) {
     } else if (currentUiMode_ == UiMode::TargetList) {
         if ((nowMs - targetModalOpenedMillis_) >= TARGET_MODAL_TIMEOUT_MS) {
             pendingModalButtonRelease_ = ModalButtonId::None;
+            setUiMode(UiMode::Normal);
+            redrawMainScreen();
+        }
+    } else if (currentUiMode_ == UiMode::QuickSettings) {
+        if ((nowMs - quickSettingsOpenedMillis_) >= QUICK_SETTINGS_TIMEOUT_MS) {
+            board_.setBacklightPercent(board_.getBacklightPercent(), true);
             setUiMode(UiMode::Normal);
             redrawMainScreen();
         }

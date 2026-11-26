@@ -38,6 +38,7 @@ g++ -O2 -Wall -Wextra -I"$REPO_DIR" \
     "$REPO_DIR/src/ui/target_list_modal.cpp" \
     "$REPO_DIR/src/ui/rover_card.cpp" \
     "$REPO_DIR/src/ui/qso_card.cpp" \
+    "$REPO_DIR/src/ui/quick_settings_modal.cpp" \
     "$REPO_DIR/src/ui/display_ui.cpp" \
     "$SCRIPT_DIR/test_calculations.cpp" -o "$SCRIPT_DIR/run_tests"
 

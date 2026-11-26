@@ -6967,6 +6967,99 @@ void test_display_brightness_cli_and_nvs() {
     PASS();
 }
 
+void test_quick_settings_brightness_modal_and_long_press() {
+    TEST("QuickSettings modal formatters, encoder long-press, live preview, and NVS commit");
+    NvsConfig::resetHostStorage();
+
+    // 1. Formatters and geometry helpers
+    char buf[16];
+    QuickSettingsModal::formatBrightnessText(95, buf, sizeof(buf));
+    ASSERT_TRUE(std::strcmp(buf, " 95%") == 0);
+    QuickSettingsModal::formatBrightnessText(0, buf, sizeof(buf));
+    ASSERT_TRUE(std::strcmp(buf, "  0%") == 0);
+    ASSERT_TRUE(QuickSettingsModal::getSliderFillWidth(0, 296) == 0);
+    ASSERT_TRUE(QuickSettingsModal::getSliderFillWidth(50, 296) == 148);
+    ASSERT_TRUE(QuickSettingsModal::getSliderFillWidth(100, 296) == 296);
+
+    ASSERT_TRUE(QuickSettingsModal::isOkButtonTouched(QUICK_SETTINGS_OK_X + 10, QUICK_SETTINGS_OK_Y + 10));
+    ASSERT_TRUE(!QuickSettingsModal::isOkButtonTouched(10, 10));
+    ASSERT_TRUE(QuickSettingsModal::getBrightnessFromTouch(QUICK_SETTINGS_BAR_X, QUICK_SETTINGS_BAR_Y + 10) == 0);
+    ASSERT_TRUE(QuickSettingsModal::getBrightnessFromTouch(QUICK_SETTINGS_BAR_X + QUICK_SETTINGS_BAR_W / 2, QUICK_SETTINGS_BAR_Y + 10) == 50);
+    ASSERT_TRUE(QuickSettingsModal::getBrightnessFromTouch(QUICK_SETTINGS_BAR_X + QUICK_SETTINGS_BAR_W, QUICK_SETTINGS_BAR_Y + 10) == 100);
+    ASSERT_TRUE(QuickSettingsModal::getBrightnessFromTouch(QUICK_SETTINGS_BAR_X + 50, 10) == -1);
+
+    // 2. End-to-end AppController + InputManager long-press workflow
+    Board board;
+    DisplayUi ui;
+    InputManager input;
+    GpsManager gps;
+    Calibration cal;
+    GpsSimulator sim;
+    SerialCli cli(gps, cal, sim);
+    AppController app(board, ui, input, gps, cal, sim, cli);
+    app.begin();
+
+    ASSERT_TRUE(app.getUiMode() == UiMode::Normal);
+    ASSERT_TRUE(board.getBacklightPercent() == 95);
+
+    // Long-press bezel (hold >= ENCODER_LONG_PRESS_MS) opens QuickSettings
+    input.injectEncoderButton(true, 1000);
+    app.update(1000);
+    ASSERT_TRUE(app.getUiMode() == UiMode::Normal);
+
+    input.injectEncoderButton(true, 1000 + ENCODER_LONG_PRESS_MS);
+    app.update(1000 + ENCODER_LONG_PRESS_MS);
+    ASSERT_TRUE(app.getUiMode() == UiMode::QuickSettings);
+
+    // Release after long-press does NOT immediately dismiss QuickSettings
+    input.injectEncoderButton(false, 1900);
+    app.update(1900);
+    ASSERT_TRUE(app.getUiMode() == UiMode::QuickSettings);
+
+    // Rotate CCW twice (-10% -> 85%) gives live preview WITHOUT persisting to NVS yet
+    input.injectEncoderStep(-1);
+    input.injectEncoderStep(-1);
+    app.update(2000);
+    ASSERT_TRUE(board.getBacklightPercent() == 85);
+    ASSERT_TRUE(NvsConfig("compass").getUShort("bkl_pct", 95) == 95);
+
+    // Touch slider bar at 50% updates live preview and resets timeout
+    input.injectTouch(true, QUICK_SETTINGS_BAR_X + QUICK_SETTINGS_BAR_W / 2, QUICK_SETTINGS_BAR_Y + 10, 4000);
+    app.update(4000);
+    input.injectTouch(false, 0, 0, 4050);
+    app.update(4050);
+    ASSERT_TRUE(board.getBacklightPercent() == 50);
+
+    // Timeout before 6000 ms from last interaction does NOT dismiss
+    app.update(9000);
+    ASSERT_TRUE(app.getUiMode() == UiMode::QuickSettings);
+
+    // Timeout >= QUICK_SETTINGS_TIMEOUT_MS commits to NVS and returns to Normal
+    app.update(4000 + QUICK_SETTINGS_TIMEOUT_MS);
+    ASSERT_TRUE(app.getUiMode() == UiMode::Normal);
+    ASSERT_TRUE(NvsConfig("compass").getUShort("bkl_pct", 95) == 50);
+
+    // Re-open via long-press, step +5% -> 55%, and confirm via single bezel press
+    input.injectEncoderButton(true, 12000);
+    input.injectEncoderButton(true, 12000 + ENCODER_LONG_PRESS_MS);
+    input.injectEncoderButton(false, 12900);
+    app.update(12900);
+    ASSERT_TRUE(app.getUiMode() == UiMode::QuickSettings);
+
+    input.injectEncoderStep(+1);
+    app.update(13000);
+    ASSERT_TRUE(board.getBacklightPercent() == 55);
+
+    input.injectEncoderButton(true, 13100);
+    input.injectEncoderButton(false, 13150);
+    app.update(13150);
+    ASSERT_TRUE(app.getUiMode() == UiMode::Normal);
+    ASSERT_TRUE(NvsConfig("compass").getUShort("bkl_pct", 95) == 55);
+
+    NvsConfig::resetHostStorage();
+    PASS();
+}
+
 int main() {
     std::cout << "========================================" << std::endl;
     std::cout << "  GNSS Compass Unit Test Suite" << std::endl;
@@ -7048,6 +7141,7 @@ int main() {
     test_serial_cli_factory_reset();
     test_ksxt_altitude_status_display();
     test_display_brightness_cli_and_nvs();
+    test_quick_settings_brightness_modal_and_long_press();
 
     std::cout << "========================================" << std::endl;
     std::cout << "  All " << tests_passed << " / " << tests_run << " tests PASSED successfully!" << std::endl;

@@ -18,7 +18,8 @@ enum class UiMode : uint8_t {
     Calibrating = 1,
     RoverHistory = 2,
     QsoCard = 3,
-    TargetList = 4
+    TargetList = 4,
+    QuickSettings = 5
 };
 
 enum class ModalButtonId : uint8_t {
@@ -61,7 +62,10 @@ enum class UserEventType : uint8_t {
     DeleteTargetTriggered,
     SaveTargetTriggered,
     HoldClearButtonProgress,
-    ClearButtonCommitted
+    ClearButtonCommitted,
+    LongPressEncoderButtonTriggered,
+    QuickSettingsOkTriggered,
+    QuickSettingsSliderTouched
 };
 
 struct UserEvent {
@@ -89,7 +93,7 @@ public:
     // Event injection for host unit tests & simulation
     void injectTouch(bool touched, int16_t x, int16_t y, unsigned long nowMs);
     void injectEncoderStep(int delta);
-    void injectEncoderButton(bool pressed);
+    void injectEncoderButton(bool pressed, unsigned long nowMs = 0);
 
     // Coordinate hit-testing helpers
     static int getTargetGridCharFromTouch(int16_t x);
@@ -122,8 +126,13 @@ private:
 
     Adafruit_CST8XX tsPanel_;
     PCF8574 *pcf8574_ = nullptr;
-    bool encoderSwPressed_ = false;
 #endif
+
+    void handleEncoderButtonState(bool pressed, unsigned long nowMs);
+    bool encoderSwPressed_ = false;
+    unsigned long encoderSwPressTime_ = 0;
+    unsigned long encoderSwLastLowMs_ = 0;
+    bool encoderSwLongPressTriggered_ = false;
 
     void updateHoldButton(UserEventType progressType, UserEventType commitType,
                           bool &holdingFlag, unsigned long holdDuration, unsigned long requiredMs);
