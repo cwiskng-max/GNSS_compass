@@ -520,7 +520,7 @@ void test_antenna_calibration() {
 }
 
 void test_bearing_filter_class() {
-    TEST("BearingFilter vector smoothing, seed, and 360 wrap-around");
+    TEST("BearingFilter Circular EMA smoothing, seed, and 360 wrap-around");
     BearingFilter filter;
     ASSERT_TRUE(!filter.hasSamples());
     ASSERT_TRUE(filter.sampleCount() == 0);
@@ -528,7 +528,7 @@ void test_bearing_filter_class() {
     // Baseline pointing North (0 deg): (0 + 270) % 360 = 270 deg
     filter.seed(0.0f);
     ASSERT_TRUE(filter.hasSamples());
-    ASSERT_TRUE(filter.sampleCount() == 5);
+    ASSERT_TRUE(filter.sampleCount() == 1);
     ASSERT_NEAR(filter.getRawHeading(), 270.0, 1e-3);
 
     // With +10 deg calibration offset -> 280 deg
@@ -541,16 +541,15 @@ void test_bearing_filter_class() {
     ASSERT_NEAR(filter.getRawHeading(), 0.0, 1e-3);
 
     // Push samples across 0/360 wrap-around: alternate 359 deg and 1 deg
-    // True circular average of 359 and 1 is 0 deg (or 360 deg)
-    // Raw heading = (0 + 270) = 270 deg
+    // True circular average around 0 deg -> Raw heading = (0 + 270) = 270 deg
     filter.reset();
-    filter.push(359.0f);
-    filter.push(1.0f);
-    filter.push(359.0f);
-    filter.push(1.0f);
-    filter.push(0.0f);
+    filter.push(359.0f, BEARING_FIXED, 1000);
+    filter.push(1.0f, BEARING_FIXED, 1200);
+    filter.push(359.0f, BEARING_FIXED, 1400);
+    filter.push(1.0f, BEARING_FIXED, 1600);
+    filter.push(0.0f, BEARING_FIXED, 1800);
     ASSERT_TRUE(filter.sampleCount() == 5);
-    ASSERT_NEAR(filter.getRawHeading(), 270.0, 0.5);
+    ASSERT_NEAR(filter.getRawHeading(), 270.0, 1.0);
 
     PASS();
 }
@@ -7060,6 +7059,140 @@ void test_quick_settings_brightness_modal_and_long_press() {
     PASS();
 }
 
+void test_heading_averaging_levels_ema_and_cli_nvs() {
+    TEST("Heading averaging levels (Low/Med/High), dt/quality Circular EMA, pluggable seam, and cal avg CLI/NVS");
+    NvsConfig::resetHostStorage();
+
+    // 1. Low (raw): immediate step response
+    CircularEmaFilter emaLow;
+    emaLow.setAveragingLevel(HeadingAveragingLevel::Low);
+    emaLow.push(10.0f, BEARING_FIXED, 1000);
+    emaLow.push(50.0f, BEARING_FIXED, 1200);
+    ASSERT_NEAR(emaLow.getFilteredAngle(), 50.0, 1e-3);
+
+    // 2. Medium vs High damping on 0 -> 90 deg step at 5 Hz (dt = 200 ms)
+    CircularEmaFilter emaMed;
+    emaMed.setAveragingLevel(HeadingAveragingLevel::Medium);
+    emaMed.seed(0.0f, 1000);
+    emaMed.push(90.0f, BEARING_FIXED, 1200);
+    double medAfterOneStep = emaMed.getFilteredAngle();
+    ASSERT_TRUE(medAfterOneStep > 15.0 && medAfterOneStep < 45.0);
+
+    CircularEmaFilter emaHigh;
+    emaHigh.setAveragingLevel(HeadingAveragingLevel::High);
+    emaHigh.seed(0.0f, 1000);
+    emaHigh.push(90.0f, BEARING_FIXED, 1200);
+    double highAfterOneStep = emaHigh.getFilteredAngle();
+    ASSERT_TRUE(highAfterOneStep > 2.0 && highAfterOneStep < medAfterOneStep);
+
+    // 3. Quality weighting: BEARING_FLOAT damps step more than BEARING_FIXED
+    CircularEmaFilter emaFloat;
+    emaFloat.setAveragingLevel(HeadingAveragingLevel::Medium);
+    emaFloat.seed(0.0f, 1000);
+    emaFloat.push(90.0f, BEARING_FLOAT, 1200);
+    ASSERT_TRUE(emaFloat.getFilteredAngle() < medAfterOneStep);
+
+    // 4. dt invariance: larger dt advances EMA further than shorter dt
+    CircularEmaFilter emaSlowRate;
+    emaSlowRate.setAveragingLevel(HeadingAveragingLevel::Medium);
+    emaSlowRate.seed(0.0f, 1000);
+    emaSlowRate.push(90.0f, BEARING_FIXED, 2000); // dt = 1.0 s
+    ASSERT_TRUE(emaSlowRate.getFilteredAngle() > medAfterOneStep);
+
+    // 5. predict() is a safe no-op in Open-Loop Circular EMA
+    double beforePredict = emaSlowRate.getFilteredAngle();
+    emaSlowRate.predict(45.0f, 0.1f, true);
+    ASSERT_NEAR(emaSlowRate.getFilteredAngle(), beforePredict, 1e-6);
+
+    // 6. Pluggable IAngleFilter seam on BearingFilter
+    struct MockCustomFilter : public IAngleFilter {
+        double val = 0.0;
+        bool samples = false;
+        HeadingAveragingLevel lvl = HeadingAveragingLevel::Medium;
+        bool predicted = false;
+        void reset() override { val = 0.0; samples = false; }
+        void seed(float angleDeg, unsigned long) override { val = angleDeg; samples = true; }
+        void push(float angleDeg, BearingQuality, unsigned long) override { val = angleDeg; samples = true; }
+        void predict(float, float, bool) override { predicted = true; }
+        double getFilteredAngle() const override { return val; }
+        bool hasSamples() const override { return samples; }
+        uint8_t sampleCount() const override { return samples ? 1 : 0; }
+        void setAveragingLevel(HeadingAveragingLevel l) override { lvl = l; }
+        HeadingAveragingLevel getAveragingLevel() const override { return lvl; }
+        const char* getStrategyName() const override { return "MockKalman"; }
+    } mockFilter;
+
+    BearingFilter bf;
+    bf.setFilterStrategy(&mockFilter);
+    bf.push(15.0f, BEARING_FIXED, 1000);
+    bf.predict(10.0f, 0.05f, true);
+    ASSERT_TRUE(mockFilter.predicted);
+    ASSERT_NEAR(bf.getRawHeading(), 285.0, 1e-3);
+    ASSERT_TRUE(std::strcmp(bf.getStrategyName(), "MockKalman") == 0);
+    bf.setOperatingMode(FilterOperatingMode::OpenLoop);
+    ASSERT_TRUE(std::strcmp(bf.getStrategyName(), "Circular EMA") == 0);
+
+    // 7. End-to-end SerialCli cal avg + NVS persistence via AppController::begin()
+    Board board;
+    DisplayUi ui;
+    InputManager input;
+    GpsManager gps;
+    Calibration cal;
+    GpsSimulator sim;
+    SerialCli cli(gps, cal, sim);
+    AppController app(board, ui, input, gps, cal, sim, cli);
+
+    std::string cliOut;
+    cli.setOutputHandler([](const char *str, void *ctx) {
+        if (str && ctx) *static_cast<std::string*>(ctx) += str;
+    }, &cliOut);
+
+    app.begin();
+    ASSERT_TRUE(gps.getBearingFilter().getAveragingLevel() == HeadingAveragingLevel::Medium);
+
+    // Seed heading and verify runtime level change preserves heading continuity
+    gps.setHeading(0.0f, BEARING_FIXED, 1000);
+    double hdgBeforeSwitch = gps.getRawHeading();
+
+    cliOut.clear();
+    cli.executeCommand("cal avg", 1100);
+    ASSERT_TRUE(cliOut.find("[CAL] Averaging: MEDIUM (Circular EMA, tau=0.5s)") != std::string::npos);
+
+    cliOut.clear();
+    cli.executeCommand("cal avg high", 1200);
+    ASSERT_TRUE(cliOut.find("[CAL] Averaging set to HIGH (Circular EMA, tau=1.8s)") != std::string::npos);
+    ASSERT_TRUE(gps.getBearingFilter().getAveragingLevel() == HeadingAveragingLevel::High);
+    ASSERT_TRUE(gps.getBearingFilter().hasSamples());
+    ASSERT_NEAR(gps.getRawHeading(), hdgBeforeSwitch, 1e-3);
+
+    // Verify invalid argument rejected
+    cliOut.clear();
+    cli.executeCommand("cal avg bogus", 1300);
+    ASSERT_TRUE(cliOut.find("[CAL ERROR] Usage: cal avg [low|med|high]") != std::string::npos);
+    ASSERT_TRUE(gps.getBearingFilter().getAveragingLevel() == HeadingAveragingLevel::High);
+
+    // Verify NVS persistence across fresh BearingFilter::begin()
+    BearingFilter reloadedFilter;
+    reloadedFilter.begin();
+    ASSERT_TRUE(reloadedFilter.getAveragingLevel() == HeadingAveragingLevel::High);
+
+    // Verify 'low' alias and 'cal' / 'status' output
+    cliOut.clear();
+    cli.executeCommand("cal avg low", 1400);
+    ASSERT_TRUE(cliOut.find("LOW (Circular EMA, tau=0.0s)") != std::string::npos);
+
+    cliOut.clear();
+    cli.executeCommand("cal", 1500);
+    ASSERT_TRUE(cliOut.find("Averaging     : LOW (Circular EMA, tau=0.0s)") != std::string::npos);
+
+    cliOut.clear();
+    cli.executeCommand("cal avg medium", 1600);
+    ASSERT_TRUE(cliOut.find("MEDIUM (Circular EMA, tau=0.5s)") != std::string::npos);
+
+    NvsConfig::resetHostStorage();
+    PASS();
+}
+
 int main() {
     std::cout << "========================================" << std::endl;
     std::cout << "  GNSS Compass Unit Test Suite" << std::endl;
@@ -7142,6 +7275,7 @@ int main() {
     test_ksxt_altitude_status_display();
     test_display_brightness_cli_and_nvs();
     test_quick_settings_brightness_modal_and_long_press();
+    test_heading_averaging_levels_ema_and_cli_nvs();
 
     std::cout << "========================================" << std::endl;
     std::cout << "  All " << tests_passed << " / " << tests_run << " tests PASSED successfully!" << std::endl;

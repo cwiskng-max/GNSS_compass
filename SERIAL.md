@@ -111,6 +111,7 @@ Displays a summary of available serial commands.
                         - QSO log management and contest export
   test (or demo)        - Run visual display self-test demo
   cal [snap|zero|<val>] - View or configure antenna calibration
+  cal avg [low|med|high]- View or set heading averaging depth
   brightness [0-100]    - View or set display backlight brightness (%)
   sim [on|off|hdg|pos|grid|rover|status]
                         - GPS simulation commands
@@ -141,7 +142,7 @@ Displays a summary of available serial commands.
 | **`log`** | `list` *(or `show`)* \| `stats` \| `help` | USB, BLE | Formatted ASCII log table, contest statistics (DX, bands, grids), and log help |
 | **`log`** | `export <cabrillo\|adif\|csv>` | USB, BLE | Stream contest log export in ARRL Cabrillo 3.0, ADIF, or CSV |
 | **`log`** | `mycall [<call>\|reset]` \| `default band <band>` \| `max <#>` \| `timeout [<sec>\|reset]` | USB, BLE | Set Cabrillo station callsign, default band, NVS QSO storage capacity (`10–1000`), and QSO pop-up card auto-dismiss timeout (`1–60 s`, default `5 s`) |
-| **`cal`** | `snap` \| `zero` \| `[set] <deg>` \| `help` | USB, BLE | Antenna heading offset calibration |
+| **`cal`** | `snap` \| `zero` \| `[set] <deg>` \| `avg [low\|med\|high]` \| `help` | USB, BLE | Antenna heading offset calibration and heading averaging depth |
 | **`brightness`** | `[0-100]` | USB, BLE | View or set display backlight brightness percentage (persisted in NVS) |
 | **`test`** *(or `demo`)* | None | USB, BLE | 9-stage visual display self-test demo |
 | **`sim`** | `on` \| `off` \| `hdg` \| `pos` \| `grid` \| `rover` \| `status` \| `help` | USB, BLE | GPS simulation mode and synthetic sentence injection |
@@ -365,6 +366,7 @@ Manages the non-volatile antenna alignment offset in degrees. The offset correct
   Target Bearing:  48.2 deg
   Raw GNSS Hdg  :  44.7 deg
   Calibrated Hdg:  48.2 deg
+  Averaging     : MEDIUM (Circular EMA, tau=0.5s)
 ==================================
 ```
 
@@ -397,6 +399,21 @@ Sets an exact manual offset in degrees. Angles are automatically normalized to $
 
 > cal -12.5
 [CAL] Offset set to -12.5 deg
+```
+
+#### Set Heading Averaging Depth (`cal avg [low|med|high]`)
+Configures the Circular EMA smoothing time constant ($\tau$) applied to dual-antenna GNSS headings and persists the selection to NVS (`"compass"` / `"avg_level"`):
+
+* **`low`**: $\tau = 0.0\text{ s}$ (raw / zero lag)
+* **`med`** *(or `medium`, default)*: $\tau = 0.5\text{ s}$ ($\alpha \approx 0.33$ @ 5 Hz)
+* **`high`**: $\tau = 1.8\text{ s}$ ($\alpha \approx 0.11$ @ 5 Hz, heavier wind/Float damping)
+
+```text
+> cal avg
+[CAL] Averaging: MEDIUM (Circular EMA, tau=0.5s)
+
+> cal avg high
+[CAL] Averaging set to HIGH (Circular EMA, tau=1.8s)
 ```
 
 ---

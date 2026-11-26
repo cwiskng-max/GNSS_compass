@@ -464,6 +464,7 @@ void AppController::begin() {
 #endif
     inputManager_.begin();
     calibration_.begin();
+    gpsManager_.getBearingFilter().begin();
     roverLogManagerRef_->begin();
     qsoLogManagerRef_->begin();
     targetPresetManagerRef_->begin();

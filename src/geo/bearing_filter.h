@@ -1,45 +1,58 @@
 #pragma once
-#include <cmath>
+
 #include <cstdint>
+#include "angle_filter.h"
+#include "../system/nvs_store.h"
 
-#ifndef M_PI
-#define M_PI 3.14159265358979323846
-#endif
-
-// Circular moving-window vector averager for dual-antenna GNSS heading smoothing
+/**
+ * @brief Dual-antenna heading filter facade hosting a pluggable IAngleFilter strategy.
+ *
+ * Phase 1 uses CircularEmaFilter in Open-Loop mode with 3 NVS-persisted averaging levels
+ * (Low, Medium, High). Phase 2 will allow automatic switching to a Closed-Loop Kalman
+ * strategy when rotator control is active.
+ */
 class BearingFilter {
 public:
-    static constexpr uint8_t WINDOW_SIZE = 5;
+    static constexpr const char* NVS_NAMESPACE = "compass";
+    static constexpr const char* NVS_AVG_KEY = "avg_level";
 
     BearingFilter();
 
-    // Clears the buffer and resets running sums to zero
+    // Loads persisted averaging level from NVS
+    void begin();
+
     void reset();
+    void seed(float headingDeg, unsigned long nowMs = 0);
+    void push(float headingDeg, BearingQuality quality = BEARING_FIXED, unsigned long nowMs = 0);
+    void predict(float angularVelDegPerSec, float dtSec, bool driveActive);
 
-    // Pre-populates all window slots with a fixed heading (useful for simulation or cold start)
-    void seed(float headingDeg);
-
-    // Pushes a new raw GPS heading into the circular moving window
-    void push(float headingDeg);
-
-    // Returns the smoothed heading with the +270 deg orthogonal antenna boom offset applied
+    // Returns smoothed heading with +270 deg orthogonal antenna boom offset applied
     double getRawHeading() const;
 
-    // Returns the smoothed heading with both +270 deg boom offset and user calibration offset applied
+    // Returns smoothed heading with +270 deg boom offset and user calibration offset applied
     double getCalibratedHeading(float offsetDeg = 0.0f) const;
 
-    // Returns true if at least one sample has been pushed
-    bool hasSamples() const { return count > 0; }
+    bool hasSamples() const { return activeFilter_->hasSamples(); }
+    uint8_t sampleCount() const { return activeFilter_->sampleCount(); }
 
-    // Returns the current number of valid samples in the window (0 to WINDOW_SIZE)
-    uint8_t sampleCount() const { return count; }
+    // Averaging depth & NVS persistence
+    void setAveragingLevel(HeadingAveragingLevel level, bool persist = true);
+    HeadingAveragingLevel getAveragingLevel() const { return level_; }
+    double getTimeConstantSec() const { return CircularEmaFilter::timeConstantForLevel(level_); }
+
+    // Pluggable strategy / operating mode selection (Phase 2 seam)
+    void setOperatingMode(FilterOperatingMode mode);
+    FilterOperatingMode getOperatingMode() const { return operatingMode_; }
+    void setFilterStrategy(IAngleFilter *customFilter);
+    const char* getStrategyName() const { return activeFilter_->getStrategyName(); }
+
+    // Formatting helpers
+    static const char* levelToString(HeadingAveragingLevel level);
+    static bool parseLevelString(const char *str, HeadingAveragingLevel &outLevel);
 
 private:
-    float sinBuffer[WINDOW_SIZE];
-    float cosBuffer[WINDOW_SIZE];
-    float sinSum;
-    float cosSum;
-    uint8_t index;
-    uint8_t count;
+    CircularEmaFilter emaFilter_;
+    IAngleFilter *activeFilter_;
+    FilterOperatingMode operatingMode_;
+    HeadingAveragingLevel level_;
 };
-

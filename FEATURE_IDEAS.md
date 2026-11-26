@@ -9,8 +9,8 @@ This document serves as an unordered pool of ideas and potential enhancements fo
 - [ ] **Implement power-saving calls in ESP32 code** — *Parked; see [Power Management Design](docs/design/power-management/DESIGN.md)*
   - Leverage ESP32-S3 power management APIs (e.g. display backlight dimming/timeout, BLE TX power & advertising backoff, I2C polling throttling, CPU frequency scaling) to reduce field battery draw.
 
-- [ ] **Configurable heading averaging depth** — *Design: [Heading Averaging Design](docs/design/heading-averaging/DESIGN.md)*
-  - Allow runtime configuration (via Serial/BLE CLI + NVS, with 3 discrete levels: `low`, `med`, `high`) of the number of heading values to average in the circular mean filter.
+- [x] **Configurable heading averaging depth** — *Phase 1 implemented (`CircularEmaFilter` + `cal avg [low|med|high]` + NVS); Phase 2 Closed-Loop Kalman deferred to rotator work. See [Heading Averaging Design](docs/design/heading-averaging/DESIGN.md)*
+  - Runtime configuration (via Serial/BLE CLI + NVS, with 3 discrete levels: `low`, `med`, `high`) of the heading circular EMA filter.
 
 - [ ] **Closed-loop rotator PID tuning parameters**
   - Store and configure proportional, integral, and derivative ($K_p$, $K_i$, $K_d$) gain values in non-volatile storage (NVS) for antenna rotator position control.

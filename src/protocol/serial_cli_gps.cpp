@@ -529,6 +529,11 @@ void SerialCli::printGpsStatus(unsigned long nowMs) {
         } else {
             println(" ACQUIRING (Waiting for initial heading lock)");
         }
+        const BearingFilter &bf = gpsManager_.getBearingFilter();
+        printFormat("  - Heading Filter:      %s (%s, tau=%.1fs)\r\n",
+                    BearingFilter::levelToString(bf.getAveragingLevel()),
+                    bf.getStrategyName(),
+                    bf.getTimeConstantSec());
 
         print("\nOverall Verdict:        ");
         if (v == GPS_LINK_OK_FIXED) {

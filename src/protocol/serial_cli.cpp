@@ -641,6 +641,7 @@ void SerialCli::executeCommand(const char *cmdLine, unsigned long nowMs, CliSour
         pendingFactoryResetSource_ = activeSource_;
         println("[SYSTEM] WARNING: This will erase ALL saved NVS data:");
         println("  - Antenna calibration offset");
+        println("  - Heading averaging level");
         println("  - Display brightness setting");
         println("  - Custom BLE device name suffix");
         println("  - Rover stop history & capacity");
@@ -716,6 +717,7 @@ void SerialCli::printHelp() {
     println("                        - QSO log management and contest export");
     println("  test (or demo)        - Run visual display self-test demo");
     println("  cal [snap|zero|<val>] - View or configure antenna calibration");
+    println("  cal avg [low|med|high]- View or set heading averaging depth");
     println("  brightness [0-100]    - View or set display backlight brightness (%)");
     println("  sim [on|off|hdg|pos|grid|rover|status]");
     println("                        - GPS simulation commands");
@@ -745,6 +747,11 @@ void SerialCli::printCalibrationStatus() {
     } else {
         println("  Raw GNSS Hdg  : ---.- (No heading fix)");
     }
+    const BearingFilter &bf = gpsManager_.getBearingFilter();
+    printFormat("  Averaging     : %s (%s, tau=%.1fs)\r\n",
+                BearingFilter::levelToString(bf.getAveragingLevel()),
+                bf.getStrategyName(),
+                bf.getTimeConstantSec());
     println("==================================");
     println();
 }
@@ -928,6 +935,7 @@ void SerialCli::printCalHelp() {
     println("  cal snap              - Align antenna heading to current target bearing");
     println("  cal zero (or reset)   - Reset calibration offset to 0.0 deg");
     println("  cal [set] <deg>       - Set manual antenna offset in degrees");
+    println("  cal avg [low|med|high]- View or set heading averaging depth");
 }
 
 void SerialCli::handleCalCommand(const char *arg) {
@@ -938,6 +946,30 @@ void SerialCli::handleCalCommand(const char *arg) {
 
     if (!arg || *arg == '\0' || equalsIgnoreCase(arg, "status") || equalsIgnoreCase(arg, "show")) {
         printCalibrationStatus();
+        return;
+    }
+
+    if (equalsIgnoreCase(arg, "avg") || startsWithIgnoreCase(arg, "avg ") || startsWithIgnoreCase(arg, "avg\t")) {
+        const char *sub = arg + 3;
+        while (*sub == ' ' || *sub == '\t') sub++;
+        BearingFilter &bf = gpsManager_.getBearingFilter();
+        if (*sub == '\0' || equalsIgnoreCase(sub, "status") || equalsIgnoreCase(sub, "show")) {
+            printFormat("[CAL] Averaging: %s (%s, tau=%.1fs)\r\n",
+                        BearingFilter::levelToString(bf.getAveragingLevel()),
+                        bf.getStrategyName(),
+                        bf.getTimeConstantSec());
+            return;
+        }
+        HeadingAveragingLevel level = HeadingAveragingLevel::Medium;
+        if (!BearingFilter::parseLevelString(sub, level)) {
+            println("[CAL ERROR] Usage: cal avg [low|med|high]");
+            return;
+        }
+        bf.setAveragingLevel(level, true);
+        printFormat("[CAL] Averaging set to %s (%s, tau=%.1fs)\r\n",
+                    BearingFilter::levelToString(bf.getAveragingLevel()),
+                    bf.getStrategyName(),
+                    bf.getTimeConstantSec());
         return;
     }
 
@@ -1178,6 +1210,7 @@ void SerialCli::doFactoryReset(unsigned long nowMs) {
     }
 #else
     calibration_.reset();
+    gpsManager_.getBearingFilter().setAveragingLevel(HeadingAveragingLevel::Medium, true);
     if (bleManager_) {
         bleManager_->resetDeviceSuffix(true);
     }

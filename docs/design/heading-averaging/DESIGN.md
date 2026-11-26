@@ -1,9 +1,9 @@
 # Configurable Heading Averaging & Pluggable Filter — Technical Design
 
 * **Feature:** 3-Level Heading Smoothing & Pluggable Filter Architecture (CLI & NVS)
-* **Status:** Proposed
+* **Status:** Implemented (Phase 1: Pluggable `CircularEmaFilter` + CLI/NVS; Phase 2: Closed-Loop Kalman deferred)
 * **Target Hardware:** ESP32-S3, Unicore UM982 Dual-Antenna RTK Receiver (`$KSXT` @ 5 Hz)
-* **Architecture Base:** `BearingFilter` (`src/geo/bearing_filter.h`), `GpsManager` (`src/gnss/gps_manager.h`), `SerialCli` (`src/protocol/serial_cli.h`), `NvsConfig` (`src/system/nvs_store.h`)
+* **Architecture Base:** `IAngleFilter` / `CircularEmaFilter` (`src/geo/angle_filter.h`), `BearingFilter` (`src/geo/bearing_filter.h`), `GpsManager` (`src/gnss/gps_manager.h`), `SerialCli` (`src/protocol/serial_cli.h`), `NvsConfig` (`src/system/nvs_store.h`)
 * **Associated Docs:** [Dual-Antenna GNSS Heading Pipeline](../gnss-heading-pipeline/DESIGN.md), [Serial CLI Guide](../../../SERIAL.md), [Feature Ideas](../../../FEATURE_IDEAS.md)
 
 ---
