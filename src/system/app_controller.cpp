@@ -364,8 +364,7 @@ void AppController::recalculateGeodesy() {
 }
 
 void AppController::renderNavigationRows() {
-    if (currentUiMode_ == UiMode::Calibrating || currentUiMode_ == UiMode::RoverHistory ||
-        currentUiMode_ == UiMode::QsoCard || currentUiMode_ == UiMode::TargetList) {
+    if (currentUiMode_ != UiMode::Normal) {
         return;
     }
 
