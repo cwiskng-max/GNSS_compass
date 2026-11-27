@@ -334,6 +334,16 @@ void SerialCli::renderAuditReport() {
     println("========================================");
     println("     GNSS Receiver Audit Report         ");
     println("========================================");
+    bool modeOk = (std::strstr(auditState_.mode, "ROVER") != nullptr);
+    bool logOk = (std::strstr(auditState_.com1Logs, "KSXT") != nullptr);
+    if (modeOk && logOk) {
+        println("Overall Config: [OK] Optimal for Dual-Antenna Compass");
+    } else if (auditState_.receivedVersion) {
+        println("Overall Config: [WARN] Receiver active; KSXT or ROVER not detected");
+    } else {
+        println("Overall Config: [FAIL] Incomplete response from receiver");
+    }
+
     if (auditState_.model[0] != '\0') {
         if (auditState_.hwPn[0] != '\0') {
             printFormat("Hardware Model: %s (PN: %s)\r\n", auditState_.model, auditState_.hwPn);
@@ -377,16 +387,6 @@ void SerialCli::renderAuditReport() {
         println("Baseline Range: Unconstrained (Auto)");
     }
 
-    bool modeOk = (std::strstr(auditState_.mode, "ROVER") != nullptr);
-    bool logOk = (std::strstr(auditState_.com1Logs, "KSXT") != nullptr);
-    if (modeOk && logOk) {
-        println("Overall Config: [OK] Optimal for Dual-Antenna Compass");
-    } else if (auditState_.receivedVersion) {
-        println("Overall Config: [WARN] Receiver active; KSXT or ROVER not detected");
-    } else {
-        println("Overall Config: [FAIL] Incomplete response from receiver");
-    }
-
     println("========================================");
     println();
     printPrompt();
@@ -409,133 +409,30 @@ void SerialCli::printGpsStatus(unsigned long nowMs) {
         printFormat("Sim Injections: %u pkts (last %lu ms ago)\r\n",
                     simulator_.getPacketCount(),
                     (nowMs - simulator_.getLastInjectionMillis()));
+        println();
     }
 
-    // Bidirectional Link & TX Capability Status
-    if (gpsManager_.isSendAvailable()) {
-        println("Link Status:    CONNECTED (Bidirectional TX/RX Active)");
-        println("TX Capability:  AVAILABLE (UM982 command responses confirmed)");
-    } else if (gpsManager_.getTxState() == GpsTxState::Probing) {
-        println("Link Status:    PROBING (Testing TX on GPIO 43)");
-        println("TX Capability:  PROBING (Discovery probe in flight)");
-    } else if (gpsManager_.getTxState() == GpsTxState::Unavailable) {
-        println("Link Status:    CONNECTED (Receive-Only Mode)");
-        println("TX Capability:  UNAVAILABLE (TX wire not detected on GPIO 43)");
-    } else {
-        println("Link Status:    CONNECTED (Receive-Only Mode)");
-        println("TX Capability:  UNKNOWN (Type 'gps probe' to test TX line)");
-    }
-
-    // Receiver Configuration Assessment
-    if (gpsManager_.getKsxtCount() > 0 && (nowMs - gpsManager_.getLastKsxtMillis()) < 3000) {
-        if (gpsManager_.getHdtPacketCount() == 0 && gpsManager_.getGllPacketCount() == 0) {
-            println("Config State:   OPTIMAL ($KSXT streaming at 5.0 Hz, legacy unlogged)");
-        } else {
-            println("Config State:   OPTIMAL ($KSXT active, legacy messages also detected)");
-        }
-    } else if (gpsManager_.getHdtPacketCount() > 0 || gpsManager_.getGllPacketCount() > 0) {
-        println("Config State:   LEGACY COMPATIBLE ($GPHDT/$GNGLL active, upgrade to $KSXT available)");
-    } else if (gpsManager_.getTotalBytesReceived() > 0) {
-        println("Config State:   UNCONFIGURED / FACTORY DEFAULT (No heading sentence detected)");
-    } else {
-        println("Config State:   NO DATA");
-    }
-
-    if (gpsManager_.getConfigPipeline().isRunning()) {
-        printFormat("Config Engine:  RUNNING (Step: %s)\r\n",
-                    GpsConfigPipeline::stepToString(gpsManager_.getConfigPipeline().getCurrentStep()));
-    } else if (gpsManager_.getConfigPipeline().isSuccess()) {
-        println("Config Engine:  SUCCESS (Receiver configured)");
-    } else if (gpsManager_.getConfigPipeline().isFailed()) {
-        printFormat("Config Engine:  FAILED (%s)\r\n",
-                    gpsManager_.getConfigPipeline().getFailureReasonString());
-    }
-
+    // 1. Data Fix Status (highest-level operator view first)
+    println("Data Fix Status:");
     if (v == GPS_LINK_DISCONNECTED) {
-        println("Physical Link:  DISCONNECTED / NO DATA");
+        println("  - Overall Verdict:      [FAIL] NO GPS DATA STREAM DETECTED");
         if (gpsManager_.getTotalBytesReceived() == 0) {
-            println("Details:        0 bytes received on Serial2 since boot.");
+            println("  - Details:              0 bytes received on Serial2 since boot.");
         } else {
-            printFormat("Details:        Last byte received %.1f seconds ago.\r\n",
+            printFormat("  - Details:              Last byte received %.1f seconds ago.\r\n",
                         (nowMs - gpsManager_.getLastByteMillis()) / 1000.0);
         }
-        println("Verdict:        [FAIL] NO GPS DATA STREAM DETECTED");
-        println("Troubleshooting:");
-        println("  1. Verify GX12 3-pin cable is securely connected.");
-        println("  2. Check 5V / 12V power to the UM982 receiver enclosure.");
-        println("  3. Verify RX pin (GPIO 44) wiring to UM982 TX.");
+        println("  - Troubleshooting:");
+        println("      1. Verify GX12 cable is securely connected.");
+        println("      2. Check 5V / 12V power to the UM982 receiver enclosure.");
+        println("      3. Verify RX pin (GPIO 44) wiring to UM982 TX.");
     } else if (v == GPS_LINK_NOISY_CORRUPT) {
-        println("Physical Link:  BYTES RECEIVED, BUT NO VALID NMEA/KSXT");
-        printFormat("Total Bytes:    %lu\r\n", gpsManager_.getTotalBytesReceived());
-        println("Verdict:        [FAIL] FRAMING / BAUD RATE MISMATCH");
-        println("Troubleshooting:");
-        println("  1. Verify receiver COM1 baud rate is set to 115200 (8N1).");
-        println("  2. Check for loose connection or electrical noise on signal line.");
+        println("  - Overall Verdict:      [FAIL] FRAMING / BAUD RATE MISMATCH");
+        println("  - Troubleshooting:");
+        println("      1. Verify receiver COM1 baud rate is set to 115200 (8N1).");
+        println("      2. Check for loose connection or electrical noise on signal line.");
     } else {
-        println("Physical Link:  CONNECTED (Hardware Serial Link Active)");
-        printFormat("Total Bytes:    %lu (last byte %lu ms ago)\r\n",
-                    gpsManager_.getTotalBytesReceived(),
-                    nowMs - gpsManager_.getLastByteMillis());
-        println();
-        println("Message Streams:");
-        printFormat("  - $GNGLL (Position):   %u pkts (last ", gpsManager_.getGllPacketCount());
-        if (gpsManager_.getGllPacketCount() > 0) {
-            printFormat("%.1fs ago)\r\n", (nowMs - gpsManager_.getLastGllMillis()) / 1000.0);
-        } else {
-            println("never)");
-        }
-
-        printFormat("  - $KSXT  (Navigation): %u pkts (last ", gpsManager_.getKsxtCount());
-        if (gpsManager_.getKsxtCount() > 0) {
-            printFormat("%.1fs ago)\r\n", (nowMs - gpsManager_.getLastKsxtMillis()) / 1000.0);
-        } else {
-            println("never)");
-        }
-
-        printFormat("  - $HDT   (Heading):    %u pkts (last ", gpsManager_.getHdtPacketCount());
-        if (gpsManager_.getHdtPacketCount() > 0) {
-            printFormat("%.1fs ago)\r\n", (nowMs - gpsManager_.getLastHdtMillis()) / 1000.0);
-        } else {
-            println("never)");
-        }
-
-        println();
-        println("Data Fix Status:");
-        if (gpsManager_.hasLocation()) {
-            char gbuf[10];
-            geoPointToGrid(gpsManager_.getLocation(), gbuf, 8);
-            printFormat("  - Coordinates:         %.5f, %.5f (Grid: %s)\r\n",
-                        gpsManager_.getLocation().latitude,
-                        gpsManager_.getLocation().longitude,
-                        gbuf);
-        } else {
-            println("  - Coordinates:         SEARCHING (No fix yet)");
-        }
-        if (gpsManager_.hasAltitude()) {
-            char altBuf[32];
-            cli_helpers::formatAltitudeMeters(gpsManager_.getAltitudeMeters(), altBuf, sizeof(altBuf));
-            printFormat("  - Elevation:           %s\r\n", altBuf);
-        }
-
-        print("  - Dual-Antenna Heading:");
-        if (gpsManager_.hasHeading()) {
-            if (gpsManager_.getBearingQuality() == BEARING_FIXED) {
-                println(" RTK FIXED (Pure White - High Precision)");
-            } else if (gpsManager_.getBearingQuality() == BEARING_FLOAT) {
-                println(" RTK FLOAT (Bright Yellow - Degraded Sky View)");
-            } else {
-                println(" LOST / STALE (Bright Red - Tracking Dropped)");
-            }
-        } else {
-            println(" ACQUIRING (Waiting for initial heading lock)");
-        }
-        const BearingFilter &bf = gpsManager_.getBearingFilter();
-        printFormat("  - Heading Filter:      %s (%s, tau=%.1fs)\r\n",
-                    BearingFilter::levelToString(bf.getAveragingLevel()),
-                    bf.getStrategyName(),
-                    bf.getTimeConstantSec());
-
-        print("\nOverall Verdict:        ");
+        print("  - Overall Verdict:      ");
         if (v == GPS_LINK_OK_FIXED) {
             println("[PASS] FULLY OPERATIONAL (RTK Fixed)");
         } else if (v == GPS_LINK_HEADING_FLOAT) {
@@ -544,6 +441,126 @@ void SerialCli::printGpsStatus(unsigned long nowMs) {
             println("[WAIT] POSITION LOCKED, WAITING FOR HEADING BASELINE");
         } else {
             println("[WAIT] RECEIVER TALKING, ACQUIRING SATELLITES");
+        }
+
+        if (gpsManager_.hasLocation()) {
+            char gbuf[10];
+            geoPointToGrid(gpsManager_.getLocation(), gbuf, 8);
+            printFormat("  - Coordinates:          %.5f, %.5f (Grid: %s)\r\n",
+                        gpsManager_.getLocation().latitude,
+                        gpsManager_.getLocation().longitude,
+                        gbuf);
+        } else {
+            println("  - Coordinates:          SEARCHING (No fix yet)");
+        }
+        if (gpsManager_.hasAltitude()) {
+            char altBuf[32];
+            cli_helpers::formatAltitudeMeters(gpsManager_.getAltitudeMeters(), altBuf, sizeof(altBuf));
+            printFormat("  - Elevation:            %s\r\n", altBuf);
+        }
+
+        print("  - Dual-Antenna Heading: ");
+        if (gpsManager_.hasHeading()) {
+            if (gpsManager_.getBearingQuality() == BEARING_FIXED) {
+                println("High Precision (RTK Fixed)");
+            } else if (gpsManager_.getBearingQuality() == BEARING_FLOAT) {
+                println("Degraded Sky View (RTK Float)");
+            } else {
+                println("Tracking Dropped (Lost / Stale)");
+            }
+        } else {
+            println("Acquiring (Waiting for initial heading lock)");
+        }
+        const BearingFilter &bf = gpsManager_.getBearingFilter();
+        printFormat("  - Heading Filter:       %s (%s, tau=%.1fs)\r\n",
+                    BearingFilter::levelToString(bf.getAveragingLevel()),
+                    bf.getStrategyName(),
+                    bf.getTimeConstantSec());
+    }
+
+    // 2. Link Status (grouped & indented)
+    println();
+    println("Link Status:");
+    if (gpsManager_.isSendAvailable()) {
+        println("  - Connection:           CONNECTED (Bidirectional TX/RX Active)");
+    } else if (gpsManager_.getTxState() == GpsTxState::Probing) {
+        println("  - Connection:           PROBING (Testing TX on GPIO 43)");
+    } else {
+        println("  - Connection:           CONNECTED (Receive-Only Mode)");
+    }
+
+    if (v == GPS_LINK_DISCONNECTED) {
+        println("  - Physical Link:        DISCONNECTED / NO DATA");
+    } else if (v == GPS_LINK_NOISY_CORRUPT) {
+        println("  - Physical Link:        BYTES RECEIVED, BUT NO VALID NMEA/KSXT");
+    } else {
+        println("  - Physical Link:        CONNECTED (Hardware Serial Link Active)");
+    }
+
+    if (gpsManager_.isSendAvailable()) {
+        println("  - TX Capability:        AVAILABLE (UM982 command responses confirmed)");
+    } else if (gpsManager_.getTxState() == GpsTxState::Probing) {
+        println("  - TX Capability:        PROBING (Discovery probe in flight)");
+    } else if (gpsManager_.getTxState() == GpsTxState::Unavailable) {
+        println("  - TX Capability:        UNAVAILABLE (TX wire not detected on GPIO 43)");
+    } else {
+        println("  - TX Capability:        UNKNOWN (Type 'gps probe' to test TX line)");
+    }
+
+    if (gpsManager_.getKsxtCount() > 0 && (nowMs - gpsManager_.getLastKsxtMillis()) < 3000) {
+        if (gpsManager_.getHdtPacketCount() == 0 && gpsManager_.getGllPacketCount() == 0) {
+            println("  - Config State:         OPTIMAL ($KSXT streaming at 5.0 Hz, legacy unlogged)");
+        } else {
+            println("  - Config State:         OPTIMAL ($KSXT active, legacy messages also detected)");
+        }
+    } else if (gpsManager_.getHdtPacketCount() > 0 || gpsManager_.getGllPacketCount() > 0) {
+        println("  - Config State:         LEGACY COMPATIBLE ($GPHDT/$GNGLL active, upgrade to $KSXT available)");
+    } else if (gpsManager_.getTotalBytesReceived() > 0) {
+        println("  - Config State:         UNCONFIGURED / FACTORY DEFAULT (No heading sentence detected)");
+    } else {
+        println("  - Config State:         NO DATA");
+    }
+
+    if (gpsManager_.getConfigPipeline().isRunning()) {
+        printFormat("  - Config Engine:        RUNNING (Step: %s)\r\n",
+                    GpsConfigPipeline::stepToString(gpsManager_.getConfigPipeline().getCurrentStep()));
+    } else if (gpsManager_.getConfigPipeline().isSuccess()) {
+        println("  - Config Engine:        SUCCESS (Receiver configured)");
+    } else if (gpsManager_.getConfigPipeline().isFailed()) {
+        printFormat("  - Config Engine:        FAILED (%s)\r\n",
+                    gpsManager_.getConfigPipeline().getFailureReasonString());
+    }
+
+    // 3. Message Streams (lowest-level serial & packet counters last)
+    if (v != GPS_LINK_DISCONNECTED) {
+        println();
+        println("Message Streams:");
+        if (v == GPS_LINK_NOISY_CORRUPT) {
+            printFormat("  - Total Bytes:          %lu\r\n", gpsManager_.getTotalBytesReceived());
+        } else {
+            printFormat("  - Total Bytes:          %lu (last byte %lu ms ago)\r\n",
+                        gpsManager_.getTotalBytesReceived(),
+                        nowMs - gpsManager_.getLastByteMillis());
+            printFormat("  - $GNGLL (Position):    %u pkts (last ", gpsManager_.getGllPacketCount());
+            if (gpsManager_.getGllPacketCount() > 0) {
+                printFormat("%.1fs ago)\r\n", (nowMs - gpsManager_.getLastGllMillis()) / 1000.0);
+            } else {
+                println("never)");
+            }
+
+            printFormat("  - $KSXT  (Navigation):  %u pkts (last ", gpsManager_.getKsxtCount());
+            if (gpsManager_.getKsxtCount() > 0) {
+                printFormat("%.1fs ago)\r\n", (nowMs - gpsManager_.getLastKsxtMillis()) / 1000.0);
+            } else {
+                println("never)");
+            }
+
+            printFormat("  - $HDT   (Heading):     %u pkts (last ", gpsManager_.getHdtPacketCount());
+            if (gpsManager_.getHdtPacketCount() > 0) {
+                printFormat("%.1fs ago)\r\n", (nowMs - gpsManager_.getLastHdtMillis()) / 1000.0);
+            } else {
+                println("never)");
+            }
         }
     }
     println("========================================\n");

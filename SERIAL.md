@@ -98,32 +98,36 @@ Displays a summary of available serial commands.
 > help
 
 === GNSS Compass Serial Commands ===
-  status (or gps)       - Live GNSS receiver stream & link diagnostic
+GNSS & Calibration:
+  status (or gps)         - Live GNSS receiver stream & link diagnostic
   gps [status|probe|config|send|check]
-                        - UM982 GNSS receiver setup and diagnostics
-  rover [status|start|stop|history|undo|max|clear]
-                        - Rover transit tracking
-  target <grid|index>   - Set active target grid or select saved preset #
-  target [add|save|select|del|list|max|zero|clear]
-                        - Manage saved target grid presets
-  log <call> [band/freq]- Voice-friendly contest QSO logging (10 GHz default)
-  log [undo|del|list|stats|export|mycall|default|clear]
-                        - QSO log management and contest export
-  test (or demo)        - Run visual display self-test demo
-  cal [snap|zero|<val>] - View or configure antenna calibration
-  cal avg [low|med|high]- View or set heading averaging depth
-  brightness [0-100]    - View or set display backlight brightness (%)
+                          - UM982 GNSS receiver setup and diagnostics
+  cal [snap|zero|<val>]   - View or configure antenna calibration
+  cal avg [low|med|high]  - View or set heading averaging depth
   sim [on|off|hdg|pos|grid|rover|status]
-                        - GPS simulation commands
-  exit (or disconnect)  - Terminate wireless BLE connection cleanly
-  restart (or reboot)   - Restart the ESP32 controller
-  factory reset         - Erase all NVS settings/logs and reboot (requires 'yes')
-  version (or ver)      - Display firmware build version and compile time
-  ble [diag on|off]     - BLE link status / toggle BLE RF diagnostics
-  ble suffix [<val>|reset]
-                        - Configure BLE device name suffix (max 16 chars)
-  $<NMEA/KSXT sentence> - Inject raw GNSS sentence directly
-  help (or ?)           - Show this help menu
+                          - GPS simulation commands
+  $<NMEA/KSXT sentence>   - Inject raw GNSS sentence directly
+
+Rover, Targets & QSO Log:
+  rover [status|start|stop|history|undo|max|clear]
+                          - Rover transit tracking
+  target <grid|index>     - Set active target grid or select saved preset #
+  target [add|save|select|del|list|max|zero|clear]
+                          - Manage saved target grid presets
+  log <call> [band/freq]  - Voice-friendly contest QSO logging (10 GHz default)
+  log [undo|del|list|stats|export|mycall|default|clear]
+                          - QSO log management and contest export
+
+System, Display & Radio:
+  brightness [0-100]      - View or set display backlight brightness (%)
+  test (or demo)          - Run visual display self-test demo
+  ble [diag on|off]       - BLE link status / toggle BLE RF diagnostics
+  ble suffix [<val>|reset]- Configure BLE device name suffix (max 16 chars)
+  exit (or disconnect)    - Terminate wireless BLE connection cleanly
+  restart (or reboot)     - Restart the ESP32 controller
+  factory reset           - Erase all NVS settings/logs and reboot (requires 'yes')
+  version (or ver)        - Display firmware build version and compile time
+  help (or ?)             - Show this help menu
 ====================================
 ```
 
@@ -166,23 +170,24 @@ Inspects the live incoming UART stream from the Unicore UM982 GNSS receiver (`Se
 ========================================
      GNSS Receiver Stream Diagnosis     
 ========================================
-Link Status:    CONNECTED (Bidirectional TX/RX Active)
-TX Capability:  AVAILABLE (UM982 command responses confirmed)
-Config State:   OPTIMAL ($KSXT streaming at 5.0 Hz, legacy unlogged)
-Physical Link:  CONNECTED (Hardware Serial Link Active)
-Total Bytes:    48291 (last byte 12 ms ago)
+Data Fix Status:
+  - Overall Verdict:      [PASS] FULLY OPERATIONAL (RTK Fixed)
+  - Coordinates:          37.77490, -122.41940 (Grid: CM87wa92)
+  - Elevation:            2100.0 m (6890 ft)
+  - Dual-Antenna Heading: High Precision (RTK Fixed)
+  - Heading Filter:       MEDIUM (Circular EMA, tau=0.5s)
+
+Link Status:
+  - Connection:           CONNECTED (Bidirectional TX/RX Active)
+  - Physical Link:        CONNECTED (Hardware Serial Link Active)
+  - TX Capability:        AVAILABLE (UM982 command responses confirmed)
+  - Config State:         OPTIMAL ($KSXT streaming at 5.0 Hz, legacy unlogged)
 
 Message Streams:
-  - $GNGLL (Position):   0 pkts (never)
-  - $KSXT  (Navigation): 280 pkts (last 0.2s ago)
-  - $HDT   (Heading):    0 pkts (never)
-
-Data Fix Status:
-  - Coordinates:         37.77490, -122.41940 (Grid: CM87wa92)
-  - Elevation:           2100.0 m (6890 ft)
-  - Dual-Antenna Heading: RTK FIXED (Pure White - High Precision)
-
-Overall Verdict:        [PASS] FULLY OPERATIONAL (RTK Fixed)
+  - Total Bytes:          48291 (last byte 12 ms ago)
+  - $GNGLL (Position):    0 pkts (never)
+  - $KSXT  (Navigation):  280 pkts (last 0.2s ago)
+  - $HDT   (Heading):     0 pkts (never)
 ========================================
 ```
 
@@ -271,13 +276,13 @@ Intermediate `$command` echoes are suppressed during the audit, and incoming pay
 ========================================
      GNSS Receiver Audit Report         
 ========================================
+Overall Config: [OK] Optimal for Dual-Antenna Compass
 Hardware Model: UM982 (PN: HRPT00-S10C-P)
 Serial Number:  2310415000012-LR23C1261413487
 Firmware:       R4.10Build13495 (2024/04/02)
 Operating Mode: ROVER UAV
 COM1 Output:    KSXT COM1 0.2s (5 Hz)
 Baseline Range: 101.6 cm (± 2.5 cm)  [CONSTRAINED]
-Overall Config: [OK] Optimal for Dual-Antenna Compass
 ========================================
 > 
 ```
@@ -943,12 +948,12 @@ Manage Rover 16 km contest transit tracking, inspect visited grid history, and c
           Rover Transit Status          
 ========================================
 Mode:             ACTIVE (Rover Mode)
+Qualification:    STATE A: In-Transit (< 16.0 km alert)
 Origin Coords:     37.020833, -122.125000
 Origin Grid:      CM87wa00
 Displacement:       6.4 km (Threshold: 16.0 km)
 Current Grid:     CM87wb00 (TRAVERSED GRID)
 Elevation:        2100.0 m (6890 ft)
-Qualification:    STATE A: In-Transit (< 16.0 km alert)
 GPS Fix Health:   FIXED (High-Precision RTK) (Fresh)
 History Log:      1 stops logged (max 100)
 ========================================

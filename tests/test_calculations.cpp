@@ -1513,9 +1513,10 @@ void test_serial_cli_gps_commands() {
     // 1. Initial 'status' report with Receive-Only / Untested link
     cli.executeCommand("status", 1000);
     ASSERT_TRUE(cliOutput.find("GNSS Receiver Stream Diagnosis") != std::string::npos);
-    ASSERT_TRUE(cliOutput.find("Link Status:    CONNECTED (Receive-Only Mode)") != std::string::npos);
-    ASSERT_TRUE(cliOutput.find("TX Capability:  UNKNOWN") != std::string::npos);
-    ASSERT_TRUE(cliOutput.find("Config State:   NO DATA") != std::string::npos);
+    ASSERT_TRUE(cliOutput.find("Link Status:") != std::string::npos);
+    ASSERT_TRUE(cliOutput.find("- Connection:           CONNECTED (Receive-Only Mode)") != std::string::npos);
+    ASSERT_TRUE(cliOutput.find("- TX Capability:        UNKNOWN") != std::string::npos);
+    ASSERT_TRUE(cliOutput.find("- Config State:         NO DATA") != std::string::npos);
     cliOutput.clear();
 
     // 2. 'gps probe' execution
@@ -1549,8 +1550,8 @@ void test_serial_cli_gps_commands() {
 
     // 6. Enhanced 'status' report when Bidirectional TX is confirmed
     cli.executeCommand("gps status", 1300);
-    ASSERT_TRUE(cliOutput.find("Link Status:    CONNECTED (Bidirectional TX/RX Active)") != std::string::npos);
-    ASSERT_TRUE(cliOutput.find("TX Capability:  AVAILABLE") != std::string::npos);
+    ASSERT_TRUE(cliOutput.find("- Connection:           CONNECTED (Bidirectional TX/RX Active)") != std::string::npos);
+    ASSERT_TRUE(cliOutput.find("- TX Capability:        AVAILABLE") != std::string::npos);
     cliOutput.clear();
 
     // 7. 'gps send <command>' when TX is available
@@ -6887,7 +6888,15 @@ void test_ksxt_altitude_status_display() {
 
     cliOut.clear();
     cli.executeCommand("status", 1250);
-    ASSERT_TRUE(cliOut.find("- Elevation:           2100.0 m (6890 ft)") != std::string::npos);
+    ASSERT_TRUE(cliOut.find("- Elevation:            2100.0 m (6890 ft)") != std::string::npos);
+    // Verify Data Fix Status -> Link Status -> Message Streams section ordering
+    size_t fixPos = cliOut.find("Data Fix Status:");
+    size_t linkPos = cliOut.find("Link Status:");
+    size_t msgPos = cliOut.find("Message Streams:");
+    size_t bytesPos = cliOut.find("- Total Bytes:");
+    ASSERT_TRUE(fixPos != std::string::npos && linkPos != std::string::npos && msgPos != std::string::npos);
+    ASSERT_TRUE(fixPos < linkPos && linkPos < msgPos);
+    ASSERT_TRUE(bytesPos != std::string::npos && bytesPos > msgPos);
 
     cliOut.clear();
     cli.executeCommand("rover status", 1300);
