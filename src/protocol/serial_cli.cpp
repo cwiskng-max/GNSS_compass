@@ -941,11 +941,12 @@ void SerialCli::handleBrightnessCommand(const char *arg) {
 void SerialCli::printCalHelp() {
     println();
     println("=== Antenna Calibration Commands ===");
-    println("  cal [status|show]     - Display current calibration offset & heading");
-    println("  cal snap              - Align antenna heading to current target bearing");
-    println("  cal zero (or reset)   - Reset calibration offset to 0.0 deg");
-    println("  cal [set] <deg>       - Set manual antenna offset in degrees");
-    println("  cal avg [low|med|high]- View or set heading averaging depth");
+    println("  cal [status|show]      - Display current calibration offset & heading");
+    println("  cal snap               - Align antenna heading to current target bearing");
+    println("  cal zero (or reset)    - Reset calibration offset to 0.0 deg");
+    println("  cal [set] <deg>        - Set manual antenna offset in degrees");
+    println("  cal avg [low|med|high] - View or set heading averaging depth");
+    println("                           (low: raw, med: ~5s, high: ~10s 90-deg settle)");
 }
 
 void SerialCli::handleCalCommand(const char *arg) {

@@ -77,11 +77,11 @@ $$\bar{\theta}_k = \mathrm{atan2}(S_k, C_k) \pmod{360^\circ}$$
 
 ### 3.2 Three Averaging Levels
 
-| Level | CLI Token | Time Constant ($\tau$) | Effective $\alpha$ (@ 5 Hz, $\Delta t = 0.2\text{ s}$) | Intended Use Case |
-| :--- | :--- | :---: | :---: | :--- |
-| **Low** | `low` | `0.0 s` | `1.00` (raw) | Rapid antenna slewing, rotator testing, zero-lag tracking. |
-| **Medium** *(Default)* | `med` / `medium` | `0.5 s` | `~0.33` | General portable/rover operation (comparable smoothing to legacy 5-sample window). |
-| **High** | `high` | `1.8 s` | `~0.11` | High-wind mast flex damping, noisy Float solutions, Sun/Moon pointing, steady `cal snap`. |
+| Level | CLI Token | Time Constant ($\tau$) | Effective $\alpha$ (@ 5 Hz, $\Delta t = 0.2\text{ s}$) | ~90° Settle Time | Intended Use Case |
+| :--- | :--- | :---: | :---: | :---: | :--- |
+| **Low** | `low` | `0.0 s` | `1.00` (raw) | `0.2 s` (instant) | Rapid antenna slewing, rotator testing, zero-lag tracking. |
+| **Medium** *(Default)* | `med` / `medium` | `0.8 s` | `~0.22` | `~5 s` | General portable/rover operation (steady readout with moderate lag). |
+| **High** | `high` | `1.8 s` | `~0.11` | `~10–11 s` | High-wind mast flex damping, noisy Float solutions, Sun/Moon pointing, steady `cal snap`. |
 
 > [!NOTE]
 > Preserving `Medium` as the default ensures existing users experience comparable smoothing out of the box with slightly crisper turn response.
@@ -97,7 +97,7 @@ $$\bar{\theta}_k = \mathrm{atan2}(S_k, C_k) \pmod{360^\circ}$$
 | :--- | :--- |
 | `cal avg` | Print active averaging level, filter mode (e.g. `Circular EMA`), and time constant $\tau$. |
 | `cal avg low` | Set averaging to `Low` ($\tau = 0\text{ s}$, raw), save to NVS, and confirm. |
-| `cal avg med` *(or `medium`)* | Set averaging to `Medium` ($\tau = 0.5\text{ s}$), save to NVS, and confirm. |
+| `cal avg med` *(or `medium`)* | Set averaging to `Medium` ($\tau = 0.8\text{ s}$), save to NVS, and confirm. |
 | `cal avg high` | Set averaging to `High` ($\tau = 1.8\text{ s}$), save to NVS, and confirm. |
 
 `status` and `cal help` / `help` should also display the active averaging level and document `cal avg [low|med|high]`.
@@ -108,7 +108,7 @@ $$\bar{\theta}_k = \mathrm{atan2}(S_k, C_k) \pmod{360^\circ}$$
 
 * **CPU & RAM:** $O(1)$ per sample, only two `double` state variables + timestamp (actually uses **less** RAM than the current 5-slot `sinBuffer`/`cosBuffer` ring buffer).
 * **Watchdog Independence:** `HEADING_TIMEOUT_MS` (1500 ms) in `GpsManager::checkStaleness()` triggers on packet arrival, independent of filter $\tau$.
-* **Calibration (`cal snap`) Note:** In `High` mode ($\tau = 1.8\text{ s}$), allow ~3–4 seconds after stopping antenna rotation before running `cal snap` so the exponential tail settles.
+* **Calibration (`cal snap`) Note:** In `High` mode ($\tau = 1.8\text{ s}$), allow ~10 seconds after a large slew (~90°) before running `cal snap` so the exponential tail settles (~5 s in `Medium`).
 
 ---
 

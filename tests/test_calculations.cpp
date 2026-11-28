@@ -7165,7 +7165,7 @@ void test_heading_averaging_levels_ema_and_cli_nvs() {
 
     cliOut.clear();
     cli.executeCommand("cal avg", 1100);
-    ASSERT_TRUE(cliOut.find("[CAL] Averaging: MEDIUM (Circular EMA, tau=0.5s)") != std::string::npos);
+    ASSERT_TRUE(cliOut.find("[CAL] Averaging: MEDIUM (Circular EMA, tau=0.8s)") != std::string::npos);
 
     cliOut.clear();
     cli.executeCommand("cal avg high", 1200);
@@ -7196,7 +7196,7 @@ void test_heading_averaging_levels_ema_and_cli_nvs() {
 
     cliOut.clear();
     cli.executeCommand("cal avg medium", 1600);
-    ASSERT_TRUE(cliOut.find("MEDIUM (Circular EMA, tau=0.5s)") != std::string::npos);
+    ASSERT_TRUE(cliOut.find("MEDIUM (Circular EMA, tau=0.8s)") != std::string::npos);
 
     // Voice-friendly cal / averaging / offset aliases
     cliOut.clear();
@@ -7209,7 +7209,7 @@ void test_heading_averaging_levels_ema_and_cli_nvs() {
 
     cliOut.clear();
     cli.executeCommand("cal filter normal", 1900);
-    ASSERT_TRUE(cliOut.find("MEDIUM (Circular EMA, tau=0.5s)") != std::string::npos);
+    ASSERT_TRUE(cliOut.find("MEDIUM (Circular EMA, tau=0.8s)") != std::string::npos);
 
     cliOut.clear();
     cli.executeCommand("calibrate minus 3.5 degrees", 2000);

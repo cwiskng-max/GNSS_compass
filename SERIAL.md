@@ -175,7 +175,7 @@ Data Fix Status:
   - Coordinates:          37.77490, -122.41940 (Grid: CM87wa92)
   - Elevation:            2100.0 m (6890 ft)
   - Dual-Antenna Heading: High Precision (RTK Fixed)
-  - Heading Filter:       MEDIUM (Circular EMA, tau=0.5s)
+  - Heading Filter:       MEDIUM (Circular EMA, tau=0.8s)
 
 Link Status:
   - Connection:           CONNECTED (Bidirectional TX/RX Active)
@@ -371,7 +371,7 @@ Manages the non-volatile antenna alignment offset in degrees. The offset correct
   Target Bearing:  48.2 deg
   Raw GNSS Hdg  :  44.7 deg
   Calibrated Hdg:  48.2 deg
-  Averaging     : MEDIUM (Circular EMA, tau=0.5s)
+  Averaging     : MEDIUM (Circular EMA, tau=0.8s)
 ==================================
 ```
 
@@ -409,13 +409,13 @@ Sets an exact manual offset in degrees. Angles are automatically normalized to $
 #### Set Heading Averaging Depth (`cal avg [low|med|high]`)
 Configures the Circular EMA smoothing time constant ($\tau$) applied to dual-antenna GNSS headings and persists the selection to NVS (`"compass"` / `"avg_level"`). Voice-friendly aliases (`calibrate` / `calibration`, `average` / `averaging` / `filter`, `lo` / `raw` / `fast`, `normal`, `hi` / `smooth` / `slow`, plus spoken `minus` / `plus` and `degrees` on offsets) are supported:
 
-* **`low`** *(or `lo`, `raw`, `fast`, `off`)*: $\tau = 0.0\text{ s}$ (raw / zero lag)
-* **`med`** *(or `medium`, `normal`, `default`)*: $\tau = 0.5\text{ s}$ ($\alpha \approx 0.33$ @ 5 Hz)
-* **`high`** *(or `hi`, `smooth`, `slow`, `max`)*: $\tau = 1.8\text{ s}$ ($\alpha \approx 0.11$ @ 5 Hz, heavier wind/Float damping)
+* **`low`** *(or `lo`, `raw`, `fast`, `off`)*: $\tau = 0.0\text{ s}$ (raw / zero lag — instant response)
+* **`med`** *(or `medium`, `normal`, `default`)*: $\tau = 0.8\text{ s}$ ($\alpha \approx 0.22$ @ 5 Hz — ~5 s settle after a 90° turn)
+* **`high`** *(or `hi`, `smooth`, `slow`, `max`)*: $\tau = 1.8\text{ s}$ ($\alpha \approx 0.11$ @ 5 Hz — ~10–11 s settle after a 90° turn; heavier wind/Float damping)
 
 ```text
 > cal avg
-[CAL] Averaging: MEDIUM (Circular EMA, tau=0.5s)
+[CAL] Averaging: MEDIUM (Circular EMA, tau=0.8s)
 
 > calibrate average high
 [CAL] Averaging set to HIGH (Circular EMA, tau=1.8s)

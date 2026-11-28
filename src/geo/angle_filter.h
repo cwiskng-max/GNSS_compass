@@ -12,7 +12,7 @@
  */
 enum class HeadingAveragingLevel : uint8_t {
     Low = 0,     // tau = 0.0 s (raw / zero lag)
-    Medium = 1,  // tau = 0.5 s (default, ~0.33 alpha @ 5 Hz)
+    Medium = 1,  // tau = 0.8 s (default, ~0.22 alpha @ 5 Hz)
     High = 2     // tau = 1.8 s (~0.11 alpha @ 5 Hz)
 };
 
@@ -57,7 +57,7 @@ public:
 class CircularEmaFilter : public IAngleFilter {
 public:
     static constexpr double TAU_LOW_SEC = 0.0;
-    static constexpr double TAU_MEDIUM_SEC = 0.5;
+    static constexpr double TAU_MEDIUM_SEC = 0.8;
     static constexpr double TAU_HIGH_SEC = 1.8;
     static constexpr double DEFAULT_DT_SEC = 0.2;
     static constexpr double MAX_DT_SEC = 5.0;
