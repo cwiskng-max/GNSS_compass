@@ -10,6 +10,7 @@
 #include "rover_history_modal.h"
 #include "qso_card.h"
 #include "target_list_modal.h"
+#include "quick_settings_modal.h"
 
 #if defined(ARDUINO)
 #include <Arduino_GFX_Library.h>
@@ -72,6 +73,7 @@ public:
     RoverHistoryModal &getRoverHistoryModal() { return roverHistoryModal_; }
     QsoCard &getQsoCard() { return qsoCard_; }
     TargetListModal &getTargetListModal() { return targetListModal_; }
+    QuickSettingsModal &getQuickSettingsModal() { return quickSettingsModal_; }
 
 #if defined(ARDUINO)
     Arduino_GFX *getGfx() const { return gfx_; }
@@ -91,6 +93,7 @@ private:
     RoverHistoryModal roverHistoryModal_;
     QsoCard qsoCard_;
     TargetListModal targetListModal_;
+    QuickSettingsModal quickSettingsModal_;
     char lastRoverCardBuf_[24] = {0};
     RoverState lastRoverCardState_ = static_cast<RoverState>(-1);
     uint16_t lastRoverCardDistColor_ = 0xFFFF;

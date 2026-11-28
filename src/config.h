@@ -5,7 +5,7 @@
 // ==============================================================================
 // Firmware Version
 // ==============================================================================
-#define FW_VERSION_BASE      "v1.1"
+#define FW_VERSION_BASE      "v1.2"
 #ifndef FW_VERSION
 #define FW_VERSION           FW_VERSION_BASE "-dev"
 #endif
@@ -389,12 +389,33 @@
 #define TARGET_BTN_CANCEL_H          32
 
 // ==============================================================================
+// Quick Settings Modal Geometry
+// ==============================================================================
+#define QUICK_SETTINGS_MODAL_X       60
+#define QUICK_SETTINGS_MODAL_Y       120
+#define QUICK_SETTINGS_MODAL_W       360
+#define QUICK_SETTINGS_MODAL_H       240
+
+#define QUICK_SETTINGS_BAR_X         90
+#define QUICK_SETTINGS_BAR_Y         224
+#define QUICK_SETTINGS_BAR_W         300
+#define QUICK_SETTINGS_BAR_H         28
+
+#define QUICK_SETTINGS_OK_X          165
+#define QUICK_SETTINGS_OK_Y          286
+#define QUICK_SETTINGS_OK_W          150
+#define QUICK_SETTINGS_OK_H          44
+
+// ==============================================================================
 // Timeouts & Operational Thresholds
 // ==============================================================================
 #define HEADING_TIMEOUT_MS        1500
 #define EDIT_TIMEOUT_MS           5000
 #define CAL_MODAL_TIMEOUT_MS      15000
+#define QUICK_SETTINGS_TIMEOUT_MS 6000
 #define LONG_PRESS_MS             1500
+#define ENCODER_LONG_PRESS_MS     800
+#define BRIGHTNESS_STEP_PERCENT   5
 #define ROVER_ALERT_THRESHOLD_KM  16.0
 #define ROVER_WARNING_DURATION_MS 3000
 

@@ -36,7 +36,10 @@ bool isKnownCommand(const char *cleanCmd) {
            equalsIgnoreCase(cleanCmd, "test") || equalsIgnoreCase(cleanCmd, "demo") ||
            equalsIgnoreCase(cleanCmd, "t") ||
            equalsIgnoreCase(cleanCmd, "ble") || startsWithIgnoreCase(cleanCmd, "ble ") ||
-           startsWithIgnoreCase(cleanCmd, "cal") ||
+           equalsIgnoreCase(cleanCmd, "brightness") || startsWithIgnoreCase(cleanCmd, "brightness ") ||
+           hasSubcommandPrefix(cleanCmd, "calibration") ||
+           hasSubcommandPrefix(cleanCmd, "calibrate") ||
+           hasSubcommandPrefix(cleanCmd, "cal") ||
            equalsIgnoreCase(cleanCmd, "disconnect") || equalsIgnoreCase(cleanCmd, "exit") ||
            equalsIgnoreCase(cleanCmd, "quit") ||
            equalsIgnoreCase(cleanCmd, "ver") || equalsIgnoreCase(cleanCmd, "version") ||
@@ -85,6 +88,9 @@ SerialCli::SerialCli(GpsManager &gpsManager, Calibration &calibration, GpsSimula
       prepareRestartContext_(nullptr),
       restartCb_(nullptr),
       restartContext_(nullptr),
+      getBrightnessCb_(nullptr),
+      setBrightnessCb_(nullptr),
+      brightnessContext_(nullptr),
       pendingRoverClear_(false),
       pendingRoverClearSource_(CLI_SOURCE_USB),
       pendingQsoClear_(false),
@@ -618,7 +624,13 @@ void SerialCli::executeCommand(const char *cmdLine, unsigned long nowMs, CliSour
         }
     } else if (equalsIgnoreCase(cleanCmd, "ble") || startsWithIgnoreCase(cleanCmd, "ble ")) {
         handleBleCommand(skipCmdArg(cleanCmd, 3));
-    } else if (startsWithIgnoreCase(cleanCmd, "cal")) {
+    } else if (equalsIgnoreCase(cleanCmd, "brightness") || startsWithIgnoreCase(cleanCmd, "brightness ")) {
+        handleBrightnessCommand(skipCmdArg(cleanCmd, 10));
+    } else if (equalsIgnoreCase(cleanCmd, "calibration") || startsWithIgnoreCase(cleanCmd, "calibration ") || startsWithIgnoreCase(cleanCmd, "calibration\t")) {
+        handleCalCommand(skipCmdArg(cleanCmd, 11));
+    } else if (equalsIgnoreCase(cleanCmd, "calibrate") || startsWithIgnoreCase(cleanCmd, "calibrate ") || startsWithIgnoreCase(cleanCmd, "calibrate\t")) {
+        handleCalCommand(skipCmdArg(cleanCmd, 9));
+    } else if (equalsIgnoreCase(cleanCmd, "cal") || startsWithIgnoreCase(cleanCmd, "cal ") || startsWithIgnoreCase(cleanCmd, "cal\t")) {
         handleCalCommand(skipCmdArg(cleanCmd, 3));
     } else if (equalsIgnoreCase(cleanCmd, "disconnect") || equalsIgnoreCase(cleanCmd, "exit") ||
                equalsIgnoreCase(cleanCmd, "quit")) {
@@ -635,6 +647,8 @@ void SerialCli::executeCommand(const char *cmdLine, unsigned long nowMs, CliSour
         pendingFactoryResetSource_ = activeSource_;
         println("[SYSTEM] WARNING: This will erase ALL saved NVS data:");
         println("  - Antenna calibration offset");
+        println("  - Heading averaging level");
+        println("  - Display brightness setting");
         println("  - Custom BLE device name suffix");
         println("  - Rover stop history & capacity");
         println("  - Contest QSO log & settings");
@@ -685,6 +699,8 @@ void SerialCli::handleHelpCommand(const char *arg) {
         printSimHelp();
     } else if (equalsIgnoreCase(arg, "ble")) {
         println("Usage: ble [status] | ble suffix [<val>|reset] | ble diag on|off");
+    } else if (equalsIgnoreCase(arg, "brightness")) {
+        println("Usage: brightness [0-100]");
     } else {
         printFormat("Unknown help topic: '%s'.\r\n", arg);
         printHelp();
@@ -694,30 +710,36 @@ void SerialCli::handleHelpCommand(const char *arg) {
 void SerialCli::printHelp() {
     println();
     println("=== GNSS Compass Serial Commands ===");
-    println("  status (or gps)       - Live GNSS receiver stream & link diagnostic");
+    println("GNSS & Calibration:");
+    println("  status (or gps)         - Live GNSS receiver stream & link diagnostic");
     println("  gps [status|probe|config|send|check]");
-    println("                        - UM982 GNSS receiver setup and diagnostics");
-    println("  rover [status|start|stop|history|undo|max|clear]");
-    println("                        - Rover transit tracking");
-    println("  target <grid|index>   - Set active target grid or select saved preset #");
-    println("  target [add|save|select|del|list|max|zero|clear]");
-    println("                        - Manage saved target grid presets");
-    println("  log <call> [band/freq]- Voice-friendly contest QSO logging (10 GHz default)");
-    println("  log [undo|del|list|stats|export|mycall|default|clear]");
-    println("                        - QSO log management and contest export");
-    println("  test (or demo)        - Run visual display self-test demo");
-    println("  cal [snap|zero|<val>] - View or configure antenna calibration");
+    println("                          - UM982 GNSS receiver setup and diagnostics");
+    println("  cal [snap|zero|<val>]   - View or configure antenna calibration");
+    println("  cal avg [low|med|high]  - View or set heading averaging depth");
     println("  sim [on|off|hdg|pos|grid|rover|status]");
-    println("                        - GPS simulation commands");
-    println("  exit (or disconnect)  - Terminate wireless BLE connection cleanly");
-    println("  restart (or reboot)   - Restart the ESP32 controller");
-    println("  factory reset         - Erase all NVS settings/logs and reboot (requires 'yes')");
-    println("  version (or ver)      - Display firmware build version and compile time");
-    println("  ble [diag on|off]     - BLE link status / toggle BLE RF diagnostics");
-    println("  ble suffix [<val>|reset]");
-    println("                        - Configure BLE device name suffix (max 16 chars)");
-    println("  $<NMEA/KSXT sentence> - Inject raw GNSS sentence directly");
-    println("  help (or ?)           - Show this help menu");
+    println("                          - GPS simulation commands");
+    println("  $<NMEA/KSXT sentence>   - Inject raw GNSS sentence directly");
+    println();
+    println("Rover, Targets & QSO Log:");
+    println("  rover [status|start|stop|history|undo|max|clear]");
+    println("                          - Rover transit tracking");
+    println("  target <grid|index>     - Set active target grid or select saved preset #");
+    println("  target [add|save|select|del|list|max|zero|clear]");
+    println("                          - Manage saved target grid presets");
+    println("  log <call> [band/freq]  - Voice-friendly contest QSO logging (10 GHz default)");
+    println("  log [undo|del|list|stats|export|mycall|default|clear]");
+    println("                          - QSO log management and contest export");
+    println();
+    println("System, Display & Radio:");
+    println("  brightness [0-100]      - View or set display backlight brightness (%)");
+    println("  test (or demo)          - Run visual display self-test demo");
+    println("  ble [diag on|off]       - BLE link status / toggle BLE RF diagnostics");
+    println("  ble suffix [<val>|reset]- Configure BLE device name suffix (max 16 chars)");
+    println("  exit (or disconnect)    - Terminate wireless BLE connection cleanly");
+    println("  restart (or reboot)     - Restart the ESP32 controller");
+    println("  factory reset           - Erase all NVS settings/logs and reboot (requires 'yes')");
+    println("  version (or ver)        - Display firmware build version and compile time");
+    println("  help (or ?)             - Show this help menu");
     println("====================================");
     println();
 }
@@ -735,6 +757,11 @@ void SerialCli::printCalibrationStatus() {
     } else {
         println("  Raw GNSS Hdg  : ---.- (No heading fix)");
     }
+    const BearingFilter &bf = gpsManager_.getBearingFilter();
+    printFormat("  Averaging     : %s (%s, tau=%.1fs)\r\n",
+                BearingFilter::levelToString(bf.getAveragingLevel()),
+                bf.getStrategyName(),
+                bf.getTimeConstantSec());
     println("==================================");
     println();
 }
@@ -866,23 +893,109 @@ void SerialCli::handleBleCommand(const char *arg) {
     }
 }
 
+void SerialCli::handleBrightnessCommand(const char *arg) {
+    if (!arg || *arg == '\0' || equalsIgnoreCase(arg, "status") || equalsIgnoreCase(arg, "show")) {
+        if (getBrightnessCb_) {
+            printFormat("[DISPLAY] Brightness: %u%%\r\n", static_cast<unsigned>(getBrightnessCb_(brightnessContext_)));
+        } else {
+            println("[DISPLAY] Brightness control not registered.");
+        }
+        return;
+    }
+    if (equalsIgnoreCase(arg, "help") || std::strcmp(arg, "?") == 0) {
+        println("Usage: brightness [0-100]");
+        return;
+    }
+
+    size_t len = std::strlen(arg);
+    while (len > 0 && (arg[len - 1] == ' ' || arg[len - 1] == '\t')) {
+        len--;
+    }
+    if (len > 0 && arg[len - 1] == '%') {
+        len--;
+    }
+    if (len == 0 || len > 3) {
+        println("[DISPLAY ERROR] Usage: brightness [0-100]");
+        return;
+    }
+    unsigned int pct = 0;
+    for (size_t i = 0; i < len; ++i) {
+        if (!std::isdigit(static_cast<unsigned char>(arg[i]))) {
+            println("[DISPLAY ERROR] Usage: brightness [0-100]");
+            return;
+        }
+        pct = pct * 10U + static_cast<unsigned int>(arg[i] - '0');
+    }
+    if (pct > 100U) {
+        println("[DISPLAY ERROR] Brightness must be between 0 and 100.");
+        return;
+    }
+    if (setBrightnessCb_) {
+        setBrightnessCb_(static_cast<uint8_t>(pct), brightnessContext_);
+        printFormat("[DISPLAY] Brightness set to %u%%\r\n", pct);
+    } else {
+        println("[DISPLAY] Brightness control not registered.");
+    }
+}
+
 void SerialCli::printCalHelp() {
     println();
     println("=== Antenna Calibration Commands ===");
-    println("  cal [status|show]     - Display current calibration offset & heading");
-    println("  cal snap              - Align antenna heading to current target bearing");
-    println("  cal zero (or reset)   - Reset calibration offset to 0.0 deg");
-    println("  cal [set] <deg>       - Set manual antenna offset in degrees");
+    println("  cal [status|show]      - Display current calibration offset & heading");
+    println("  cal snap               - Align antenna heading to current target bearing");
+    println("  cal zero (or reset)    - Reset calibration offset to 0.0 deg");
+    println("  cal [set] <deg>        - Set manual antenna offset in degrees");
+    println("  cal avg [low|med|high] - View or set heading averaging depth");
+    println("                           (low: raw, med: ~5s, high: ~10s 90-deg settle)");
 }
 
 void SerialCli::handleCalCommand(const char *arg) {
+    while (arg && (*arg == ' ' || *arg == '\t')) arg++;
+
     if (arg && (equalsIgnoreCase(arg, "help") || std::strcmp(arg, "?") == 0)) {
         printCalHelp();
         return;
     }
 
+    // Accept optional "offset" qualifier (e.g. "cal offset snap", "cal offset -3.5")
+    if (arg && (equalsIgnoreCase(arg, "offset") || startsWithIgnoreCase(arg, "offset ") || startsWithIgnoreCase(arg, "offset\t"))) {
+        arg = skipCmdArg(arg, 6);
+    }
+
     if (!arg || *arg == '\0' || equalsIgnoreCase(arg, "status") || equalsIgnoreCase(arg, "show")) {
         printCalibrationStatus();
+        return;
+    }
+
+    const char *avgSub = nullptr;
+    if (equalsIgnoreCase(arg, "averaging") || startsWithIgnoreCase(arg, "averaging ") || startsWithIgnoreCase(arg, "averaging\t")) {
+        avgSub = skipCmdArg(arg, 9);
+    } else if (equalsIgnoreCase(arg, "average") || startsWithIgnoreCase(arg, "average ") || startsWithIgnoreCase(arg, "average\t")) {
+        avgSub = skipCmdArg(arg, 7);
+    } else if (equalsIgnoreCase(arg, "filter") || startsWithIgnoreCase(arg, "filter ") || startsWithIgnoreCase(arg, "filter\t")) {
+        avgSub = skipCmdArg(arg, 6);
+    } else if (equalsIgnoreCase(arg, "avg") || startsWithIgnoreCase(arg, "avg ") || startsWithIgnoreCase(arg, "avg\t")) {
+        avgSub = skipCmdArg(arg, 3);
+    }
+    if (avgSub) {
+        BearingFilter &bf = gpsManager_.getBearingFilter();
+        if (*avgSub == '\0' || equalsIgnoreCase(avgSub, "status") || equalsIgnoreCase(avgSub, "show")) {
+            printFormat("[CAL] Averaging: %s (%s, tau=%.1fs)\r\n",
+                        BearingFilter::levelToString(bf.getAveragingLevel()),
+                        bf.getStrategyName(),
+                        bf.getTimeConstantSec());
+            return;
+        }
+        HeadingAveragingLevel level = HeadingAveragingLevel::Medium;
+        if (!BearingFilter::parseLevelString(avgSub, level)) {
+            println("[CAL ERROR] Usage: cal avg [low|med|high]");
+            return;
+        }
+        bf.setAveragingLevel(level, true);
+        printFormat("[CAL] Averaging set to %s (%s, tau=%.1fs)\r\n",
+                    BearingFilter::levelToString(bf.getAveragingLevel()),
+                    bf.getStrategyName(),
+                    bf.getTimeConstantSec());
         return;
     }
 
@@ -906,15 +1019,50 @@ void SerialCli::handleCalCommand(const char *arg) {
     }
 
     const char *numStr = arg;
-    if (startsWithIgnoreCase(arg, "set ")) {
-        numStr = arg + 4;
-        while (*numStr == ' ' || *numStr == '\t') numStr++;
+    if (startsWithIgnoreCase(numStr, "set ") || startsWithIgnoreCase(numStr, "set\t")) {
+        numStr = skipCmdArg(numStr, 3);
     }
 
+    // Voice-friendly sign prefixes and unit suffixes (e.g. "minus 3.5 degrees", "plus 2.0 deg")
+    float sign = 1.0f;
+    if (startsWithIgnoreCase(numStr, "minus ") || startsWithIgnoreCase(numStr, "minus\t")) {
+        sign = -1.0f;
+        numStr = skipCmdArg(numStr, 5);
+    } else if (startsWithIgnoreCase(numStr, "negative ") || startsWithIgnoreCase(numStr, "negative\t")) {
+        sign = -1.0f;
+        numStr = skipCmdArg(numStr, 8);
+    } else if (startsWithIgnoreCase(numStr, "plus ") || startsWithIgnoreCase(numStr, "plus\t")) {
+        numStr = skipCmdArg(numStr, 4);
+    } else if (startsWithIgnoreCase(numStr, "positive ") || startsWithIgnoreCase(numStr, "positive\t")) {
+        numStr = skipCmdArg(numStr, 8);
+    }
+
+    char numBuf[48];
+    std::strncpy(numBuf, numStr, sizeof(numBuf) - 1);
+    numBuf[sizeof(numBuf) - 1] = '\0';
+    size_t nlen = std::strlen(numBuf);
+    while (nlen > 0 && (numBuf[nlen - 1] == ' ' || numBuf[nlen - 1] == '\t')) {
+        numBuf[--nlen] = '\0';
+    }
+    if (nlen >= 7 && equalsIgnoreCase(&numBuf[nlen - 7], "degrees")) {
+        nlen -= 7;
+    } else if (nlen >= 6 && equalsIgnoreCase(&numBuf[nlen - 6], "degree")) {
+        nlen -= 6;
+    } else if (nlen >= 3 && equalsIgnoreCase(&numBuf[nlen - 3], "deg")) {
+        nlen -= 3;
+    }
+    while (nlen > 0 && (numBuf[nlen - 1] == ' ' || numBuf[nlen - 1] == '\t')) {
+        numBuf[--nlen] = '\0';
+    }
+    numBuf[nlen] = '\0';
+
     float val = 0.0f;
-    if (!parseStrictFloat(numStr, val)) {
+    if (!parseStrictFloat(numBuf, val)) {
         printFormat("[CAL ERROR] Invalid offset '%s'. Usage: cal [snap|zero|<deg>]\r\n", numStr);
         return;
+    }
+    if (sign < 0.0f && numBuf[0] != '-' && numBuf[0] != '+') {
+        val = -val;
     }
     calibration_.setOffset(val);
     if (stateChangedCb_) stateChangedCb_(stateChangedContext_);
@@ -1123,6 +1271,7 @@ void SerialCli::doFactoryReset(unsigned long nowMs) {
     }
 #else
     calibration_.reset();
+    gpsManager_.getBearingFilter().setAveragingLevel(HeadingAveragingLevel::Medium, true);
     if (bleManager_) {
         bleManager_->resetDeviceSuffix(true);
     }

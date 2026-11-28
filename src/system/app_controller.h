@@ -203,6 +203,7 @@ private:
     unsigned long modalOpenedMillis_;
     unsigned long qsoCardOpenedMillis_;
     unsigned long targetModalOpenedMillis_;
+    unsigned long quickSettingsOpenedMillis_;
     ModalButtonId pendingModalButtonRelease_;
     unsigned long pendingModalButtonReleaseStartMillis_;
 

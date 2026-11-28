@@ -104,6 +104,7 @@ void DisplayUi::initLcd() {
     roverHistoryModal_.setGfx(gfx_);
     qsoCard_.setGfx(gfx_);
     targetListModal_.setGfx(gfx_);
+    quickSettingsModal_.setGfx(gfx_);
 }
 
 void DisplayUi::begin() {

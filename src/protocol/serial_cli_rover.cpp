@@ -215,6 +215,25 @@ void SerialCli::printRoverStatus(unsigned long nowMs) {
     println("          Rover Transit Status          ");
     println("========================================");
     printFormat("Mode:             %s\r\n", nav.isRoverMode ? "ACTIVE (Rover Mode)" : "INACTIVE (Bearing Mode)");
+
+    // Qualification state A-D
+    const char *stateStr = "Unknown";
+    switch (nav.roverState) {
+        case RoverState::InTransitUnder16k:
+            stateStr = "STATE A: In-Transit (< 16.0 km alert)";
+            break;
+        case RoverState::QualifiedNewGrid:
+            stateStr = "STATE B: QUALIFIED (>= 16.0 km, New Grid)";
+            break;
+        case RoverState::QualifiedRevisitedGrid:
+            stateStr = "STATE C: REVISITED (>= 16.0 km, Previously Visited Grid)";
+            break;
+        case RoverState::GpsLostStale:
+            stateStr = "STATE D: NO GPS (Signal lost / stale, holding last distance)";
+            break;
+    }
+    printFormat("Qualification:    %s\r\n", stateStr);
+
     if (nav.originLat != 0.0 || nav.originLon != 0.0 || nav.originGrid[0] != '\0') {
         printFormat("Origin Coords:    %9.6f, %10.6f\r\n", nav.originLat, nav.originLon);
         printFormat("Origin Grid:      %s\r\n", nav.originGrid[0] ? nav.originGrid : "Unknown");
@@ -241,24 +260,6 @@ void SerialCli::printRoverStatus(unsigned long nowMs) {
         formatAltitudeMeters(gpsManager_.getAltitudeMeters(), altBuf, sizeof(altBuf));
         printFormat("Elevation:        %s\r\n", altBuf);
     }
-
-    // Qualification state A-D
-    const char *stateStr = "Unknown";
-    switch (nav.roverState) {
-        case RoverState::InTransitUnder16k:
-            stateStr = "STATE A: In-Transit (< 16.0 km alert)";
-            break;
-        case RoverState::QualifiedNewGrid:
-            stateStr = "STATE B: QUALIFIED (>= 16.0 km, New Grid)";
-            break;
-        case RoverState::QualifiedRevisitedGrid:
-            stateStr = "STATE C: REVISITED (>= 16.0 km, Previously Visited Grid)";
-            break;
-        case RoverState::GpsLostStale:
-            stateStr = "STATE D: NO GPS (Signal lost / stale, holding last distance)";
-            break;
-    }
-    printFormat("Qualification:    %s\r\n", stateStr);
 
     // GPS fix health
     GpsLinkVerdict v = gpsManager_.evaluateStreamHealth(nowMs);

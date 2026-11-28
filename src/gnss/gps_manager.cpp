@@ -253,7 +253,7 @@ void GpsManager::setHeading(float headingDeg, BearingQuality quality, unsigned l
     hasHeading_ = true;
     lastHeadingUpdate_ = nowMs;
     bearingQuality_ = quality;
-    bearingFilter_.seed(headingDeg);
+    bearingFilter_.seed(headingDeg, nowMs);
     if (onHeadingUpdated_) {
         onHeadingUpdated_(headingDeg, quality, headingContext_);
     }
@@ -335,7 +335,7 @@ void GpsManager::processSentence(char *sentence, unsigned long nowMs) {
         hasHeading_ = true;
         lastHeadingUpdate_ = nowMs;
         bearingQuality_ = newQuality;
-        bearingFilter_.push(newHeading);
+        bearingFilter_.push(newHeading, newQuality, nowMs);
 
         if (onHeadingUpdated_) {
             onHeadingUpdated_(newHeading, newQuality, headingContext_);

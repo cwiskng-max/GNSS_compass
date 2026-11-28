@@ -23,6 +23,8 @@ Each major subsystem or feature design is organized into its own subfolder to ke
 | **Voice-Friendly Contest QSO Logging** | [`voice-qso-logging/`](voice-qso-logging/DESIGN.md) | **Implemented** | Voice-dictated contest QSO logging over BLE UART, NATO phonetics lexer, order flexibility, auto frequency-to-band mapping, default 10 GHz mode, NVS persistence, and Cabrillo/ADIF exports. |
 | **Firmware Architecture & Modularization** | [`firmware-modularization/`](firmware-modularization/DESIGN.md) | **Implemented** | Modular C++ firmware architecture under `src/`, explicit `GeoPoint` lat/lon source of truth vs UI grid abstractions, test decoupling, and simplified loop. |
 | **CI Build & Release Pipeline** | [`ci-firmware-pipeline/`](ci-firmware-pipeline/DESIGN.md) | **Implemented** | Headless `arduino-cli` ESP32-S3 CI builds, dynamic git version injection (`FW_VERSION`), release tag validation, and binary checksums. |
+| **ESP32-S3 Power Management** | [`power-management/`](power-management/DESIGN.md) | **Proposed (Deferred)** | Prioritized field power-saving design: backlight dimming/timeout, BLE TX/advertising backoff, I2C polling throttling, CPU scaling caveats, and RGB LCD light-sleep constraints. |
+| **Configurable Heading Averaging** | [`heading-averaging/`](heading-averaging/DESIGN.md) | **Implemented (Phase 1)** | Pluggable `IAngleFilter` / `CircularEmaFilter` (`low` / `med` / `high`) configured via `cal avg` and persisted in NVS; Closed-Loop `Kalman` deferred to Phase 2. |
 
 ---
 

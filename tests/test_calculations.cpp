@@ -520,7 +520,7 @@ void test_antenna_calibration() {
 }
 
 void test_bearing_filter_class() {
-    TEST("BearingFilter vector smoothing, seed, and 360 wrap-around");
+    TEST("BearingFilter Circular EMA smoothing, seed, and 360 wrap-around");
     BearingFilter filter;
     ASSERT_TRUE(!filter.hasSamples());
     ASSERT_TRUE(filter.sampleCount() == 0);
@@ -528,7 +528,7 @@ void test_bearing_filter_class() {
     // Baseline pointing North (0 deg): (0 + 270) % 360 = 270 deg
     filter.seed(0.0f);
     ASSERT_TRUE(filter.hasSamples());
-    ASSERT_TRUE(filter.sampleCount() == 5);
+    ASSERT_TRUE(filter.sampleCount() == 1);
     ASSERT_NEAR(filter.getRawHeading(), 270.0, 1e-3);
 
     // With +10 deg calibration offset -> 280 deg
@@ -541,16 +541,15 @@ void test_bearing_filter_class() {
     ASSERT_NEAR(filter.getRawHeading(), 0.0, 1e-3);
 
     // Push samples across 0/360 wrap-around: alternate 359 deg and 1 deg
-    // True circular average of 359 and 1 is 0 deg (or 360 deg)
-    // Raw heading = (0 + 270) = 270 deg
+    // True circular average around 0 deg -> Raw heading = (0 + 270) = 270 deg
     filter.reset();
-    filter.push(359.0f);
-    filter.push(1.0f);
-    filter.push(359.0f);
-    filter.push(1.0f);
-    filter.push(0.0f);
+    filter.push(359.0f, BEARING_FIXED, 1000);
+    filter.push(1.0f, BEARING_FIXED, 1200);
+    filter.push(359.0f, BEARING_FIXED, 1400);
+    filter.push(1.0f, BEARING_FIXED, 1600);
+    filter.push(0.0f, BEARING_FIXED, 1800);
     ASSERT_TRUE(filter.sampleCount() == 5);
-    ASSERT_NEAR(filter.getRawHeading(), 270.0, 0.5);
+    ASSERT_NEAR(filter.getRawHeading(), 270.0, 1.0);
 
     PASS();
 }
@@ -1514,9 +1513,10 @@ void test_serial_cli_gps_commands() {
     // 1. Initial 'status' report with Receive-Only / Untested link
     cli.executeCommand("status", 1000);
     ASSERT_TRUE(cliOutput.find("GNSS Receiver Stream Diagnosis") != std::string::npos);
-    ASSERT_TRUE(cliOutput.find("Link Status:    CONNECTED (Receive-Only Mode)") != std::string::npos);
-    ASSERT_TRUE(cliOutput.find("TX Capability:  UNKNOWN") != std::string::npos);
-    ASSERT_TRUE(cliOutput.find("Config State:   NO DATA") != std::string::npos);
+    ASSERT_TRUE(cliOutput.find("Link Status:") != std::string::npos);
+    ASSERT_TRUE(cliOutput.find("- Connection:           CONNECTED (Receive-Only Mode)") != std::string::npos);
+    ASSERT_TRUE(cliOutput.find("- TX Capability:        UNKNOWN") != std::string::npos);
+    ASSERT_TRUE(cliOutput.find("- Config State:         NO DATA") != std::string::npos);
     cliOutput.clear();
 
     // 2. 'gps probe' execution
@@ -1550,8 +1550,8 @@ void test_serial_cli_gps_commands() {
 
     // 6. Enhanced 'status' report when Bidirectional TX is confirmed
     cli.executeCommand("gps status", 1300);
-    ASSERT_TRUE(cliOutput.find("Link Status:    CONNECTED (Bidirectional TX/RX Active)") != std::string::npos);
-    ASSERT_TRUE(cliOutput.find("TX Capability:  AVAILABLE") != std::string::npos);
+    ASSERT_TRUE(cliOutput.find("- Connection:           CONNECTED (Bidirectional TX/RX Active)") != std::string::npos);
+    ASSERT_TRUE(cliOutput.find("- TX Capability:        AVAILABLE") != std::string::npos);
     cliOutput.clear();
 
     // 7. 'gps send <command>' when TX is available
@@ -6888,12 +6888,350 @@ void test_ksxt_altitude_status_display() {
 
     cliOut.clear();
     cli.executeCommand("status", 1250);
-    ASSERT_TRUE(cliOut.find("- Elevation:           2100.0 m (6890 ft)") != std::string::npos);
+    ASSERT_TRUE(cliOut.find("- Elevation:            2100.0 m (6890 ft)") != std::string::npos);
+    // Verify Data Fix Status -> Link Status -> Message Streams section ordering
+    size_t fixPos = cliOut.find("Data Fix Status:");
+    size_t linkPos = cliOut.find("Link Status:");
+    size_t msgPos = cliOut.find("Message Streams:");
+    size_t bytesPos = cliOut.find("- Total Bytes:");
+    ASSERT_TRUE(fixPos != std::string::npos && linkPos != std::string::npos && msgPos != std::string::npos);
+    ASSERT_TRUE(fixPos < linkPos && linkPos < msgPos);
+    ASSERT_TRUE(bytesPos != std::string::npos && bytesPos > msgPos);
 
     cliOut.clear();
     cli.executeCommand("rover status", 1300);
     ASSERT_TRUE(cliOut.find("Elevation:        2100.0 m (6890 ft)") != std::string::npos);
 
+    PASS();
+}
+
+void test_display_brightness_cli_and_nvs() {
+    TEST("Display brightness CLI command, PWM mapping, and NVS persistence");
+    NvsConfig::resetHostStorage();
+
+    ASSERT_TRUE(Board::percentToPwm(0) == 0);
+    ASSERT_TRUE(Board::percentToPwm(50) == 128);
+    ASSERT_TRUE(Board::percentToPwm(100) == 255);
+    ASSERT_TRUE(Board::percentToPwm(150) == 255);
+
+    Board board;
+    DisplayUi ui;
+    InputManager input;
+    GpsManager gps;
+    Calibration cal;
+    GpsSimulator sim;
+    SerialCli cli(gps, cal, sim);
+    AppController app(board, ui, input, gps, cal, sim, cli);
+
+    std::string cliOut;
+    cli.setOutputHandler([](const char *str, void *ctx) {
+        if (str && ctx) *static_cast<std::string*>(ctx) += str;
+    }, &cliOut);
+
+    app.begin();
+    ASSERT_TRUE(board.getBacklightPercent() == 95);
+    ASSERT_TRUE(board.getLastPwmBrightness() == Board::percentToPwm(95));
+
+    cliOut.clear();
+    cli.executeCommand("brightness", 1000);
+    ASSERT_TRUE(cliOut.find("[DISPLAY] Brightness: 95%") != std::string::npos);
+
+    cliOut.clear();
+    cli.executeCommand("brightness 40", 1100);
+    ASSERT_TRUE(cliOut.find("[DISPLAY] Brightness set to 40%") != std::string::npos);
+    ASSERT_TRUE(board.getBacklightPercent() == 40);
+    ASSERT_TRUE(board.getLastPwmBrightness() == Board::percentToPwm(40));
+
+    // Verify NVS persistence across Board::init()
+    Board reloadedBoard;
+    reloadedBoard.init();
+    ASSERT_TRUE(reloadedBoard.getBacklightPercent() == 40);
+    ASSERT_TRUE(reloadedBoard.getLastPwmBrightness() == Board::percentToPwm(40));
+
+    // Optional '%' suffix and 0% boundary
+    cliOut.clear();
+    cli.executeCommand("brightness 0%", 1200);
+    ASSERT_TRUE(cliOut.find("[DISPLAY] Brightness set to 0%") != std::string::npos);
+    ASSERT_TRUE(board.getBacklightPercent() == 0);
+    ASSERT_TRUE(board.getLastPwmBrightness() == 0);
+
+    // Invalid inputs leave brightness unchanged
+    cliOut.clear();
+    cli.executeCommand("brightness 101", 1300);
+    ASSERT_TRUE(cliOut.find("[DISPLAY ERROR]") != std::string::npos);
+    ASSERT_TRUE(board.getBacklightPercent() == 0);
+
+    cliOut.clear();
+    cli.executeCommand("brightness -5", 1400);
+    ASSERT_TRUE(cliOut.find("[DISPLAY ERROR]") != std::string::npos);
+    ASSERT_TRUE(board.getBacklightPercent() == 0);
+
+    cliOut.clear();
+    cli.executeCommand("brightness abc", 1500);
+    ASSERT_TRUE(cliOut.find("[DISPLAY ERROR]") != std::string::npos);
+    ASSERT_TRUE(board.getBacklightPercent() == 0);
+
+    NvsConfig::resetHostStorage();
+    PASS();
+}
+
+void test_quick_settings_brightness_modal_and_long_press() {
+    TEST("QuickSettings modal formatters, encoder long-press, live preview, and NVS commit");
+    NvsConfig::resetHostStorage();
+
+    // 1. Formatters and geometry helpers
+    char buf[16];
+    QuickSettingsModal::formatBrightnessText(95, buf, sizeof(buf));
+    ASSERT_TRUE(std::strcmp(buf, " 95%") == 0);
+    QuickSettingsModal::formatBrightnessText(0, buf, sizeof(buf));
+    ASSERT_TRUE(std::strcmp(buf, "  0%") == 0);
+    ASSERT_TRUE(QuickSettingsModal::getSliderFillWidth(0, 296) == 0);
+    ASSERT_TRUE(QuickSettingsModal::getSliderFillWidth(50, 296) == 148);
+    ASSERT_TRUE(QuickSettingsModal::getSliderFillWidth(100, 296) == 296);
+
+    ASSERT_TRUE(QuickSettingsModal::isOkButtonTouched(QUICK_SETTINGS_OK_X + 10, QUICK_SETTINGS_OK_Y + 10));
+    ASSERT_TRUE(!QuickSettingsModal::isOkButtonTouched(10, 10));
+    ASSERT_TRUE(QuickSettingsModal::getBrightnessFromTouch(QUICK_SETTINGS_BAR_X, QUICK_SETTINGS_BAR_Y + 10) == 0);
+    ASSERT_TRUE(QuickSettingsModal::getBrightnessFromTouch(QUICK_SETTINGS_BAR_X + QUICK_SETTINGS_BAR_W / 2, QUICK_SETTINGS_BAR_Y + 10) == 50);
+    ASSERT_TRUE(QuickSettingsModal::getBrightnessFromTouch(QUICK_SETTINGS_BAR_X + QUICK_SETTINGS_BAR_W, QUICK_SETTINGS_BAR_Y + 10) == 100);
+    ASSERT_TRUE(QuickSettingsModal::getBrightnessFromTouch(QUICK_SETTINGS_BAR_X + 50, 10) == -1);
+
+    // 2. End-to-end AppController + InputManager long-press workflow
+    Board board;
+    DisplayUi ui;
+    InputManager input;
+    GpsManager gps;
+    Calibration cal;
+    GpsSimulator sim;
+    SerialCli cli(gps, cal, sim);
+    AppController app(board, ui, input, gps, cal, sim, cli);
+    app.begin();
+
+    ASSERT_TRUE(app.getUiMode() == UiMode::Normal);
+    ASSERT_TRUE(board.getBacklightPercent() == 95);
+
+    // Long-press bezel (hold >= ENCODER_LONG_PRESS_MS) opens QuickSettings
+    input.injectEncoderButton(true, 1000);
+    app.update(1000);
+    ASSERT_TRUE(app.getUiMode() == UiMode::Normal);
+
+    input.injectEncoderButton(true, 1000 + ENCODER_LONG_PRESS_MS);
+    app.update(1000 + ENCODER_LONG_PRESS_MS);
+    ASSERT_TRUE(app.getUiMode() == UiMode::QuickSettings);
+
+    // Release after long-press does NOT immediately dismiss QuickSettings
+    input.injectEncoderButton(false, 1900);
+    app.update(1900);
+    ASSERT_TRUE(app.getUiMode() == UiMode::QuickSettings);
+
+    // Rotate CCW twice (-10% -> 85%) gives live preview WITHOUT persisting to NVS yet
+    input.injectEncoderStep(-1);
+    input.injectEncoderStep(-1);
+    app.update(2000);
+    ASSERT_TRUE(board.getBacklightPercent() == 85);
+    ASSERT_TRUE(NvsConfig("compass").getUShort("bkl_pct", 95) == 95);
+
+    // Touch slider bar at 50% updates live preview and resets timeout
+    input.injectTouch(true, QUICK_SETTINGS_BAR_X + QUICK_SETTINGS_BAR_W / 2, QUICK_SETTINGS_BAR_Y + 10, 4000);
+    app.update(4000);
+    input.injectTouch(false, 0, 0, 4050);
+    app.update(4050);
+    ASSERT_TRUE(board.getBacklightPercent() == 50);
+
+    // Timeout before 6000 ms from last interaction does NOT dismiss
+    app.update(9000);
+    ASSERT_TRUE(app.getUiMode() == UiMode::QuickSettings);
+
+    // Timeout >= QUICK_SETTINGS_TIMEOUT_MS commits to NVS and returns to Normal
+    app.update(4000 + QUICK_SETTINGS_TIMEOUT_MS);
+    ASSERT_TRUE(app.getUiMode() == UiMode::Normal);
+    ASSERT_TRUE(NvsConfig("compass").getUShort("bkl_pct", 95) == 50);
+
+    // Re-open via long-press, step +5% -> 55%, and confirm via single bezel press
+    input.injectEncoderButton(true, 12000);
+    input.injectEncoderButton(true, 12000 + ENCODER_LONG_PRESS_MS);
+    input.injectEncoderButton(false, 12900);
+    app.update(12900);
+    ASSERT_TRUE(app.getUiMode() == UiMode::QuickSettings);
+
+    input.injectEncoderStep(+1);
+    app.update(13000);
+    ASSERT_TRUE(board.getBacklightPercent() == 55);
+
+    input.injectEncoderButton(true, 13100);
+    input.injectEncoderButton(false, 13150);
+    app.update(13150);
+    ASSERT_TRUE(app.getUiMode() == UiMode::Normal);
+    ASSERT_TRUE(NvsConfig("compass").getUShort("bkl_pct", 95) == 55);
+
+    NvsConfig::resetHostStorage();
+    PASS();
+}
+
+void test_heading_averaging_levels_ema_and_cli_nvs() {
+    TEST("Heading averaging levels (Low/Med/High), dt/quality Circular EMA, pluggable seam, and cal avg CLI/NVS");
+    NvsConfig::resetHostStorage();
+
+    // 1. Low (raw): immediate step response
+    CircularEmaFilter emaLow;
+    emaLow.setAveragingLevel(HeadingAveragingLevel::Low);
+    emaLow.push(10.0f, BEARING_FIXED, 1000);
+    emaLow.push(50.0f, BEARING_FIXED, 1200);
+    ASSERT_NEAR(emaLow.getFilteredAngle(), 50.0, 1e-3);
+
+    // 2. Medium vs High damping on 0 -> 90 deg step at 5 Hz (dt = 200 ms)
+    CircularEmaFilter emaMed;
+    emaMed.setAveragingLevel(HeadingAveragingLevel::Medium);
+    emaMed.seed(0.0f, 1000);
+    emaMed.push(90.0f, BEARING_FIXED, 1200);
+    double medAfterOneStep = emaMed.getFilteredAngle();
+    ASSERT_TRUE(medAfterOneStep > 15.0 && medAfterOneStep < 45.0);
+
+    CircularEmaFilter emaHigh;
+    emaHigh.setAveragingLevel(HeadingAveragingLevel::High);
+    emaHigh.seed(0.0f, 1000);
+    emaHigh.push(90.0f, BEARING_FIXED, 1200);
+    double highAfterOneStep = emaHigh.getFilteredAngle();
+    ASSERT_TRUE(highAfterOneStep > 2.0 && highAfterOneStep < medAfterOneStep);
+
+    // 3. Quality weighting: BEARING_FLOAT damps step more than BEARING_FIXED
+    CircularEmaFilter emaFloat;
+    emaFloat.setAveragingLevel(HeadingAveragingLevel::Medium);
+    emaFloat.seed(0.0f, 1000);
+    emaFloat.push(90.0f, BEARING_FLOAT, 1200);
+    ASSERT_TRUE(emaFloat.getFilteredAngle() < medAfterOneStep);
+
+    // 4. dt invariance: larger dt advances EMA further than shorter dt
+    CircularEmaFilter emaSlowRate;
+    emaSlowRate.setAveragingLevel(HeadingAveragingLevel::Medium);
+    emaSlowRate.seed(0.0f, 1000);
+    emaSlowRate.push(90.0f, BEARING_FIXED, 2000); // dt = 1.0 s
+    ASSERT_TRUE(emaSlowRate.getFilteredAngle() > medAfterOneStep);
+
+    // 5. predict() is a safe no-op in Open-Loop Circular EMA
+    double beforePredict = emaSlowRate.getFilteredAngle();
+    emaSlowRate.predict(45.0f, 0.1f, true);
+    ASSERT_NEAR(emaSlowRate.getFilteredAngle(), beforePredict, 1e-6);
+
+    // 6. Pluggable IAngleFilter seam on BearingFilter
+    struct MockCustomFilter : public IAngleFilter {
+        double val = 0.0;
+        bool samples = false;
+        HeadingAveragingLevel lvl = HeadingAveragingLevel::Medium;
+        bool predicted = false;
+        void reset() override { val = 0.0; samples = false; }
+        void seed(float angleDeg, unsigned long) override { val = angleDeg; samples = true; }
+        void push(float angleDeg, BearingQuality, unsigned long) override { val = angleDeg; samples = true; }
+        void predict(float, float, bool) override { predicted = true; }
+        double getFilteredAngle() const override { return val; }
+        bool hasSamples() const override { return samples; }
+        uint8_t sampleCount() const override { return samples ? 1 : 0; }
+        void setAveragingLevel(HeadingAveragingLevel l) override { lvl = l; }
+        HeadingAveragingLevel getAveragingLevel() const override { return lvl; }
+        const char* getStrategyName() const override { return "MockKalman"; }
+    } mockFilter;
+
+    BearingFilter bf;
+    bf.setFilterStrategy(&mockFilter);
+    bf.push(15.0f, BEARING_FIXED, 1000);
+    bf.predict(10.0f, 0.05f, true);
+    ASSERT_TRUE(mockFilter.predicted);
+    ASSERT_NEAR(bf.getRawHeading(), 285.0, 1e-3);
+    ASSERT_TRUE(std::strcmp(bf.getStrategyName(), "MockKalman") == 0);
+    bf.setOperatingMode(FilterOperatingMode::OpenLoop);
+    ASSERT_TRUE(std::strcmp(bf.getStrategyName(), "Circular EMA") == 0);
+
+    // 7. End-to-end SerialCli cal avg + NVS persistence via AppController::begin()
+    Board board;
+    DisplayUi ui;
+    InputManager input;
+    GpsManager gps;
+    Calibration cal;
+    GpsSimulator sim;
+    SerialCli cli(gps, cal, sim);
+    AppController app(board, ui, input, gps, cal, sim, cli);
+
+    std::string cliOut;
+    cli.setOutputHandler([](const char *str, void *ctx) {
+        if (str && ctx) *static_cast<std::string*>(ctx) += str;
+    }, &cliOut);
+
+    app.begin();
+    ASSERT_TRUE(gps.getBearingFilter().getAveragingLevel() == HeadingAveragingLevel::Medium);
+
+    // Seed heading and verify runtime level change preserves heading continuity
+    gps.setHeading(0.0f, BEARING_FIXED, 1000);
+    double hdgBeforeSwitch = gps.getRawHeading();
+
+    cliOut.clear();
+    cli.executeCommand("cal avg", 1100);
+    ASSERT_TRUE(cliOut.find("[CAL] Averaging: MEDIUM (Circular EMA, tau=0.8s)") != std::string::npos);
+
+    cliOut.clear();
+    cli.executeCommand("cal avg high", 1200);
+    ASSERT_TRUE(cliOut.find("[CAL] Averaging set to HIGH (Circular EMA, tau=1.8s)") != std::string::npos);
+    ASSERT_TRUE(gps.getBearingFilter().getAveragingLevel() == HeadingAveragingLevel::High);
+    ASSERT_TRUE(gps.getBearingFilter().hasSamples());
+    ASSERT_NEAR(gps.getRawHeading(), hdgBeforeSwitch, 1e-3);
+
+    // Verify invalid argument rejected
+    cliOut.clear();
+    cli.executeCommand("cal avg bogus", 1300);
+    ASSERT_TRUE(cliOut.find("[CAL ERROR] Usage: cal avg [low|med|high]") != std::string::npos);
+    ASSERT_TRUE(gps.getBearingFilter().getAveragingLevel() == HeadingAveragingLevel::High);
+
+    // Verify NVS persistence across fresh BearingFilter::begin()
+    BearingFilter reloadedFilter;
+    reloadedFilter.begin();
+    ASSERT_TRUE(reloadedFilter.getAveragingLevel() == HeadingAveragingLevel::High);
+
+    // Verify 'low' alias and 'cal' / 'status' output
+    cliOut.clear();
+    cli.executeCommand("cal avg low", 1400);
+    ASSERT_TRUE(cliOut.find("LOW (Circular EMA, tau=0.0s)") != std::string::npos);
+
+    cliOut.clear();
+    cli.executeCommand("cal", 1500);
+    ASSERT_TRUE(cliOut.find("Averaging     : LOW (Circular EMA, tau=0.0s)") != std::string::npos);
+
+    cliOut.clear();
+    cli.executeCommand("cal avg medium", 1600);
+    ASSERT_TRUE(cliOut.find("MEDIUM (Circular EMA, tau=0.8s)") != std::string::npos);
+
+    // Voice-friendly cal / averaging / offset aliases
+    cliOut.clear();
+    cli.executeCommand("calibrate average hi", 1700);
+    ASSERT_TRUE(cliOut.find("HIGH (Circular EMA, tau=1.8s)") != std::string::npos);
+
+    cliOut.clear();
+    cli.executeCommand("calibration averaging lo", 1800);
+    ASSERT_TRUE(cliOut.find("LOW (Circular EMA, tau=0.0s)") != std::string::npos);
+
+    cliOut.clear();
+    cli.executeCommand("cal filter normal", 1900);
+    ASSERT_TRUE(cliOut.find("MEDIUM (Circular EMA, tau=0.8s)") != std::string::npos);
+
+    cliOut.clear();
+    cli.executeCommand("calibrate minus 3.5 degrees", 2000);
+    ASSERT_TRUE(cliOut.find("[CAL] Offset set to  -3.5 deg") != std::string::npos);
+    ASSERT_NEAR(cal.getOffset(), -3.5, 1e-3);
+
+    cliOut.clear();
+    cli.executeCommand("cal offset plus 2.5 deg", 2100);
+    ASSERT_TRUE(cliOut.find("[CAL] Offset set to  +2.5 deg") != std::string::npos);
+    ASSERT_NEAR(cal.getOffset(), 2.5, 1e-3);
+
+    cliOut.clear();
+    cli.executeCommand("calibrate zero", 2200);
+    ASSERT_TRUE(cliOut.find("[CAL] Offset reset to 0.0 deg") != std::string::npos);
+    ASSERT_NEAR(cal.getOffset(), 0.0, 1e-3);
+
+    // Ensure 'callsign' does not accidentally dispatch to 'cal'
+    cliOut.clear();
+    cli.executeCommand("callsign", 2300);
+    ASSERT_TRUE(cliOut.find("Unknown command") != std::string::npos);
+
+    NvsConfig::resetHostStorage();
     PASS();
 }
 
@@ -6977,6 +7315,9 @@ int main() {
     test_audit_hardening_regressions();
     test_serial_cli_factory_reset();
     test_ksxt_altitude_status_display();
+    test_display_brightness_cli_and_nvs();
+    test_quick_settings_brightness_modal_and_long_press();
+    test_heading_averaging_levels_ema_and_cli_nvs();
 
     std::cout << "========================================" << std::endl;
     std::cout << "  All " << tests_passed << " / " << tests_run << " tests PASSED successfully!" << std::endl;
