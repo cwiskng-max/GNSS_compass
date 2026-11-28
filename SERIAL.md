@@ -407,17 +407,17 @@ Sets an exact manual offset in degrees. Angles are automatically normalized to $
 ```
 
 #### Set Heading Averaging Depth (`cal avg [low|med|high]`)
-Configures the Circular EMA smoothing time constant ($\tau$) applied to dual-antenna GNSS headings and persists the selection to NVS (`"compass"` / `"avg_level"`):
+Configures the Circular EMA smoothing time constant ($\tau$) applied to dual-antenna GNSS headings and persists the selection to NVS (`"compass"` / `"avg_level"`). Voice-friendly aliases (`calibrate` / `calibration`, `average` / `averaging` / `filter`, `lo` / `raw` / `fast`, `normal`, `hi` / `smooth` / `slow`, plus spoken `minus` / `plus` and `degrees` on offsets) are supported:
 
-* **`low`**: $\tau = 0.0\text{ s}$ (raw / zero lag)
-* **`med`** *(or `medium`, default)*: $\tau = 0.5\text{ s}$ ($\alpha \approx 0.33$ @ 5 Hz)
-* **`high`**: $\tau = 1.8\text{ s}$ ($\alpha \approx 0.11$ @ 5 Hz, heavier wind/Float damping)
+* **`low`** *(or `lo`, `raw`, `fast`, `off`)*: $\tau = 0.0\text{ s}$ (raw / zero lag)
+* **`med`** *(or `medium`, `normal`, `default`)*: $\tau = 0.5\text{ s}$ ($\alpha \approx 0.33$ @ 5 Hz)
+* **`high`** *(or `hi`, `smooth`, `slow`, `max`)*: $\tau = 1.8\text{ s}$ ($\alpha \approx 0.11$ @ 5 Hz, heavier wind/Float damping)
 
 ```text
 > cal avg
 [CAL] Averaging: MEDIUM (Circular EMA, tau=0.5s)
 
-> cal avg high
+> calibrate average high
 [CAL] Averaging set to HIGH (Circular EMA, tau=1.8s)
 ```
 

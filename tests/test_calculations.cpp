@@ -7198,6 +7198,39 @@ void test_heading_averaging_levels_ema_and_cli_nvs() {
     cli.executeCommand("cal avg medium", 1600);
     ASSERT_TRUE(cliOut.find("MEDIUM (Circular EMA, tau=0.5s)") != std::string::npos);
 
+    // Voice-friendly cal / averaging / offset aliases
+    cliOut.clear();
+    cli.executeCommand("calibrate average hi", 1700);
+    ASSERT_TRUE(cliOut.find("HIGH (Circular EMA, tau=1.8s)") != std::string::npos);
+
+    cliOut.clear();
+    cli.executeCommand("calibration averaging lo", 1800);
+    ASSERT_TRUE(cliOut.find("LOW (Circular EMA, tau=0.0s)") != std::string::npos);
+
+    cliOut.clear();
+    cli.executeCommand("cal filter normal", 1900);
+    ASSERT_TRUE(cliOut.find("MEDIUM (Circular EMA, tau=0.5s)") != std::string::npos);
+
+    cliOut.clear();
+    cli.executeCommand("calibrate minus 3.5 degrees", 2000);
+    ASSERT_TRUE(cliOut.find("[CAL] Offset set to  -3.5 deg") != std::string::npos);
+    ASSERT_NEAR(cal.getOffset(), -3.5, 1e-3);
+
+    cliOut.clear();
+    cli.executeCommand("cal offset plus 2.5 deg", 2100);
+    ASSERT_TRUE(cliOut.find("[CAL] Offset set to  +2.5 deg") != std::string::npos);
+    ASSERT_NEAR(cal.getOffset(), 2.5, 1e-3);
+
+    cliOut.clear();
+    cli.executeCommand("calibrate zero", 2200);
+    ASSERT_TRUE(cliOut.find("[CAL] Offset reset to 0.0 deg") != std::string::npos);
+    ASSERT_NEAR(cal.getOffset(), 0.0, 1e-3);
+
+    // Ensure 'callsign' does not accidentally dispatch to 'cal'
+    cliOut.clear();
+    cli.executeCommand("callsign", 2300);
+    ASSERT_TRUE(cliOut.find("Unknown command") != std::string::npos);
+
     NvsConfig::resetHostStorage();
     PASS();
 }

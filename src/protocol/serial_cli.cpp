@@ -37,7 +37,9 @@ bool isKnownCommand(const char *cleanCmd) {
            equalsIgnoreCase(cleanCmd, "t") ||
            equalsIgnoreCase(cleanCmd, "ble") || startsWithIgnoreCase(cleanCmd, "ble ") ||
            equalsIgnoreCase(cleanCmd, "brightness") || startsWithIgnoreCase(cleanCmd, "brightness ") ||
-           startsWithIgnoreCase(cleanCmd, "cal") ||
+           hasSubcommandPrefix(cleanCmd, "calibration") ||
+           hasSubcommandPrefix(cleanCmd, "calibrate") ||
+           hasSubcommandPrefix(cleanCmd, "cal") ||
            equalsIgnoreCase(cleanCmd, "disconnect") || equalsIgnoreCase(cleanCmd, "exit") ||
            equalsIgnoreCase(cleanCmd, "quit") ||
            equalsIgnoreCase(cleanCmd, "ver") || equalsIgnoreCase(cleanCmd, "version") ||
@@ -624,7 +626,11 @@ void SerialCli::executeCommand(const char *cmdLine, unsigned long nowMs, CliSour
         handleBleCommand(skipCmdArg(cleanCmd, 3));
     } else if (equalsIgnoreCase(cleanCmd, "brightness") || startsWithIgnoreCase(cleanCmd, "brightness ")) {
         handleBrightnessCommand(skipCmdArg(cleanCmd, 10));
-    } else if (startsWithIgnoreCase(cleanCmd, "cal")) {
+    } else if (equalsIgnoreCase(cleanCmd, "calibration") || startsWithIgnoreCase(cleanCmd, "calibration ") || startsWithIgnoreCase(cleanCmd, "calibration\t")) {
+        handleCalCommand(skipCmdArg(cleanCmd, 11));
+    } else if (equalsIgnoreCase(cleanCmd, "calibrate") || startsWithIgnoreCase(cleanCmd, "calibrate ") || startsWithIgnoreCase(cleanCmd, "calibrate\t")) {
+        handleCalCommand(skipCmdArg(cleanCmd, 9));
+    } else if (equalsIgnoreCase(cleanCmd, "cal") || startsWithIgnoreCase(cleanCmd, "cal ") || startsWithIgnoreCase(cleanCmd, "cal\t")) {
         handleCalCommand(skipCmdArg(cleanCmd, 3));
     } else if (equalsIgnoreCase(cleanCmd, "disconnect") || equalsIgnoreCase(cleanCmd, "exit") ||
                equalsIgnoreCase(cleanCmd, "quit")) {
@@ -943,9 +949,16 @@ void SerialCli::printCalHelp() {
 }
 
 void SerialCli::handleCalCommand(const char *arg) {
+    while (arg && (*arg == ' ' || *arg == '\t')) arg++;
+
     if (arg && (equalsIgnoreCase(arg, "help") || std::strcmp(arg, "?") == 0)) {
         printCalHelp();
         return;
+    }
+
+    // Accept optional "offset" qualifier (e.g. "cal offset snap", "cal offset -3.5")
+    if (arg && (equalsIgnoreCase(arg, "offset") || startsWithIgnoreCase(arg, "offset ") || startsWithIgnoreCase(arg, "offset\t"))) {
+        arg = skipCmdArg(arg, 6);
     }
 
     if (!arg || *arg == '\0' || equalsIgnoreCase(arg, "status") || equalsIgnoreCase(arg, "show")) {
@@ -953,11 +966,19 @@ void SerialCli::handleCalCommand(const char *arg) {
         return;
     }
 
-    if (equalsIgnoreCase(arg, "avg") || startsWithIgnoreCase(arg, "avg ") || startsWithIgnoreCase(arg, "avg\t")) {
-        const char *sub = arg + 3;
-        while (*sub == ' ' || *sub == '\t') sub++;
+    const char *avgSub = nullptr;
+    if (equalsIgnoreCase(arg, "averaging") || startsWithIgnoreCase(arg, "averaging ") || startsWithIgnoreCase(arg, "averaging\t")) {
+        avgSub = skipCmdArg(arg, 9);
+    } else if (equalsIgnoreCase(arg, "average") || startsWithIgnoreCase(arg, "average ") || startsWithIgnoreCase(arg, "average\t")) {
+        avgSub = skipCmdArg(arg, 7);
+    } else if (equalsIgnoreCase(arg, "filter") || startsWithIgnoreCase(arg, "filter ") || startsWithIgnoreCase(arg, "filter\t")) {
+        avgSub = skipCmdArg(arg, 6);
+    } else if (equalsIgnoreCase(arg, "avg") || startsWithIgnoreCase(arg, "avg ") || startsWithIgnoreCase(arg, "avg\t")) {
+        avgSub = skipCmdArg(arg, 3);
+    }
+    if (avgSub) {
         BearingFilter &bf = gpsManager_.getBearingFilter();
-        if (*sub == '\0' || equalsIgnoreCase(sub, "status") || equalsIgnoreCase(sub, "show")) {
+        if (*avgSub == '\0' || equalsIgnoreCase(avgSub, "status") || equalsIgnoreCase(avgSub, "show")) {
             printFormat("[CAL] Averaging: %s (%s, tau=%.1fs)\r\n",
                         BearingFilter::levelToString(bf.getAveragingLevel()),
                         bf.getStrategyName(),
@@ -965,7 +986,7 @@ void SerialCli::handleCalCommand(const char *arg) {
             return;
         }
         HeadingAveragingLevel level = HeadingAveragingLevel::Medium;
-        if (!BearingFilter::parseLevelString(sub, level)) {
+        if (!BearingFilter::parseLevelString(avgSub, level)) {
             println("[CAL ERROR] Usage: cal avg [low|med|high]");
             return;
         }
@@ -997,15 +1018,50 @@ void SerialCli::handleCalCommand(const char *arg) {
     }
 
     const char *numStr = arg;
-    if (startsWithIgnoreCase(arg, "set ")) {
-        numStr = arg + 4;
-        while (*numStr == ' ' || *numStr == '\t') numStr++;
+    if (startsWithIgnoreCase(numStr, "set ") || startsWithIgnoreCase(numStr, "set\t")) {
+        numStr = skipCmdArg(numStr, 3);
     }
 
+    // Voice-friendly sign prefixes and unit suffixes (e.g. "minus 3.5 degrees", "plus 2.0 deg")
+    float sign = 1.0f;
+    if (startsWithIgnoreCase(numStr, "minus ") || startsWithIgnoreCase(numStr, "minus\t")) {
+        sign = -1.0f;
+        numStr = skipCmdArg(numStr, 5);
+    } else if (startsWithIgnoreCase(numStr, "negative ") || startsWithIgnoreCase(numStr, "negative\t")) {
+        sign = -1.0f;
+        numStr = skipCmdArg(numStr, 8);
+    } else if (startsWithIgnoreCase(numStr, "plus ") || startsWithIgnoreCase(numStr, "plus\t")) {
+        numStr = skipCmdArg(numStr, 4);
+    } else if (startsWithIgnoreCase(numStr, "positive ") || startsWithIgnoreCase(numStr, "positive\t")) {
+        numStr = skipCmdArg(numStr, 8);
+    }
+
+    char numBuf[48];
+    std::strncpy(numBuf, numStr, sizeof(numBuf) - 1);
+    numBuf[sizeof(numBuf) - 1] = '\0';
+    size_t nlen = std::strlen(numBuf);
+    while (nlen > 0 && (numBuf[nlen - 1] == ' ' || numBuf[nlen - 1] == '\t')) {
+        numBuf[--nlen] = '\0';
+    }
+    if (nlen >= 7 && equalsIgnoreCase(&numBuf[nlen - 7], "degrees")) {
+        nlen -= 7;
+    } else if (nlen >= 6 && equalsIgnoreCase(&numBuf[nlen - 6], "degree")) {
+        nlen -= 6;
+    } else if (nlen >= 3 && equalsIgnoreCase(&numBuf[nlen - 3], "deg")) {
+        nlen -= 3;
+    }
+    while (nlen > 0 && (numBuf[nlen - 1] == ' ' || numBuf[nlen - 1] == '\t')) {
+        numBuf[--nlen] = '\0';
+    }
+    numBuf[nlen] = '\0';
+
     float val = 0.0f;
-    if (!parseStrictFloat(numStr, val)) {
+    if (!parseStrictFloat(numBuf, val)) {
         printFormat("[CAL ERROR] Invalid offset '%s'. Usage: cal [snap|zero|<deg>]\r\n", numStr);
         return;
+    }
+    if (sign < 0.0f && numBuf[0] != '-' && numBuf[0] != '+') {
+        val = -val;
     }
     calibration_.setOffset(val);
     if (stateChangedCb_) stateChangedCb_(stateChangedContext_);

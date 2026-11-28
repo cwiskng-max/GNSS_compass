@@ -231,15 +231,20 @@ bool BearingFilter::parseLevelString(const char *str, HeadingAveragingLevel &out
     std::memcpy(buf, str, len);
     buf[len] = '\0';
 
-    if (eqIgnoreCase(buf, "low")) {
+    if (eqIgnoreCase(buf, "low") || eqIgnoreCase(buf, "lo") ||
+        eqIgnoreCase(buf, "raw") || eqIgnoreCase(buf, "off") ||
+        eqIgnoreCase(buf, "fast")) {
         outLevel = HeadingAveragingLevel::Low;
         return true;
     }
-    if (eqIgnoreCase(buf, "med") || eqIgnoreCase(buf, "medium")) {
+    if (eqIgnoreCase(buf, "med") || eqIgnoreCase(buf, "medium") ||
+        eqIgnoreCase(buf, "normal") || eqIgnoreCase(buf, "default")) {
         outLevel = HeadingAveragingLevel::Medium;
         return true;
     }
-    if (eqIgnoreCase(buf, "high")) {
+    if (eqIgnoreCase(buf, "high") || eqIgnoreCase(buf, "hi") ||
+        eqIgnoreCase(buf, "smooth") || eqIgnoreCase(buf, "slow") ||
+        eqIgnoreCase(buf, "max")) {
         outLevel = HeadingAveragingLevel::High;
         return true;
     }
